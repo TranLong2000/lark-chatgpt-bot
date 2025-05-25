@@ -33,11 +33,24 @@ dispatcher.register({
 // Route webhook xử lý sự kiện từ Lark
 app.post('/webhook', async (req, res) => {
   try {
+    const body = req.body;
+
+    // Xử lý Challenge verification của Lark
+    if (body.challenge) {
+      return res.json({ challenge: body.challenge });
+    }
+
+    // Xử lý các sự kiện bình thường
     await dispatcher.dispatch(req, res);
   } catch (err) {
     console.error('Error dispatching event:', err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
+});
+
+// Thêm route GET / để kiểm tra server đang chạy
+app.get('/', (req, res) => {
+  res.send('Bot Lark đang chạy OK!');
 });
 
 // Port mặc định hoặc 3000
