@@ -1,15 +1,14 @@
 {
   "name": "lark-chatgpt-bot",
   "version": "1.0.0",
-  "description": "ChatGPT bot for Lark",
+  "description": "ChatGPT bot for Lark using Lark SDK and OpenAI",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
   },
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "^1.1.11",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.4",
-    "openai": "^4.28.4"
+    "@larksuiteoapi/node-sdk": "^1.4.0",
+    "axios": "^1.6.7",
+    "express": "^4.18.2"
   }
 }
