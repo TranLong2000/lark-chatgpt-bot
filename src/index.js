@@ -13,6 +13,7 @@ const client = new Client({
 
 const dispatcher = new EventDispatcher({ client });
 
+// Đăng ký sự kiện nhận tin nhắn
 dispatcher.register({
   type: 'message.receive_v1',
   handler: async (data) => {
@@ -22,37 +23,38 @@ dispatcher.register({
     return {
       msg_type: 'text',
       content: {
-        text: `Bạn vừa gửi: ${message.text || '...'}`,
+        text: `Bạn vừa gửi: ${message.text || '[Không có nội dung]'}`,
       },
     };
   },
 });
 
+// Route webhook chính
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('Received webhook:', JSON.stringify(req.body));
+    console.log('Webhook received:', JSON.stringify(req.body));
 
-    if (req.body.challenge) {
-      return res.json({ challenge: req.body.challenge });
+    // Xử lý challenge khi lần đầu khai báo URL
+    if (req.body && req.body.challenge) {
+      console.log('Responding to challenge...');
+      return res.status(200).json({ challenge: req.body.challenge });
     }
 
+    // Dispatch các sự kiện khác
     await dispatcher.dispatch(req, res);
-  } catch (err) {
-    console.error('Error dispatching event:', err);
-    if (err instanceof Error) {
-      console.error(err.stack);
-    } else {
-      console.error(JSON.stringify(err));
-    }
+  } catch (error) {
+    console.error('Lỗi khi xử lý webhook:', error);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
 
+// Route kiểm tra sống
 app.get('/', (req, res) => {
-  res.send('Bot Lark đang chạy OK!');
+  res.send('✅ Lark Bot server đang chạy!');
 });
 
+// Cổng động do Railway cấp (ví dụ 8080)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Bot Lark đang chạy tại http://localhost:${PORT}`);
+  console.log(`Bot đang chạy tại cổng ${PORT}`);
 });
