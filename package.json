@@ -1,20 +1,11 @@
 {
   "name": "lark-chatgpt-bot",
   "version": "1.0.0",
-  "description": "A ChatGPT bot integrated with Lark using Express",
+  "description": "ChatGPT bot for Lark",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
   },
-  "keywords": [
-    "lark",
-    "chatgpt",
-    "bot",
-    "openai",
-    "express"
-  ],
-  "author": "Your Name",
-  "license": "MIT",
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.1.11",
     "dotenv": "^16.3.1",
