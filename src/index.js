@@ -1,29 +1,34 @@
 const express = require('express');
-const { Lark, Dispatcher } = require('@larksuiteoapi/node-sdk');
+const larksuite = require('@larksuiteoapi/node-sdk');
+const { createClient, Dispatcher } = larksuite;
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
 
-const lark = new Lark({
+// Tạo Lark client
+const lark = createClient({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
   // domain: 'https://open.larksuite.com',
 });
 
+// Khởi tạo Dispatcher
 const dispatcher = new Dispatcher(lark);
 
+// Đăng ký sự kiện message
 dispatcher.registerMessageEvent(async (ctx) => {
   console.log('Nhận message:', ctx.event.message.text);
   await ctx.sendText(`Bạn vừa gửi: ${ctx.event.message.text}`);
 });
 
+// Webhook route
 app.post('/webhook', async (req, res) => {
   try {
     await dispatcher.dispatch(req, res);
   } catch (error) {
-    console.error('Lỗi khi xử lý webhook:', error);
+    console.error('Lỗi xử lý webhook:', error);
     res.status(500).send('Internal Server Error');
   }
 });
