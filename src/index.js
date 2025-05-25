@@ -4,9 +4,6 @@ const { Client, EventDispatcher } = require('@larksuiteoapi/node-sdk');
 const app = express();
 app.use(express.json());
 
-console.log('LARK_APP_ID:', process.env.LARK_APP_ID);
-console.log('LARK_APP_SECRET:', process.env.LARK_APP_SECRET);
-
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
@@ -35,14 +32,18 @@ app.post('/webhook', async (req, res) => {
   try {
     console.log('Received webhook:', JSON.stringify(req.body));
 
-    const body = req.body;
-    if (body.challenge) {
-      return res.json({ challenge: body.challenge });
+    if (req.body.challenge) {
+      return res.json({ challenge: req.body.challenge });
     }
 
     await dispatcher.dispatch(req, res);
   } catch (err) {
     console.error('Error dispatching event:', err);
+    if (err instanceof Error) {
+      console.error(err.stack);
+    } else {
+      console.error(JSON.stringify(err));
+    }
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
