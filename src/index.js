@@ -7,7 +7,7 @@ app.use(express.json());
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
-  appType: 'self', // hoặc 'custom' nếu bạn đăng ký kiểu khác
+  appType: 'self',
   domain: 'https://open.larksuite.com',
 });
 
@@ -19,14 +19,28 @@ dispatcher.register({
   handler: async (data) => {
     const message = data.event.message;
     console.log('Tin nhắn nhận được:', message);
-    // có thể phản hồi tại đây nếu muốn
+
+    // Trả về JSON đúng chuẩn Lark yêu cầu để phản hồi tin nhắn
+    return {
+      msg_type: 'text',
+      content: {
+        text: `Bạn vừa gửi: ${message.text || '...'}`,
+      },
+    };
   },
 });
 
+// Route webhook xử lý sự kiện từ Lark
 app.post('/webhook', async (req, res) => {
-  await dispatcher.dispatch(req, res);
+  try {
+    await dispatcher.dispatch(req, res);
+  } catch (err) {
+    console.error('Error dispatching event:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
+// Port mặc định hoặc 3000
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Bot Lark đang chạy tại http://localhost:${PORT}`);
