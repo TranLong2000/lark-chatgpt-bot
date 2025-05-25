@@ -2,7 +2,7 @@
   "name": "lark-chatgpt-bot",
   "version": "1.0.0",
   "description": "ChatGPT bot for Lark using Lark SDK and OpenAI",
-  "type": "module",                              👈 THÊM DÒNG NÀY
+  "type": "module",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
