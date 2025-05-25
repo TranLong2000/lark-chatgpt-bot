@@ -1,86 +1,54 @@
+// src/index.js
 const express = require('express');
-const { Client, EventDispatcher } = require('@larksuiteoapi/node-sdk');
+const lark = require('@larksuiteoapi/node-sdk');
 
-const app = express();
-app.use(express.json({
-  // Cho phép đọc raw body để SDK verify signature nếu cần
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
-}));
-
-// Đọc các biến môi trường
 const {
   LARK_APP_ID,
   LARK_APP_SECRET,
   LARK_VERIFICATION_TOKEN,
-  LARK_ENCRYPT_KEY,        // nếu bạn bật mã hoá trong Lark Console
+  LARK_ENCRYPT_KEY,        // chỉ nếu bạn bật tính năng Encrypt Payload
 } = process.env;
 
-console.log('Env:', { LARK_APP_ID, LARK_APP_SECRET, LARK_VERIFICATION_TOKEN, LARK_ENCRYPT_KEY });
+const app = express();
+// express.json() vẫn cần để parse body trước khi adaptExpress
+app.use(express.json({
+  verify: (req, res, buf) => { req.rawBody = buf; }
+}));
 
-// Khởi tạo Lark Client
-const client = new Client({
+// 1. Khởi tạo client và dispatcher
+const client = new lark.Client({
   appId: LARK_APP_ID,
   appSecret: LARK_APP_SECRET,
   appType: 'self',
   domain: 'https://open.larksuite.com',
 });
 
-// Khởi tạo Dispatcher với verify và decrypt config
-const dispatcher = new EventDispatcher({
+const eventDispatcher = new lark.EventDispatcher({
   client,
   verificationToken: LARK_VERIFICATION_TOKEN,
   encryptKey: LARK_ENCRYPT_KEY,
-});
-
-// Đăng ký sự kiện tin nhắn
-dispatcher.register({
-  type: 'message.receive_v1',
-  handler: async ({ event }) => {
-    const message = event.message;
-    console.log('Tin nhắn nhận được:', message);
+}).register({
+  'message.receive_v1': async ({ event }) => {
+    const text = event.message.text || '[Không có nội dung]';
+    console.log('Tin nhắn nhận được:', text);
     return {
       msg_type: 'text',
-      content: {
-        text: `Bạn vừa gửi: ${message.text || '[Không có nội dung]'}`,
-      },
+      content: { text: `Bạn vừa gửi: ${text}` },
     };
   },
 });
 
-// Route chính để Lark gọi webhook
-app.post('/webhook', async (req, res) => {
-  try {
-    // In ra để debug
-    console.log('Headers:', {
-      'x-lark-request-signature': req.headers['x-lark-request-signature'],
-      'x-lark-request-timestamp': req.headers['x-lark-request-timestamp'],
-      'x-lark-request-nonce': req.headers['x-lark-request-nonce'],
-    });
-    console.log('Raw body:', req.rawBody.toString());
-    console.log('Parsed body:', req.body);
+// 2. Gắn middleware adaptExpress cho đường dẫn /webhook
+//    autoChallenge: true sẽ tự phản hồi challenge khi Lark verify URL
+app.use(
+  '/webhook',
+  lark.adaptExpress(eventDispatcher, { autoChallenge: true })
+);
 
-    // Xử lý URL verification (challenge)
-    if (req.body.challenge) {
-      console.log('Responding to challenge...');
-      return res.status(200).json({ challenge: req.body.challenge });
-    }
-
-    // Dispatcher sẽ tự verify signature và decrypt payload nếu cần
-    await dispatcher.dispatch(req, res);
-  } catch (error) {
-    console.error('Lỗi khi xử lý webhook:', error);
-    // In stacktrace để debug
-    if (error.stack) console.error(error.stack);
-    res.status(500).json({ error: 'Internal Server Error' });
-  }
-});
-
-// Route health-check
+// 3. Route kiểm tra server
 app.get('/', (req, res) => res.send('✅ Lark Bot server đang chạy!'));
 
-// Lắng nghe cổng do Railway cấp
+// 4. Lắng nghe cổng do Railway cấp
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại cổng ${PORT}`);
