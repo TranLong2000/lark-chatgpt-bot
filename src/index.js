@@ -1,73 +1,55 @@
-import express from 'express';
-import dotenv from 'dotenv';
-import { Configuration, OpenAIApi } from 'openai';
-import Lark from '@larksuiteoapi/node-sdk';
-
-dotenv.config();
+const express = require('express');
+const { Client, EventDispatcher } = require('@larksuiteoapi/node-sdk');
+const axios = require('axios');
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+
+const client = new Client({
+  appId: process.env.LARK_APP_ID,
+  appSecret: process.env.LARK_APP_SECRET,
+  appType: 'self',
+  verificationToken: process.env.LARK_VERIFICATION_TOKEN,
+  encryptKey: process.env.LARK_ENCRYPT_KEY,
+});
+
+const dispatcher = new EventDispatcher({ client });
+
+dispatcher.registerMessageEvent(async (data) => {
+  const messageText = data.event.message.content;
+  const userId = data.event.sender.sender_id.user_id;
+
+  const prompt = JSON.parse(messageText).text;
+
+  // Gọi OpenAI GPT
+  const openaiRes = await axios.post('https://api.openai.com/v1/chat/completions', {
+    model: 'gpt-3.5-turbo',
+    messages: [{ role: 'user', content: prompt }],
+  }, {
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  const reply = openaiRes.data.choices[0].message.content;
+
+  // Gửi trả lời về lại Lark
+  await client.im.message.create({
+    data: {
+      receive_id: userId,
+      content: JSON.stringify({ text: reply }),
+      msg_type: 'text',
+    },
+    params: {
+      receive_id_type: 'user_id',
+    },
+  });
+});
+
 app.use(express.json());
+app.post('/webhook', dispatcher.handleEvent());
 
-const { LARK_APP_ID, LARK_APP_SECRET, OPENAI_API_KEY } = process.env;
-
-// Khởi tạo OpenAI client
-const openai = new OpenAIApi(new Configuration({
-  apiKey: OPENAI_API_KEY,
-}));
-
-// Khởi tạo Lark SDK
-const client = Lark.Client({
-  appId: LARK_APP_ID,
-  appSecret: LARK_APP_SECRET,
-});
-
-app.post('/', async (req, res) => {
-  try {
-    const { header, schema, event } = req.body;
-
-    // Xác thực verify_token lần đầu
-    if (header.event_type === 'url_verification') {
-      return res.json({ challenge: schema.challenge });
-    }
-
-    // Chỉ xử lý message.receive_v1
-    if (header.event_type !== 'im.message.receive_v1') {
-      return res.status(200).end();
-    }
-
-    const messageId = event.message.message_id;
-    const openId = event.open_id;
-
-    // Lấy content
-    const messageResp = await client.im.message.get({
-      path: { message_id: messageId },
-    });
-    const userText = messageResp.data.message.content.text;
-
-    // Gọi ChatGPT
-    const aiRes = await openai.createChatCompletion({
-      model: 'gpt-4',
-      messages: [{ role: 'user', content: userText }],
-    });
-    const botReply = aiRes.data.choices[0].message.content;
-
-    // Gửi reply về Lark
-    await client.im.message.reply({
-      path: { receive_id: messageId },
-      data: {
-        msg_type: 'text',
-        content: { text: botReply },
-      },
-    });
-
-    res.status(200).end();
-  } catch (err) {
-    console.error('Error handling webhook:', err);
-    res.status(500).send('Internal Server Error');
-  }
-});
-
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Bot listening on port ${port}`);
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
