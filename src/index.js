@@ -1,7 +1,11 @@
 const express = require('express'); 
 const lark = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
-require('dotenv').config();
+
+// Chỉ load dotenv khi chạy local, tránh lỗi deploy cloud không có module dotenv
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
 const {
   LARK_APP_ID,
@@ -92,7 +96,7 @@ app.use('/webhook', lark.adaptExpress(dispatcher, { autoChallenge: true }));
 
 app.get('/', (req, res) => res.send('✅ Bot đang chạy với OpenAI!'));
 
-const PORT = process.env.PORT || 8080;  // Sửa POST thành PORT
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 Server chạy tại cổng ${PORT}`);
 });
