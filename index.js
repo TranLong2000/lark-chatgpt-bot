@@ -34,7 +34,7 @@ app.use(async (ctx) => {
     const event = ctx.request.body;
 
     // Ví dụ: xử lý sự kiện message.receive
-    if (event.type === "im.message.receive_v1") {
+    if (event.type === "im.message.receive_v2") {
       const message = event.event.message;
       const chatId = message.chat_id;
       const userText = message.text;
