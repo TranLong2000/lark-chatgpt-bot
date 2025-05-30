@@ -1,71 +1,90 @@
 import Koa from 'koa';
 import Router from 'koa-router';
 import bodyParser from 'koa-bodyparser';
-import crypto from 'crypto';
+import axios from 'axios';
 import { OpenAI } from 'openai';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = new Koa();
 const router = new Router();
-
 const PORT = process.env.PORT || 8080;
 
-// 🔐 Load env
-const APP_ID = process.env.LARK_APP_ID;
-const APP_SECRET = process.env.LARK_APP_SECRET;
-const ENCRYPT_KEY = process.env.LARK_ENCRYPT_KEY;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+// Init OpenAI
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
-// 🤖 Init OpenAI
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-// 🔓 Hàm giải mã dữ liệu Lark gửi tới
-function decryptLark(encrypt) {
-  const key = crypto.createHash('sha256').update(ENCRYPT_KEY).digest();
-  const encryptedData = Buffer.from(encrypt, 'base64');
-  const iv = encryptedData.subarray(0, 16);
-  const data = encryptedData.subarray(16);
-
-  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-  let decrypted = decipher.update(data);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-
-  return JSON.parse(decrypted.toString());
+// Get tenant access token
+let tenantToken = null;
+async function getTenantAccessToken() {
+  const res = await axios.post('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+    app_id: process.env.LARK_APP_ID,
+    app_secret: process.env.LARK_APP_SECRET,
+  });
+  tenantToken = res.data.tenant_access_token;
+  console.log('[✅] Tenant token acquired.');
 }
+await getTenantAccessToken();
 
-// 🧩 Webhook Endpoint
+// Handle Lark webhook
 router.post('/webhook', async (ctx) => {
-  const body = ctx.request.body;
+  const event = ctx.request.body;
 
-  if (!body.encrypt) {
+  // Decrypt (Lark may send encrypted data — skip for now if plaintext)
+  const message = event.event?.message;
+  if (!message) {
     ctx.status = 400;
-    ctx.body = 'Missing encrypted content';
+    ctx.body = 'No message received';
     return;
   }
 
-  const decrypted = decryptLark(body.encrypt);
-  console.log('[📨] Event received:', decrypted);
+  const userMessage = message.content ? JSON.parse(message.content).text : '';
+  const chatId = message.chat_id;
 
-  const { schema, header, event } = decrypted;
+  console.log('🔹 User message:', userMessage);
 
-  // ✨ Trả lời thử nếu nhận message
-  if (header.event_type === 'im.message.receive_v1') {
-    const userMessage = 'Hi, this is a test message!'; // bạn có thể parse event ở đây
-
+  // Send message to OpenAI
+  try {
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
       messages: [{ role: 'user', content: userMessage }],
+      model: 'gpt-4',
     });
 
-    const reply = completion.choices[0].message.content;
-    console.log('🧠 GPT response:', reply);
-    // TODO: Gửi ngược lại người dùng bằng Lark SDK nếu muốn
-  }
+    const botReply = completion.choices[0].message.content;
 
-  ctx.body = { code: 0, msg: 'ok' }; // ✅ Lark cần status 200 và body này
+    // Reply to user
+    await axios.post(
+      'https://open.larksuite.com/open-apis/im/v1/messages',
+      {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text: botReply }),
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${tenantToken}`,
+          'Content-Type': 'application/json',
+        },
+        params: {
+          receive_id_type: 'chat_id',
+        },
+      }
+    );
+
+    ctx.status = 200;
+    ctx.body = 'OK';
+  } catch (err) {
+    console.error('❌ OpenAI or Lark error:', err.message);
+    ctx.status = 500;
+    ctx.body = 'Internal error';
+  }
 });
 
 app.use(bodyParser());
-app.use(router.routes()).use(router.allowedMethods());
+app.use(router.routes());
+app.use(router.allowedMethods());
 
 app.listen(PORT, () => {
   console.log(`🚀 Server started on port ${PORT}`);
