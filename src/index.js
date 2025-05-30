@@ -92,7 +92,7 @@ app.use('/webhook', lark.adaptExpress(dispatcher, { autoChallenge: true }));
 
 app.get('/', (req, res) => res.send('✅ Bot đang chạy với OpenAI!'));
 
-const PORT = process.env.POST || 3000;
+const PORT = process.env.POST || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 Server chạy tại cổng ${PORT}`);
 });
