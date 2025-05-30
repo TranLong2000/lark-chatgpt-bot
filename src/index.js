@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const { Client } = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 require('dotenv').config();
@@ -6,35 +7,52 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
+// Hàm giải mã dữ liệu từ Lark
+function decryptLarkData(encrypt) {
+  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf8');
+  const encryptedData = Buffer.from(encrypt, 'base64');
+
+  const iv = encryptedData.subarray(0, 16);
+  const ciphertext = encryptedData.subarray(16);
+
+  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+  decipher.setAutoPadding(true);
+
+  let decrypted = decipher.update(ciphertext, null, 'utf8');
+  decrypted += decipher.final('utf8');
+
+  return JSON.parse(decrypted);
+}
+
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
   appType: 'self',
   domain: process.env.LARK_DOMAIN || 'https://open.larksuite.com',
-  // Bỏ logger nếu SDK không hỗ trợ
 });
 
 app.post('/webhook', async (req, res) => {
   try {
-    const payload = req.body;
-
     console.log('=== Webhook payload ===');
-    console.log(JSON.stringify(payload, null, 2));
+    console.log(JSON.stringify(req.body, null, 2));
 
-    if (!payload || !payload.event) {
+    let data = req.body;
+
+    // Nếu payload bị mã hóa
+    if (data.encrypt) {
+      data = decryptLarkData(data.encrypt);
+      console.log('✅ Payload đã giải mã:', JSON.stringify(data, null, 2));
+    }
+
+    const event = data.event;
+    if (!event || !event.message) {
       console.warn('⚠️ event hoặc event.message không tồn tại');
       return res.sendStatus(200);
     }
 
-    const event = payload.event;
     const message = event.message;
-
-    if (!message || !message.content) {
-      console.warn('⚠️ Không có nội dung tin nhắn');
-      return res.sendStatus(200);
-    }
-
     const userMessage = JSON.parse(message.content).text || '';
+
     const openaiRes = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
