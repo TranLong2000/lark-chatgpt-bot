@@ -1,5 +1,5 @@
 const express = require('express');
-const { Client, createLogger } = require('@larksuiteoapi/node-sdk');
+const { Client } = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 require('dotenv').config();
 
@@ -11,10 +11,9 @@ const client = new Client({
   appSecret: process.env.LARK_APP_SECRET,
   appType: 'self',
   domain: process.env.LARK_DOMAIN || 'https://open.larksuite.com',
-  logger: createLogger({ level: 'info' }), // dùng chuỗi thay vì LogLevel.INFO
+  // Bỏ logger nếu SDK không hỗ trợ
 });
 
-// Webhook endpoint
 app.post('/webhook', async (req, res) => {
   try {
     const payload = req.body;
