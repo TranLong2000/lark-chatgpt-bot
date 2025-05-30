@@ -1,13 +1,13 @@
 {
   "name": "lark-openai-bot",
   "version": "1.0.0",
-  "description": "Lark Bot tích hợp OpenAI ChatGPT",
+  "description": "Lark Bot tích hợp OpenAI ChatGPT dùng axios",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "^3.0.0",
+    "axios": "^1.4.0",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
     "openai": "^4.20.0"
