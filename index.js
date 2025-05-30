@@ -15,13 +15,15 @@ function verifyToken(req) {
 }
 
 app.post('/webhook', async (req, res) => {
+  // ✅ Bước 1: xử lý URL Verification trước
+  if (req.body.type === 'url_verification') {
+    return res.send({ challenge: req.body.challenge });
+  }
+
+  // ✅ Bước 2: kiểm tra token với các event
   if (!verifyToken(req)) {
     console.log('[❌] Invalid verify token:', req.headers['x-lark-verify-token']);
     return res.status(401).send('Invalid verify token');
-  }
-
-  if (req.body.type === 'url_verification') {
-    return res.send({ challenge: req.body.challenge });
   }
 
   const event = req.body.event;
@@ -47,7 +49,4 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
-const port = process.env.PORT || 8080;
-app.listen(port, () => {
-  console.log(`🚀 Lark OpenAI bot running on port ${port}`);
-});
+const port = process.env.PORT |
