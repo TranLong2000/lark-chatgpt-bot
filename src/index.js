@@ -110,3 +110,19 @@ const dispatcher = new lark.EventDispatcher({
             content: JSON.stringify({ text: 'Bot gặp lỗi khi xử lý. Vui lòng thử lại sau.' }),
             msg_type: 'text',
           },
+        });
+      } catch (error) {
+        console.error('❌ Lỗi gửi phản hồi lỗi:', error);
+      }
+    }
+  }
+});
+
+app.use('/webhook', lark.adaptExpress(dispatcher, { autoChallenge: true }));
+
+app.get('/', (req, res) => res.send('✅ Bot đang chạy với OpenAI!'));
+
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`🚀 Server chạy tại cổng ${PORT}`);
+});
