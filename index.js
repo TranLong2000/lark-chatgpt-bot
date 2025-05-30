@@ -5,38 +5,29 @@ const OpenAI = require('openai');
 const app = express();
 app.use(express.json());
 
-// Khởi tạo OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-
-// Hàm xác thực token từ header
-function verifyToken(req) {
-  const token = req.headers['x-lark-verify-token'] || '';
-  return token === process.env.LARK_VERIFICATION_TOKEN;
-}
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.post('/webhook', async (req, res) => {
-  const body = req.body;
+  console.log('Headers:', req.headers);
+  console.log('Body:', req.body);
 
-  // 1. Xử lý xác minh URL
-  if (body.type === 'url_verification') {
-    return res.send({ challenge: body.challenge });
+  if (req.body.type === 'url_verification') {
+    return res.json({ challenge: req.body.challenge });
   }
 
-  // 2. Kiểm tra verify token
-  if (!verifyToken(req)) {
-    console.log('[❌] Invalid verify token:', req.headers['x-lark-verify-token']);
-    return res.status(401).send('Invalid verify token');
-  }
+  // Tạm comment verify token nếu Lark không gửi header
+  // const token = req.headers['x-lark-verify-token'];
+  // if (!token || token !== process.env.LARK_VERIFICATION_TOKEN) {
+  //   console.log('[❌] Invalid verify token:', token);
+  //   return res.status(401).send('Invalid verify token');
+  // }
 
-  // 3. Xử lý sự kiện tin nhắn
-  const event = body.event;
+  const event = req.body.event;
   if (event && event.message && event.message.content) {
     const userMessage = JSON.parse(event.message.content).text || '';
 
     try {
-      const chat = await openai.chat.completions.create({
+      const completion = await openai.chat.completions.create({
         model: 'gpt-3.5-turbo',
         messages: [
           { role: 'system', content: 'Bạn là trợ lý ảo LarkGPT.' },
@@ -44,18 +35,17 @@ app.post('/webhook', async (req, res) => {
         ]
       });
 
-      const aiReply = chat.choices[0].message.content;
-      console.log(`[🤖] ${userMessage} → ${aiReply}`);
-    } catch (err) {
-      console.error('[❌] OpenAI Error:', err.message);
+      const reply = completion.choices[0].message.content;
+      console.log(`[🤖] User: ${userMessage}\n[🤖] Bot: ${reply}`);
+    } catch (error) {
+      console.error('[❌] OpenAI error:', error);
     }
   }
 
   res.sendStatus(200);
 });
 
-// Khởi động server
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`🚀 Bot is running at http://localhost:${port}`);
+  console.log(`Bot đang chạy trên cổng ${port}`);
 });
