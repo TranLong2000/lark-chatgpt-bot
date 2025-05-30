@@ -6,16 +6,17 @@ const {
   LARK_APP_ID,
   LARK_APP_SECRET,
   LARK_VERIFICATION_TOKEN,
-  LARK_ENCRYPT_KEY,        // chỉ nếu bạn bật tính năng Encrypt Payload
+  LARK_ENCRYPT_KEY, // Chỉ cần nếu bạn bật Encrypt Payload
 } = process.env;
 
 const app = express();
-// express.json() vẫn cần để parse body trước khi adaptExpress
+
+// Cần để parse raw body khi sử dụng adaptExpress
 app.use(express.json({
   verify: (req, res, buf) => { req.rawBody = buf; }
 }));
 
-// 1. Khởi tạo client và dispatcher
+// 1. Khởi tạo Lark Client và Event Dispatcher
 const client = new lark.Client({
   appId: LARK_APP_ID,
   appSecret: LARK_APP_SECRET,
@@ -29,26 +30,40 @@ const eventDispatcher = new lark.EventDispatcher({
   encryptKey: LARK_ENCRYPT_KEY,
 }).register({
   'message.receive_v1': async ({ event }) => {
-    const text = event.message.text || '[Không có nội dung]';
-    console.log('Tin nhắn nhận được:', text);
-    return {
-      msg_type: 'text',
-      content: { text: `Bạn vừa gửi: ${text}` },
-    };
+    try {
+      // Lark gửi content dưới dạng JSON string → cần parse
+      const rawContent = event.message.content || '{}';
+      const parsed = JSON.parse(rawContent);
+      const text = parsed.text || '[Không có nội dung]';
+
+      console.log('Tin nhắn nhận được:', text);
+
+      // Trả lời lại tin nhắn
+      return {
+        msg_type: 'text',
+        content: {
+          text: `Bạn vừa gửi: ${text}`,
+        },
+      };
+    } catch (err) {
+      console.error('Lỗi khi xử lý tin nhắn:', err);
+      return null;
+    }
   },
 });
 
-// 2. Gắn middleware adaptExpress cho đường dẫn /webhook
-//    autoChallenge: true sẽ tự phản hồi challenge khi Lark verify URL
+// 2. Đăng ký middleware webhook
 app.use(
   '/webhook',
   lark.adaptExpress(eventDispatcher, { autoChallenge: true })
 );
 
-// 3. Route kiểm tra server
-app.get('/', (req, res) => res.send('✅ Lark Bot server đang chạy!'));
+// 3. Endpoint kiểm tra server
+app.get('/', (req, res) => {
+  res.send('✅ Lark Bot server đang chạy!');
+});
 
-// 4. Lắng nghe cổng do Railway cấp
+// 4. Lắng nghe cổng
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại cổng ${PORT}`);
