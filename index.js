@@ -1,95 +1,86 @@
-const Koa = require('koa');
-const bodyParser = require('koa-bodyparser');
-const { createOpenAPI, createWebsocket } = require('@larksuiteoapi/sdk');
-const { Configuration, OpenAIApi } = require('openai');
+import Koa from 'koa';
+import bodyParser from 'koa-bodyparser';
+import { LarkClient } from '@larksuiteoapi/node-sdk';
+import { Configuration, OpenAIApi } from 'openai';
 
-// Log để debug biến môi trường
-console.log('[ENV] VERIFICATION_TOKEN:', process.env.LARK_VERIFICATION_TOKEN);
-console.log('[ENV] APP_ID:', process.env.LARK_APP_ID);
-console.log('[ENV] APP_SECRET:', process.env.LARK_APP_SECRET);
+const {
+  LARK_APP_ID,
+  LARK_APP_SECRET,
+  LARK_VERIFICATION_TOKEN,
+  LARK_ENCRYPT_KEY,
+  OPENAI_API_KEY,
+} = process.env;
+
+if (!LARK_APP_ID || !LARK_APP_SECRET || !LARK_VERIFICATION_TOKEN || !LARK_ENCRYPT_KEY || !OPENAI_API_KEY) {
+  console.error('[❌] Missing environment variables!');
+  process.exit(1);
+}
 
 const app = new Koa();
 app.use(bodyParser());
 
-// Init Lark SDK
-const client = createOpenAPI({
-  appId: process.env.LARK_APP_ID,
-  appSecret: process.env.LARK_APP_SECRET,
-  appType: 'self',
-  domain: 'https://open.larksuite.com'
+// Khởi tạo client Lark
+const client = new LarkClient({
+  appId: LARK_APP_ID,
+  appSecret: LARK_APP_SECRET,
+  verificationToken: LARK_VERIFICATION_TOKEN,
+  encryptKey: LARK_ENCRYPT_KEY,
 });
 
-// Init OpenAI SDK
+// Khởi tạo OpenAI client
 const openai = new OpenAIApi(
   new Configuration({
-    apiKey: process.env.OPENAI_API_KEY
-  })
+    apiKey: OPENAI_API_KEY,
+  }),
 );
 
-// Webhook endpoint
 app.use(async (ctx) => {
-  const body = ctx.request.body;
+  if (ctx.method === 'POST' && ctx.path === '/webhook') {
+    const data = ctx.request.body;
 
-  // Xác thực verify token
-  if (body.token !== process.env.LARK_VERIFICATION_TOKEN) {
-    console.error('[❌] Invalid verify token:', body.token);
-    ctx.status = 401;
-    ctx.body = 'Unauthorized';
-    return;
-  }
-
-  // Trả lời challenge khi lần đầu kết nối
-  if (body.type === 'url_verification') {
-    ctx.body = {
-      challenge: body.challenge
-    };
-    return;
-  }
-
-  // Xử lý tin nhắn từ user
-  if (body.header && body.header.event_type === 'im.message.receive_v1') {
-    const message = body.event.message;
-    const content = JSON.parse(message.content);
-    const userMessage = content.text;
-
-    console.log('[LARK] User message:', userMessage);
-
-    try {
-      // Gửi tới ChatGPT
-      const completion = await openai.createChatCompletion({
-        model: 'gpt-3.5-turbo',
-        messages: [{ role: 'user', content: userMessage }]
-      });
-
-      const reply = completion.data.choices[0].message.content;
-
-      // Gửi trả lời về Lark
-      await client.im.message.reply({
-        path: {
-          message_id: message.message_id
-        },
-        data: {
-          content: JSON.stringify({ text: reply }),
-          msg_type: 'text'
-        }
-      });
-
-      console.log('[✅] Sent reply to user');
-    } catch (err) {
-      console.error('[❌] Error sending reply:', err);
+    // Verify token
+    if (data.token !== LARK_VERIFICATION_TOKEN) {
+      console.log('[❌] Invalid verify token:', data.token);
+      ctx.status = 401;
+      ctx.body = 'Invalid verify token';
+      return;
     }
 
+    // Trả về 200 ngay khi nhận event để tránh Lark retry
     ctx.status = 200;
-    ctx.body = 'OK';
-    return;
-  }
+    ctx.body = 'ok';
 
-  ctx.status = 200;
-  ctx.body = 'OK';
+    // Chỉ xử lý event tin nhắn nhận được
+    if (data.type === 'im.message.receive_v1') {
+      const { message, open_id } = data.event;
+      if (!message || message.message_type !== 'text') return;
+
+      // Gọi OpenAI để trả lời
+      try {
+        const completion = await openai.createChatCompletion({
+          model: 'gpt-3.5-turbo',
+          messages: [{ role: 'user', content: message.text }],
+        });
+
+        const replyText = completion.data.choices[0].message.content;
+
+        // Gửi lại tin nhắn qua Lark API
+        await client.im.message.reply({
+          msg_type: 'text',
+          content: JSON.stringify({ text: replyText }),
+          receive_id: message.message_id,
+        });
+      } catch (error) {
+        console.error('[❌] OpenAI or Lark API error:', error);
+      }
+    }
+  } else {
+    ctx.status = 404;
+    ctx.body = 'Not Found';
+  }
 });
 
-// Start server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+const port = process.env.PORT || 8080;
+app.listen(port, () => {
+  console.log(`[info] Server started on port ${port}`);
 });
