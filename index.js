@@ -5,54 +5,57 @@ const OpenAI = require('openai');
 const app = express();
 app.use(express.json());
 
+// Khởi tạo OpenAI
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// Kiểm tra verify token
+// Hàm xác thực token từ header
 function verifyToken(req) {
   const token = req.headers['x-lark-verify-token'] || '';
   return token === process.env.LARK_VERIFICATION_TOKEN;
 }
 
 app.post('/webhook', async (req, res) => {
-  // Xử lý xác minh URL
-  if (req.body.type === 'url_verification') {
-    return res.send({ challenge: req.body.challenge });
+  const body = req.body;
+
+  // 1. Xử lý xác minh URL
+  if (body.type === 'url_verification') {
+    return res.send({ challenge: body.challenge });
   }
 
-  // Kiểm tra verify token
+  // 2. Kiểm tra verify token
   if (!verifyToken(req)) {
     console.log('[❌] Invalid verify token:', req.headers['x-lark-verify-token']);
     return res.status(401).send('Invalid verify token');
   }
 
-  const event = req.body.event;
-
+  // 3. Xử lý sự kiện tin nhắn
+  const event = body.event;
   if (event && event.message && event.message.content) {
     const userMessage = JSON.parse(event.message.content).text || '';
 
     try {
-      const aiResponse = await openai.chat.completions.create({
+      const chat = await openai.chat.completions.create({
         model: 'gpt-3.5-turbo',
         messages: [
-          { role: 'system', content: 'Bạn là một trợ lý ảo thân thiện.' },
+          { role: 'system', content: 'Bạn là trợ lý ảo LarkGPT.' },
           { role: 'user', content: userMessage }
         ]
       });
 
-      const reply = aiResponse.choices[0].message.content;
-      console.log(`[🤖] Trả lời cho "${userMessage}":\n${reply}`);
+      const aiReply = chat.choices[0].message.content;
+      console.log(`[🤖] ${userMessage} → ${aiReply}`);
     } catch (err) {
-      console.error('[❌] Lỗi OpenAI:', err.message);
+      console.error('[❌] OpenAI Error:', err.message);
     }
   }
 
   res.sendStatus(200);
 });
 
-// ✅ Đừng quên dòng này để bot chạy đúng cổng
+// Khởi động server
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`🚀 Lark OpenAI bot running on port ${port}`);
+  console.log(`🚀 Bot is running at http://localhost:${port}`);
 });
