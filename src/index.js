@@ -1,80 +1,72 @@
 require('dotenv').config();
 const express = require('express');
-const { Client, DefaultLogger } = require('@larksuiteoapi/node-sdk');
+const { Client } = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 
 const app = express();
 app.use(express.json());
 
+// Khởi tạo client Lark
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
-  logger: new DefaultLogger(),  // Không truyền level
 });
 
+// Lấy event dispatcher
 const eventDispatcher = client.eventDispatcher;
 
-eventDispatcher.on('im.message.receive_v1', async (data) => {
+// Debug log
+console.info('[info]: client ready');
+console.info('[info]: event-dispatch is ready');
+
+app.post('/webhook', async (req, res) => {
+  const { event } = req.body;
+  console.log('>>> Event nhận được:', event);
+
+  // Kiểm tra event và message
+  if (!event || !event.message) {
+    console.warn('⚠️ event hoặc event.message không tồn tại');
+    return res.status(200).send('ok');
+  }
+
   try {
-    console.log('>>> Sự kiện nhận được:', JSON.stringify(data, null, 2));
+    const { message } = event;
+    const chatId = message.chat_id;
+    const userId = message.user_id;
+    const text = message.text;
 
-    const event = data?.event;
-    if (!event || !event.message) {
-      console.warn('⚠️ event hoặc event.message không tồn tại');
-      return;
-    }
-
-    const messageId = event.message.message_id;
-    const messageContentStr = event.message.content;
-
-    const messageContent = JSON.parse(messageContentStr);
-    const userMessage = messageContent?.text?.trim();
-
-    if (!userMessage) {
-      console.warn('⚠️ Không lấy được nội dung tin nhắn');
-      return;
-    }
-
-    console.log(`📩 Người dùng gửi: ${userMessage}`);
-
-    const openaiRes = await axios.post(
+    // Gọi OpenAI API (ví dụ)
+    const openaiResponse = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
-        model: 'gpt-3.5-turbo',
-        messages: [{ role: 'user', content: userMessage }],
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: text }],
       },
       {
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          'Content-Type': 'application/json',
         },
       }
     );
 
-    const botReply = openaiRes.data.choices[0].message.content;
-    console.log('🤖 Phản hồi từ ChatGPT:', botReply);
+    const replyText = openaiResponse.data.choices[0].message.content;
 
-    await client.im.message.reply({
-      path: { message_id: messageId },
-      data: {
-        content: JSON.stringify({ text: botReply }),
-        msg_type: 'text',
-      },
+    // Gửi trả lời vào chat
+    await client.im.message.create({
+      receive_id: chatId,
+      msg_type: 'text',
+      content: JSON.stringify({ text: replyText }),
     });
+
+    res.status(200).send('ok');
   } catch (error) {
-    console.error('❌ Lỗi xử lý message:', error.message);
+    console.error('❌ Lỗi xử lý message:', error);
+    res.status(500).send('error');
   }
 });
 
-app.post('/webhook', async (req, res) => {
-  try {
-    await eventDispatcher.handle(req, res);
-  } catch (err) {
-    console.error('❌ Lỗi xử lý webhook:', err.message);
-    res.status(500).send('Webhook error');
-  }
-});
-
+// Bắt đầu server
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại cổng ${PORT}`);
