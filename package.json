@@ -1,13 +1,6 @@
 {
-  "name": "lark-gpt-bot",
-  "version": "1.0.0",
-  "main": "index.js",
-  "type": "module",
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "^2.0.8",
+    "@larksuiteoapi/node-sdk": "^1.1.0",
     "koa": "^2.13.4",
     "koa-bodyparser": "^4.3.0",
     "openai": "^4.27.0"
