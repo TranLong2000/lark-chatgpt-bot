@@ -9,24 +9,26 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+// Kiểm tra verify token
 function verifyToken(req) {
   const token = req.headers['x-lark-verify-token'] || '';
   return token === process.env.LARK_VERIFICATION_TOKEN;
 }
 
 app.post('/webhook', async (req, res) => {
-  // ✅ Bước 1: xử lý URL Verification trước
+  // Xử lý xác minh URL
   if (req.body.type === 'url_verification') {
     return res.send({ challenge: req.body.challenge });
   }
 
-  // ✅ Bước 2: kiểm tra token với các event
+  // Kiểm tra verify token
   if (!verifyToken(req)) {
     console.log('[❌] Invalid verify token:', req.headers['x-lark-verify-token']);
     return res.status(401).send('Invalid verify token');
   }
 
   const event = req.body.event;
+
   if (event && event.message && event.message.content) {
     const userMessage = JSON.parse(event.message.content).text || '';
 
@@ -49,4 +51,8 @@ app.post('/webhook', async (req, res) => {
   res.sendStatus(200);
 });
 
-const port = process.env.PORT |
+// ✅ Đừng quên dòng này để bot chạy đúng cổng
+const port = process.env.PORT || 8080;
+app.listen(port, () => {
+  console.log(`🚀 Lark OpenAI bot running on port ${port}`);
+});
