@@ -15,8 +15,11 @@ const {
 } = process.env;
 
 const app = express();
+
 app.use(express.json({
-  verify: (req, res, buf) => { req.rawBody = buf; },
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  },
 }));
 
 const client = new lark.Client({
@@ -32,12 +35,16 @@ const dispatcher = new lark.EventDispatcher({
   encryptKey: LARK_ENCRYPT_KEY,
 });
 
-// 👉 Đăng ký sự kiện message.receive_v1
-dispatcher.register({
-  'message.receive_v1': async (data) => {
-    console.log('>>> Event nhận được:', JSON.stringify(data, null, 2));
+// In toàn bộ sự kiện để debug
+dispatcher.on('event', async (data) => {
+  console.log('>>> Raw Event:', JSON.stringify(data, null, 2));
+});
 
-    const event = data?.event;
+// Đăng ký xử lý message
+dispatcher.register({
+  'im.message.receive_v1': async ({ event }) => {
+    console.log('>>> Event nhận được:', event);
+    
     if (!event || !event.message) {
       console.warn('⚠️ event hoặc event.message không tồn tại');
       return;
@@ -70,16 +77,15 @@ dispatcher.register({
 
       const replyText = openaiRes.data.choices[0].message.content;
 
-      // Gửi lại phản hồi
+      // Trả lời lại
       await client.im.message.reply({
-        path: {
-          message_id: event.message.message_id,
-        },
+        path: { message_id: event.message.message_id },
         data: {
           msg_type: 'text',
           content: JSON.stringify({ text: replyText }),
         },
       });
+
     } catch (err) {
       console.error('❌ Lỗi xử lý message:', err);
       try {
@@ -90,8 +96,8 @@ dispatcher.register({
             content: JSON.stringify({ text: 'Bot gặp lỗi khi xử lý.' }),
           },
         });
-      } catch (replyErr) {
-        console.error('❌ Lỗi gửi phản hồi lỗi:', replyErr);
+      } catch (e) {
+        console.error('❌ Lỗi gửi phản hồi lỗi:', e);
       }
     }
   }
