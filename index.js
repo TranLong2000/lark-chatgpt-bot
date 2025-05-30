@@ -1,6 +1,6 @@
 const express = require('express');
 const dotenv = require('dotenv');
-const { Client, createLogger, logLevel } = require('@larksuiteoapi/node-sdk');
+const { Client } = require('@larksuiteoapi/node-sdk');
 const { Configuration, OpenAIApi } = require('openai');
 
 dotenv.config();
@@ -8,21 +8,17 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Lark SDK
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
   domain: 'https://open.larksuite.com',
-  logger: createLogger({ level: logLevel.INFO }),
 });
 
-// OpenAI SDK
 const configuration = new Configuration({
   apiKey: process.env.OPENAI_API_KEY,
 });
 const openai = new OpenAIApi(configuration);
 
-// Webhook endpoint
 app.post('/webhook', async (req, res) => {
   const verifyToken = req.headers['x-lark-verify-token'];
   const expectedToken = process.env.LARK_VERIFICATION_TOKEN;
@@ -68,7 +64,6 @@ app.post('/webhook', async (req, res) => {
   res.status(200).send('No action');
 });
 
-// Start server
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`[🚀] Server đang chạy tại http://localhost:${PORT}`);
