@@ -1,22 +1,31 @@
-require('dotenv').config();
-const express = require('express');
-const fetch = require('node-fetch'); // hoặc import fetch từ 'node-fetch' nếu dùng ES Module
-const OpenAI = require('openai');
+import express from 'express';
+import fetch from 'node-fetch';
+import dotenv from 'dotenv';
+import OpenAI from 'openai';
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_VERIFICATION_TOKEN = process.env.LARK_VERIFICATION_TOKEN;
 const LARK_DOMAIN = 'https://open.larksuite.com';
 
-let accessToken = null;
+let cachedToken = null;
+let tokenExpire = 0;
 
-// Hàm lấy Access Token (app access token)
 async function getAccessToken() {
+  // nếu token chưa hết hạn thì trả luôn
+  if (cachedToken && Date.now() < tokenExpire) {
+    return cachedToken;
+  }
+
   const res = await fetch(`${LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -25,29 +34,31 @@ async function getAccessToken() {
       app_secret: LARK_APP_SECRET,
     }),
   });
+
   const data = await res.json();
+
   if (data.code === 0) {
-    return data.app_access_token;
+    cachedToken = data.app_access_token;
+    // app_access_token thường hết hạn 2 tiếng, để an toàn set 1h50m
+    tokenExpire = Date.now() + 1000 * 60 * 110;
+    return cachedToken;
   } else {
     console.error('Lấy access token lỗi:', data);
     return null;
   }
 }
 
-// Gửi trả lời message đến user
-async function replyMessage(openId, text) {
-  if (!accessToken) {
-    accessToken = await getAccessToken();
-  }
-  if (!accessToken) {
-    console.error('Không lấy được access token');
+async function sendMessage(openId, text) {
+  const token = await getAccessToken();
+  if (!token) {
+    console.error('Không lấy được access token, không gửi được message');
     return;
   }
 
   const res = await fetch(`${LARK_DOMAIN}/open-apis/im/v1/messages`, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
@@ -65,46 +76,53 @@ async function replyMessage(openId, text) {
 }
 
 app.post('/webhook', async (req, res) => {
-  console.log('Headers:', req.headers);
-  console.log('Body:', req.body);
-
-  if (req.body.type === 'url_verification') {
-    return res.json({ challenge: req.body.challenge });
-  }
-
-  // Xác thực verify token nếu bạn muốn
-  const token = req.headers['x-lark-verify-token'];
-  if (!token || token !== LARK_VERIFICATION_TOKEN) {
-    console.log('[❌] Invalid verify token:', token);
+  // Xác thực verify token header (token Lark gửi lên webhook)
+  const verifyToken = req.headers['x-lark-verify-token'];
+  if (verifyToken !== LARK_VERIFICATION_TOKEN) {
+    console.log('[❌] Invalid verify token:', verifyToken);
     return res.status(401).send('Invalid verify token');
   }
 
-  const event = req.body.event;
-  if (event && event.message && event.message.content && event.sender) {
-    const userMessage = JSON.parse(event.message.content).text || '';
-    const openId = event.sender.open_id;
+  const body = req.body;
 
-    try {
-      // Gọi OpenAI để tạo câu trả lời
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          { role: 'system', content: 'Bạn là trợ lý ảo LarkGPT.' },
-          { role: 'user', content: userMessage },
-        ],
-      });
+  // Trả về challenge khi Lark verify webhook URL lần đầu
+  if (body.type === 'url_verification') {
+    return res.json({ challenge: body.challenge });
+  }
 
-      const reply = completion.choices[0].message.content;
+  if (body.type === 'event_callback') {
+    const event = body.event;
 
-      console.log(`[🤖] User: ${userMessage}`);
-      console.log(`[🤖] Bot trả lời: ${reply}`);
+    // Chỉ xử lý sự kiện tin nhắn người dùng gửi
+    if (event && event.message && event.sender) {
+      try {
+        const userText = JSON.parse(event.message.content).text;
+        const userOpenId = event.sender.open_id;
 
-      // Gửi trả lời tới user
-      await replyMessage(openId, reply);
+        // Gọi OpenAI để tạo câu trả lời
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: 'Bạn là trợ lý ảo LarkGPT.' },
+            { role: 'user', content: userText },
+          ],
+        });
 
-    } catch (error) {
-      console.error('[❌] OpenAI error:', error);
+        const replyText = completion.choices[0].message.content;
+
+        console.log(`User: ${userText}`);
+        console.log(`Reply: ${replyText}`);
+
+        // Gửi câu trả lời lại user
+        await sendMessage(userOpenId, replyText);
+
+      } catch (err) {
+        console.error('Lỗi xử lý message:', err);
+      }
     }
+
+    // Luôn trả về 200 OK cho Lark webhook
+    return res.sendStatus(200);
   }
 
   res.sendStatus(200);
@@ -112,5 +130,5 @@ app.post('/webhook', async (req, res) => {
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`Bot đang chạy trên cổng ${port}`);
+  console.log(`Server đang chạy trên port ${port}`);
 });
