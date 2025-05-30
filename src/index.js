@@ -1,64 +1,75 @@
 const express = require('express');
-const { Client, DefaultLogger } = require('@larksuiteoapi/node-sdk');
+const { Client, EventDispatcher } = require('@larksuiteoapi/node-sdk');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 
+const PORT = process.env.PORT || 8080;
+
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
-  appType: 'self', // nếu là custom app thì dùng 'custom'
-  domain: 'https://open.larksuite.com',
-  logger: new DefaultLogger(),
-  verificationToken: process.env.LARK_VERIFICATION_TOKEN,
-  encryptKey: process.env.LARK_ENCRYPT_KEY,
+  appType: 'self',
+  domain: process.env.LARK_DOMAIN || 'https://open.larksuite.com',
 });
 
-console.log('[info]: [client ready]');
+const dispatcher = new EventDispatcher({ client });
 
-app.post('/webhook', async (req, res) => {
-  const body = req.body;
+dispatcher.registerHandler('im.message.receive_v1', async (data) => {
+  const event = data?.event;
 
-  console.log('=== Webhook payload ===');
-  console.log(JSON.stringify(body, null, 2));
-
-  let event;
-  if (body.encrypt) {
-    try {
-      const decrypted = client.decrypt(body.encrypt);
-      event = JSON.parse(decrypted);
-    } catch (err) {
-      console.error('❌ Lỗi giải mã payload:', err);
-      return res.status(400).send('Decrypt error');
-    }
-  } else {
-    event = body.event;
-  }
-
-  console.log('>>> Event nhận được:', event);
+  console.log('>>> Event nhận được:', JSON.stringify(event, null, 2));
 
   if (!event || !event.message) {
     console.warn('⚠️ event hoặc event.message không tồn tại');
-    return res.status(200).send('ok');
+    return;
   }
 
+  const messageText = event.message.content;
+  const openId = event.sender.sender_id.open_id;
+
   try {
-    const message = event.message;
-    const senderId = event.sender.sender_id?.user_id;
+    const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: 'gpt-3.5-turbo',
+      messages: [
+        { role: 'system', content: 'Bạn là một trợ lý ảo thông minh.' },
+        { role: 'user', content: messageText }
+      ]
+    }, {
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
 
-    console.log(`>>> Message từ ${senderId}:`, message.content);
+    const reply = response.data.choices?.[0]?.message?.content || 'Không có phản hồi từ ChatGPT.';
 
-    // TODO: Gửi phản hồi hoặc xử lý thêm ở đây nếu cần
+    await client.im.message.create({
+      data: {
+        receive_id: openId,
+        content: JSON.stringify({ text: reply }),
+        msg_type: 'text',
+        receive_id_type: 'open_id'
+      }
+    });
 
-    return res.status(200).send('ok');
-  } catch (err) {
-    console.error('❌ Lỗi xử lý sự kiện:', err);
-    return res.status(500).send('error');
+  } catch (error) {
+    console.error('❌ Lỗi khi gọi OpenAI hoặc gửi tin nhắn:', error.message);
   }
 });
 
-const PORT = process.env.PORT || 8080;
+app.post('/webhook', async (req, res) => {
+  try {
+    const result = await dispatcher.dispatch(req.body);
+    res.status(200).send(result);
+  } catch (err) {
+    console.error('❌ Lỗi xử lý webhook:', err);
+    res.status(500).send('Webhook xử lý lỗi');
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại cổng ${PORT}`);
 });
