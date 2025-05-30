@@ -2,7 +2,7 @@ const express = require('express');
 const lark = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 
-// Chỉ load .env khi không chạy production (Railway đã inject env sẵn)
+// Chỉ load .env khi chạy local (Railway/Vercel đã tự inject env)
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
@@ -33,9 +33,8 @@ const dispatcher = new lark.EventDispatcher({
   verificationToken: LARK_VERIFICATION_TOKEN,
   encryptKey: LARK_ENCRYPT_KEY,
 }).register({
-  'im.message.receive_v1': async (params) => {
-    const event = params.event;
-
+  // Destructure trực tiếp event
+  'im.message.receive_v1': async ({ event }) => {
     try {
       console.log('>>> Event nhận được:', JSON.stringify(event, null, 2));
 
@@ -44,6 +43,7 @@ const dispatcher = new lark.EventDispatcher({
         return;
       }
 
+      // Parse nội dung người dùng gửi
       let userText = '[Không có nội dung]';
       try {
         const parsed = JSON.parse(event.message.content);
@@ -54,18 +54,18 @@ const dispatcher = new lark.EventDispatcher({
 
       console.log('🧠 Tin nhắn từ người dùng:', userText);
 
-      // Lấy tenant access token
+      // Lấy Tenant Access Token
       const tokenRes = await client.tenantAccessToken.get();
-      const tenantAccessToken = tokenRes.tenant_access_token;
+      const tenantToken = tokenRes.tenant_access_token;
 
-      // Gọi OpenAI Chat Completion
+      // Gọi OpenAI để tạo phản hồi
       const openaiRes = await axios.post(
         'https://api.openai.com/v1/chat/completions',
         {
           model: 'gpt-3.5-turbo',
           messages: [
             { role: 'system', content: 'Bạn là trợ lý thân thiện.' },
-            { role: 'user', content: userText }
+            { role: 'user', content: userText },
           ],
         },
         {
@@ -78,10 +78,10 @@ const dispatcher = new lark.EventDispatcher({
 
       const replyText = openaiRes.data.choices[0].message.content;
 
-      // Gửi phản hồi đến user
+      // Gửi phản hồi về Lark
       await client.im.message.create({
         headers: {
-          Authorization: `Bearer ${tenantAccessToken}`,
+          Authorization: `Bearer ${tenantToken}`,
         },
         params: {
           receive_id_type: 'user_id',
