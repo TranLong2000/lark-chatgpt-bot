@@ -1,4 +1,4 @@
-// src/index.js
+require('dotenv').config();
 const express = require('express');
 const { Client, DefaultLogger, LogLevel } = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
@@ -6,40 +6,39 @@ const axios = require('axios');
 const app = express();
 app.use(express.json());
 
-// Tạo client Lark
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
   logger: new DefaultLogger({ level: LogLevel.INFO }),
 });
 
-// Tạo dispatcher để xử lý sự kiện
-const dispatcher = client.eventDispatcher;
+const eventDispatcher = client.eventDispatcher;
 
-// Đăng ký handler cho sự kiện tin nhắn
-dispatcher.register('im.message.receive_v1', async (ctx) => {
+// Lắng nghe sự kiện message
+eventDispatcher.on('im.message.receive_v1', async (data) => {
   try {
-    const event = ctx.request.body.event;
+    console.log('>>> Sự kiện nhận được:', JSON.stringify(data, null, 2));
 
-    console.log('>>> Event nhận được:', JSON.stringify(event, null, 2));
-
+    const event = data?.event;
     if (!event || !event.message) {
       console.warn('⚠️ event hoặc event.message không tồn tại');
       return;
     }
 
     const messageId = event.message.message_id;
-    const messageText = event.message.content;
+    const messageContentStr = event.message.content;
 
-    const userMessage = JSON.parse(messageText).text?.trim();
+    const messageContent = JSON.parse(messageContentStr);
+    const userMessage = messageContent?.text?.trim();
+
     if (!userMessage) {
-      console.log('Không tìm thấy nội dung tin nhắn');
+      console.warn('⚠️ Không lấy được nội dung tin nhắn');
       return;
     }
 
     console.log(`📩 Người dùng gửi: ${userMessage}`);
 
-    // Gửi tới OpenAI ChatGPT
+    // Gọi OpenAI API
     const openaiRes = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
@@ -48,37 +47,41 @@ dispatcher.register('im.message.receive_v1', async (ctx) => {
       },
       {
         headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
           'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
         },
       }
     );
 
-    const botReply = openaiRes.data.choices[0].message.content.trim();
+    const botReply = openaiRes.data.choices[0].message.content;
+    console.log('🤖 Phản hồi từ ChatGPT:', botReply);
 
-    console.log(`🤖 ChatGPT trả lời: ${botReply}`);
-
-    // Gửi lại tin nhắn tới Lark
+    // Gửi tin nhắn lại cho người dùng
     await client.im.message.reply({
       path: {
         message_id: messageId,
       },
       data: {
-        content: JSON.stringify({ text: botReply }),
+        content: JSON.stringify({
+          text: botReply,
+        }),
         msg_type: 'text',
       },
     });
   } catch (error) {
-    console.error('❌ Lỗi xử lý message:', error);
+    console.error('❌ Lỗi xử lý message:', error.message);
   }
 });
 
-// Gắn webhook cho Express
 app.post('/webhook', async (req, res) => {
-  await dispatcher.dispatch(req, res);
+  try {
+    await eventDispatcher.handle(req, res);
+  } catch (err) {
+    console.error('❌ Lỗi xử lý webhook:', err.message);
+    res.status(500).send('Webhook error');
+  }
 });
 
-// Khởi chạy server
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại cổng ${PORT}`);
