@@ -1,7 +1,7 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const { Client } = require('@larksuiteoapi/node-sdk');
-const { Configuration, OpenAIApi } = require('openai');
+const OpenAI = require('openai');
 
 dotenv.config();
 
@@ -14,10 +14,9 @@ const client = new Client({
   domain: 'https://open.larksuite.com',
 });
 
-const configuration = new Configuration({
+const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-const openai = new OpenAIApi(configuration);
 
 app.post('/webhook', async (req, res) => {
   const verifyToken = req.headers['x-lark-verify-token'];
@@ -37,12 +36,12 @@ app.post('/webhook', async (req, res) => {
     console.log(`[📩] Tin nhắn từ ${userId}: ${messageText}`);
 
     try {
-      const completion = await openai.createChatCompletion({
+      const completion = await openai.chat.completions.create({
         model: 'gpt-3.5-turbo',
         messages: [{ role: 'user', content: messageText }],
       });
 
-      const reply = completion.data.choices[0].message.content;
+      const reply = completion.choices[0].message.content;
 
       await client.im.message.create({
         receive_id_type: 'user_id',
