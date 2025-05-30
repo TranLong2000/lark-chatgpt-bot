@@ -1,17 +1,21 @@
+require('dotenv').config();
+
 const express = require('express');
-const dotenv = require('dotenv');
-const { Client } = require('@larksuiteoapi/node-sdk');
+const bodyParser = require('body-parser');
+const { Client, createLogger, LogLevel } = require('@larksuiteoapi/node-sdk');
 const OpenAI = require('openai');
 
-dotenv.config();
-
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
+  appType: 'self',
   domain: 'https://open.larksuite.com',
+  encryptKey: process.env.LARK_ENCRYPT_KEY,
+  verificationToken: process.env.LARK_VERIFICATION_TOKEN,
+  logger: createLogger({ level: LogLevel.INFO }),
 });
 
 const openai = new OpenAI({
@@ -19,51 +23,51 @@ const openai = new OpenAI({
 });
 
 app.post('/webhook', async (req, res) => {
-  const verifyToken = req.headers['x-lark-verify-token'];
-  const expectedToken = process.env.LARK_VERIFICATION_TOKEN;
+  const verificationToken = process.env.LARK_VERIFICATION_TOKEN;
 
-  if (verifyToken !== expectedToken) {
-    console.error('[❌] Invalid verify token:', verifyToken);
-    return res.status(401).send('Invalid verify token');
+  if (
+    req.body.token !== verificationToken &&
+    req.headers['x-verification-token'] !== verificationToken
+  ) {
+    console.log('[❌] Invalid verify token:', req.body.token);
+    return res.status(401).send('Unauthorized');
   }
 
-  const event = req.body;
+  // Handle challenge
+  if (req.body.type === 'url_verification') {
+    return res.send({ challenge: req.body.challenge });
+  }
 
-  if (event.header?.event_type === 'im.message.receive_v1') {
-    const messageText = JSON.parse(event.event.message.content).text;
-    const userId = event.event.sender.sender_id.user_id;
-
-    console.log(`[📩] Tin nhắn từ ${userId}: ${messageText}`);
+  const event = req.body.event;
+  if (event && event.message && event.message.message_type === 'text') {
+    const text = JSON.parse(event.message.content).text;
 
     try {
       const completion = await openai.chat.completions.create({
         model: 'gpt-3.5-turbo',
-        messages: [{ role: 'user', content: messageText }],
+        messages: [{ role: 'user', content: text }],
       });
 
       const reply = completion.choices[0].message.content;
 
-      await client.im.message.create({
-        receive_id_type: 'user_id',
-        body: {
-          receive_id: userId,
-          msg_type: 'text',
+      await client.im.message.reply({
+        path: {
+          message_id: event.message.message_id,
+        },
+        data: {
           content: JSON.stringify({ text: reply }),
+          msg_type: 'text',
         },
       });
-
-      console.log('[✅] Đã trả lời người dùng.');
-      return res.status(200).send('OK');
     } catch (err) {
-      console.error('[❌] Lỗi khi gọi OpenAI hoặc gửi tin nhắn:', err);
-      return res.status(500).send('Error');
+      console.error('OpenAI error:', err.message);
     }
   }
 
-  res.status(200).send('No action');
+  res.status(200).send('OK');
 });
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`[🚀] Server đang chạy tại http://localhost:${PORT}`);
+  console.log(`[✅] Server running on port ${PORT}`);
 });
