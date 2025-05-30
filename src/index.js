@@ -2,6 +2,7 @@ const express = require('express');
 const lark = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 
+// Chỉ load dotenv khi chạy local
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
@@ -34,24 +35,26 @@ const dispatcher = new lark.EventDispatcher({
 }).register({
   'im.message.receive_v1': async ({ event }) => {
     try {
-      console.log('>>> Received event:', JSON.stringify(event, null, 2));
+      console.log('>>> Event nhận được:', JSON.stringify(event, null, 2));
+
+      if (!event || !event.message) {
+        console.warn('⚠️ event hoặc event.message không tồn tại');
+        return;
+      }
 
       let userText = '[Không có nội dung]';
-
-      if (event.message && event.message.content) {
-        try {
-          const parsed = JSON.parse(event.message.content);
-          userText = parsed.text || userText;
-        } catch (e) {
-          console.warn('⚠️ Không parse được event.message.content:', e);
-        }
-      } else if (event.text) {
-        userText = event.text;
-      } else {
-        console.warn('⚠️ Không tìm thấy nội dung tin nhắn trong event:', event);
+      try {
+        const parsed = JSON.parse(event.message.content);
+        userText = parsed.text || userText;
+      } catch {
+        console.warn('⚠️ Không parse được event.message.content');
       }
 
       console.log('🧠 Tin nhắn từ người dùng:', userText);
+
+      // Lấy tenant access token
+      const tokenRes = await client.tenantAccessToken.get();
+      const tenantAccessToken = tokenRes.tenant_access_token;
 
       // Gọi OpenAI Chat Completion API
       const openaiRes = await axios.post(
@@ -73,11 +76,7 @@ const dispatcher = new lark.EventDispatcher({
 
       const replyText = openaiRes.data.choices[0].message.content;
 
-      // Lấy Tenant Access Token thủ công
-      const tokenRes = await client.tenantAccessToken.get();
-      const tenantAccessToken = tokenRes.tenant_access_token;
-
-      // Gửi lại phản hồi đến người dùng
+      // Gửi tin nhắn trả lời
       await client.im.message.create({
         headers: {
           Authorization: `Bearer ${tenantAccessToken}`,
@@ -95,7 +94,7 @@ const dispatcher = new lark.EventDispatcher({
     } catch (err) {
       console.error('❌ Lỗi xử lý message:', err);
 
-      // Gửi phản hồi lỗi (nên kiểm tra client.tenantAccessToken có tồn tại)
+      // Thử gửi tin nhắn lỗi cho user
       try {
         const tokenRes = await client.tenantAccessToken.get();
         const tenantAccessToken = tokenRes.tenant_access_token;
@@ -106,7 +105,7 @@ const dispatcher = new lark.EventDispatcher({
           },
           data: {
             receive_id_type: 'user_id',
-            receive_id: event.sender.sender_id.user_id,
+            receive_id: event?.sender?.sender_id?.user_id || '',
             content: JSON.stringify({ text: 'Bot gặp lỗi khi xử lý. Vui lòng thử lại sau.' }),
             msg_type: 'text',
           },
@@ -115,7 +114,7 @@ const dispatcher = new lark.EventDispatcher({
         console.error('❌ Lỗi gửi phản hồi lỗi:', error);
       }
     }
-  }
+  },
 });
 
 app.use('/webhook', lark.adaptExpress(dispatcher, { autoChallenge: true }));
