@@ -1,63 +1,115 @@
 const express = require('express');
-const crypto = require('crypto');
-require('dotenv').config();
+const lark = require('@larksuiteoapi/node-sdk');
+const axios = require('axios');
 
+// Load biến môi trường từ Railway hoặc hệ thống
 const {
+  LARK_APP_ID,
+  LARK_APP_SECRET,
   LARK_VERIFICATION_TOKEN,
   LARK_ENCRYPT_KEY,
+  OPENAI_API_KEY,
 } = process.env;
 
 const app = express();
 
-app.use(express.json({
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
-}));
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
-// Hàm giải mã dữ liệu nếu có encryptKey
-function decryptPayload(encryptKey, encryptData) {
-  const key = Buffer.from(encryptKey, 'base64');
-  const iv = key.slice(0, 16);
-  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-  let decrypted = decipher.update(encryptData, 'base64', 'utf8');
-  decrypted += decipher.final('utf8');
-  return JSON.parse(decrypted);
-}
-
-app.post('/webhook', (req, res) => {
-  try {
-    // Nếu có encrypt_key thì webhook body sẽ có encrypted字段
-    const body = req.body;
-
-    console.log('Raw body:', body);
-
-    let eventData;
-
-    if (body.encrypt) {
-      eventData = decryptPayload(LARK_ENCRYPT_KEY, body.encrypt);
-      console.log('Giải mã payload:', eventData);
-    } else {
-      eventData = body;
-      console.log('Payload không mã hóa:', eventData);
-    }
-
-    if (eventData && eventData.event && eventData.event.message) {
-      console.log('Tin nhắn nhận được:', eventData.event.message);
-      // Ở đây bạn có thể xử lý logic gọi OpenAI, trả lời tin nhắn
-      // Tạm thời trả về "OK" để Lark biết webhook đã nhận
-      res.status(200).send('OK');
-    } else {
-      console.warn('Không có event.message trong payload');
-      res.status(400).send('No message event');
-    }
-  } catch (err) {
-    console.error('Lỗi khi xử lý webhook:', err);
-    res.status(500).send('Internal Server Error');
-  }
+const client = new lark.Client({
+  appId: LARK_APP_ID,
+  appSecret: LARK_APP_SECRET,
+  appType: 'self',
+  domain: 'https://open.larksuite.com',
 });
+
+const dispatcher = new lark.EventDispatcher({
+  client,
+  verificationToken: LARK_VERIFICATION_TOKEN,
+  encryptKey: LARK_ENCRYPT_KEY,
+});
+
+dispatcher.register({
+  'im.message.receive_v1': async ({ event }) => {
+    console.log('>>> Event nhận được:', JSON.stringify(event, null, 2));
+
+    if (!event || !event.message) {
+      console.warn('⚠️ event hoặc event.message không tồn tại');
+      return;
+    }
+
+    try {
+      const messageId = event.message.message_id;
+      const rawContent = event.message.content || '{}';
+      const parsed = JSON.parse(rawContent);
+      const userText = parsed.text || '[Không có nội dung]';
+
+      console.log('🧠 Tin nhắn từ người dùng:', userText);
+
+      // Gọi OpenAI Chat Completion API
+      const openaiRes = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: 'Bạn là trợ lý thân thiện.' },
+            { role: 'user', content: userText },
+          ],
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const replyText = openaiRes.data.choices[0].message.content;
+
+      // Gửi phản hồi lại cho người dùng
+      await client.im.message.reply({
+        path: {
+          message_id: messageId,
+        },
+        data: {
+          msg_type: 'text',
+          content: JSON.stringify({ text: replyText }),
+        },
+      });
+    } catch (err) {
+      console.error('❌ Lỗi xử lý message:', err);
+      // Gửi phản hồi lỗi nếu cần
+      if (event && event.message && event.message.message_id) {
+        try {
+          await client.im.message.reply({
+            path: {
+              message_id: event.message.message_id,
+            },
+            data: {
+              msg_type: 'text',
+              content: JSON.stringify({
+                text: 'Bot gặp lỗi khi xử lý. Vui lòng thử lại sau.',
+              }),
+            },
+          });
+        } catch (err2) {
+          console.error('❌ Lỗi gửi phản hồi lỗi:', err2);
+        }
+      }
+    }
+  },
+});
+
+app.use('/webhook', lark.adaptExpress(dispatcher, { autoChallenge: true }));
+
+app.get('/', (req, res) => res.send('✅ Bot đang chạy với OpenAI!'));
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`Server đang chạy tại cổng ${PORT}`);
+  console.log(`🚀 Server đang chạy tại cổng ${PORT}`);
 });
