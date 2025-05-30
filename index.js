@@ -1,71 +1,29 @@
 require('dotenv').config();
-
 const express = require('express');
 const bodyParser = require('body-parser');
-const { Client } = require('@larksuiteoapi/node-sdk');
-const OpenAI = require('openai');
 
 const app = express();
+const PORT = process.env.PORT || 8080;
+
 app.use(bodyParser.json());
 
-const client = new Client({
-  appId: process.env.LARK_APP_ID,
-  appSecret: process.env.LARK_APP_SECRET,
-  appType: 'self',
-  domain: 'https://open.larksuite.com',
-  encryptKey: process.env.LARK_ENCRYPT_KEY,
-  verificationToken: process.env.LARK_VERIFICATION_TOKEN,
-});
+app.post('/webhook', (req, res) => {
+  const verifyToken = req.headers['x-lark-verify-token'] || req.headers['X-Lark-Request-Verification-Token'];
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+  console.log('Received verify token:', verifyToken);
 
-app.post('/webhook', async (req, res) => {
-  const verificationToken = process.env.LARK_VERIFICATION_TOKEN;
-
-  if (
-    req.body.token !== verificationToken &&
-    req.headers['x-verification-token'] !== verificationToken
-  ) {
-    console.log('[❌] Invalid verify token:', req.body.token);
-    return res.status(401).send('Unauthorized');
+  if (!verifyToken || verifyToken !== process.env.LARK_VERIFICATION_TOKEN) {
+    console.log('[❌] Invalid verify token:', verifyToken);
+    return res.status(401).send('Invalid verify token');
   }
 
-  if (req.body.type === 'url_verification') {
-    return res.send({ challenge: req.body.challenge });
-  }
+  console.log('[✅] Valid verify token');
+  
+  // Xử lý event từ Lark ở đây
 
-  const event = req.body.event;
-  if (event && event.message && event.message.message_type === 'text') {
-    const text = JSON.parse(event.message.content).text;
-
-    try {
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [{ role: 'user', content: text }],
-      });
-
-      const reply = completion.choices[0].message.content;
-
-      await client.im.message.reply({
-        path: {
-          message_id: event.message.message_id,
-        },
-        data: {
-          content: JSON.stringify({ text: reply }),
-          msg_type: 'text',
-        },
-      });
-    } catch (err) {
-      console.error('OpenAI error:', err.message);
-    }
-  }
-
-  res.status(200).send('OK');
+  res.status(200).send('ok');
 });
 
-const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`[✅] Server running on port ${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });
