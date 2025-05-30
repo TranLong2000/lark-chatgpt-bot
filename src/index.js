@@ -1,85 +1,33 @@
-import express from 'express';
-import crypto from 'crypto';
-import dotenv from 'dotenv';
-import fetch from 'node-fetch'; // nếu chưa cài: npm install node-fetch@2
-import { Configuration, OpenAIApi } from 'openai';
+// src/index.js
+
+const express = require('express');
+const crypto = require('crypto');
+const dotenv = require('dotenv');
+const fetch = require('node-fetch'); // nếu chưa cài: npm install node-fetch@2
+const { Configuration, OpenAIApi } = require('openai');
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-app.use(express.json({
-  verify: (req, res, buf) => {
-    req.rawBody = buf.toString();
-  }
-}));
+app.use(express.json());
 
-// Giải mã dữ liệu encrypt từ Lark
-function decryptLarkData(encrypt) {
-  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf8');
-  if (key.length !== 32) {
-    throw new Error(`Invalid LARK_ENCRYPT_KEY length ${key.length}, must be 32`);
-  }
-
-  const encryptedData = Buffer.from(encrypt, 'base64');
-  const iv = encryptedData.subarray(0, 16);
-  const ciphertext = encryptedData.subarray(16);
-
+// Hàm giải mã dữ liệu webhook Lark
+function decryptLarkData(encryptData) {
+  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'base64');
+  const iv = key.slice(0, 16);
   const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-  decipher.setAutoPadding(true);
+  decipher.setAutoPadding(false);
 
-  let decrypted = decipher.update(ciphertext, null, 'utf8');
+  let decrypted = decipher.update(encryptData, 'base64', 'utf8');
   decrypted += decipher.final('utf8');
 
-  return JSON.parse(decrypted);
+  // Loại bỏ padding manually
+  const paddingLength = decrypted.charCodeAt(decrypted.length - 1);
+  return decrypted.slice(0, decrypted.length - paddingLength);
 }
 
-// Lấy access token app Lark (App Access Token)
-async function getAccessToken() {
-  const url = 'https://open.larksuite.com/open-apis/auth/v3/app_access_token/internal/';
-  const body = {
-    app_id: process.env.LARK_APP_ID,
-    app_secret: process.env.LARK_APP_SECRET,
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!data || data.code !== 0) {
-    throw new Error('Lấy access token thất bại: ' + JSON.stringify(data));
-  }
-  return data.app_access_token;
-}
-
-// Gửi tin nhắn trả lời qua API Lark Chat
-async function sendReplyMessage(chat_id, text, token) {
-  const url = 'https://open.larksuite.com/open-apis/message/v4/send/';
-  const body = {
-    chat_id,
-    msg_type: 'text',
-    content: JSON.stringify({ text }),
-  };
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!data || data.code !== 0) {
-    throw new Error('Gửi tin nhắn thất bại: ' + JSON.stringify(data));
-  }
-  return data;
-}
-
-// Cấu hình OpenAI
 const configuration = new Configuration({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -87,45 +35,59 @@ const openai = new OpenAIApi(configuration);
 
 app.post('/webhook', async (req, res) => {
   try {
-    const { encrypt } = req.body;
-    if (!encrypt) {
-      return res.status(400).json({ error: 'Missing encrypt field' });
+    if (!req.body || !req.body.encrypt) {
+      console.warn('Không có payload encrypt');
+      return res.status(400).send('Missing encrypt data');
     }
 
-    // Giải mã event từ Lark
-    const event = decryptLarkData(encrypt);
+    const decryptedStr = decryptLarkData(req.body.encrypt);
+    const payload = JSON.parse(decryptedStr);
 
-    console.log('=== Webhook event ===', event);
-
-    if (!event || !event.message) {
-      return res.status(200).send('No message event, ignore');
+    if (!payload || !payload.event) {
+      console.warn('event hoặc event.message không tồn tại');
+      return res.status(400).send('Missing event data');
     }
 
-    const { text, chat_id } = event.message;
+    const event = payload.event;
 
-    if (!text || !chat_id) {
-      return res.status(200).send('No text or chat_id, ignore');
+    // Ví dụ xử lý sự kiện message nhận được
+    if (event.type === 'im.message.receive_v1') {
+      const userId = event.sender.senderId;
+      const messageText = event.message.message;
+
+      // Gọi OpenAI
+      const completion = await openai.createChatCompletion({
+        model: 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: messageText }],
+      });
+
+      const replyText = completion.data.choices[0].message.content;
+
+      // Gửi trả lại message qua API Lark
+      const sendMessageRes = await fetch('https://open.larksuite.com/open-apis/im/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.LARK_APP_ACCESS_TOKEN}`, // bạn cần có access token, phải lấy trước hoặc triển khai OAuth
+        },
+        body: JSON.stringify({
+          receive_id: userId,
+          msg_type: 'text',
+          content: JSON.stringify({ text: replyText }),
+        }),
+      });
+
+      const sendMessageData = await sendMessageRes.json();
+
+      if (!sendMessageData || sendMessageData.code !== 0) {
+        console.error('Lỗi gửi tin nhắn:', sendMessageData);
+      }
     }
 
-    // Gọi OpenAI tạo phản hồi
-    const completion = await openai.createChatCompletion({
-      model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: text }],
-    });
-
-    const replyText = completion.data.choices[0].message.content;
-
-    // Lấy token app để gửi tin nhắn
-    const token = await getAccessToken();
-
-    // Gửi tin nhắn trả lời về Lark chat
-    await sendReplyMessage(chat_id, replyText, token);
-
-    return res.status(200).json({ msg: 'ok' });
-
+    res.status(200).send('ok');
   } catch (error) {
     console.error('❌ Lỗi xử lý webhook:', error);
-    return res.status(500).json({ error: error.message || 'Internal Server Error' });
+    res.status(500).send('Internal Server Error');
   }
 });
 
