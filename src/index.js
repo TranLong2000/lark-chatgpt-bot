@@ -33,7 +33,9 @@ const dispatcher = new lark.EventDispatcher({
   verificationToken: LARK_VERIFICATION_TOKEN,
   encryptKey: LARK_ENCRYPT_KEY,
 }).register({
-  'message.receive_v1': async ({ event }) => {
+  'im.message.receive_v1': async ({ event }) => {
+    console.log('🔔 Nhận event im.message.receive_v1:', event);
+
     try {
       const rawContent = event.message.content || '{}';
       const parsed = JSON.parse(rawContent);
@@ -60,13 +62,13 @@ const dispatcher = new lark.EventDispatcher({
       );
 
       const replyText = openaiRes.data.choices[0].message.content;
+      console.log('🤖 Phản hồi AI:', replyText);
 
-      // Gửi lại phản hồi đến người dùng trên Lark
-      await client.im.message.reply({
-        path: {
-          message_id: event.message.message_id,
-        },
+      // Gửi lại phản hồi đến người dùng trên Lark (gửi message mới)
+      await client.im.message.create({
         data: {
+          receive_id_type: 'message_id',
+          receive_id: event.message.message_id,
           msg_type: 'text',
           content: JSON.stringify({
             text: replyText,
@@ -76,18 +78,22 @@ const dispatcher = new lark.EventDispatcher({
 
     } catch (err) {
       console.error('❌ Lỗi xử lý message:', err);
-      // Phản hồi lỗi cho người dùng nếu có
-      await client.im.message.reply({
-        path: {
-          message_id: event.message.message_id,
-        },
-        data: {
-          msg_type: 'text',
-          content: JSON.stringify({
-            text: 'Bot gặp lỗi khi xử lý. Vui lòng thử lại sau.',
-          }),
-        },
-      });
+
+      // Gửi tin nhắn lỗi cho người dùng
+      try {
+        await client.im.message.create({
+          data: {
+            receive_id_type: 'message_id',
+            receive_id: event.message.message_id,
+            msg_type: 'text',
+            content: JSON.stringify({
+              text: 'Bot gặp lỗi khi xử lý. Vui lòng thử lại sau.',
+            }),
+          },
+        });
+      } catch (err2) {
+        console.error('❌ Lỗi gửi tin nhắn lỗi:', err2);
+      }
     }
   },
 });
