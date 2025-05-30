@@ -2,7 +2,6 @@ const express = require('express');
 const lark = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 
-// Chỉ load dotenv khi chạy local
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
@@ -16,8 +15,11 @@ const {
 } = process.env;
 
 const app = express();
+
 app.use(express.json({
-  verify: (req, res, buf) => { req.rawBody = buf; },
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  },
 }));
 
 const client = new lark.Client({
@@ -27,16 +29,20 @@ const client = new lark.Client({
   domain: 'https://open.larksuite.com',
 });
 
-console.log('[info]: [ client ready ]');
+console.info('[info]: [ \'client ready\' ]');
 
-// Đăng ký sự kiện message.receive_v1
 const dispatcher = new lark.EventDispatcher({
   client,
   verificationToken: LARK_VERIFICATION_TOKEN,
   encryptKey: LARK_ENCRYPT_KEY,
-}).register({
-  'im.message.receive_v1': async ({ event }) => {
-    console.log('>>> Nhận được event:', JSON.stringify(event, null, 2));
+});
+
+console.info('[info]: [ \'event-dispatch is ready\' ]');
+
+dispatcher.register({
+  'im.message.receive_v1': async (ctx) => {
+    const event = ctx.event;
+    console.log('>>> Event nhận được:', JSON.stringify(event, null, 2));
 
     if (!event || !event.message) {
       console.warn('⚠️ event hoặc event.message không tồn tại');
@@ -44,10 +50,17 @@ const dispatcher = new lark.EventDispatcher({
     }
 
     const rawContent = event.message.content || '{}';
-    const parsed = JSON.parse(rawContent);
-    const userText = parsed.text || '[Không có nội dung]';
+    let parsedContent = {};
+    try {
+      parsedContent = JSON.parse(rawContent);
+    } catch (err) {
+      console.error('❌ Không thể parse content:', rawContent);
+    }
 
-    console.log('🧠 Người dùng gửi:', userText);
+    const userText = parsedContent.text || '[Không có nội dung]';
+    console.log('🧠 Tin nhắn từ người dùng:', userText);
+
+    let replyText = 'Bot đang gặp lỗi khi xử lý.';
 
     try {
       const openaiRes = await axios.post(
@@ -55,8 +68,8 @@ const dispatcher = new lark.EventDispatcher({
         {
           model: 'gpt-3.5-turbo',
           messages: [
-            { role: 'system', content: 'Bạn là trợ lý AI thân thiện.' },
-            { role: 'user', content: userText }
+            { role: 'system', content: 'Bạn là một trợ lý thân thiện.' },
+            { role: 'user', content: userText },
           ],
         },
         {
@@ -67,8 +80,12 @@ const dispatcher = new lark.EventDispatcher({
         }
       );
 
-      const replyText = openaiRes.data.choices[0].message.content;
+      replyText = openaiRes.data.choices[0].message.content;
+    } catch (err) {
+      console.error('❌ Lỗi khi gọi OpenAI:', err.message);
+    }
 
+    try {
       await client.im.message.reply({
         path: {
           message_id: event.message.message_id,
@@ -78,31 +95,17 @@ const dispatcher = new lark.EventDispatcher({
           content: JSON.stringify({ text: replyText }),
         },
       });
-
     } catch (err) {
-      console.error('❌ Lỗi xử lý message:', err);
-      // Phản hồi lỗi
-      try {
-        await client.im.message.reply({
-          path: {
-            message_id: event.message.message_id,
-          },
-          data: {
-            msg_type: 'text',
-            content: JSON.stringify({ text: 'Bot gặp lỗi khi xử lý. Vui lòng thử lại sau.' }),
-          },
-        });
-      } catch (e) {
-        console.error('❌ Lỗi khi gửi phản hồi lỗi:', e);
-      }
+      console.error('❌ Lỗi khi gửi phản hồi:', err.message);
     }
   }
 });
 
-console.log('[info]: [ event-dispatch is ready ]');
+app.post('/webhook', lark.adaptExpress(dispatcher, { autoChallenge: true }));
 
-app.use('/webhook', lark.adaptExpress(dispatcher, { autoChallenge: true }));
-app.get('/', (req, res) => res.send('✅ Bot đang chạy với OpenAI!'));
+app.get('/', (req, res) => {
+  res.send('✅ Bot đang chạy!');
+});
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
