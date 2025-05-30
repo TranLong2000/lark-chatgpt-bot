@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { Client, DefaultLogger, LogLevel } = require('@larksuiteoapi/node-sdk');
+const { Client, DefaultLogger } = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 
 const app = express();
@@ -9,12 +9,11 @@ app.use(express.json());
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
-  logger: new DefaultLogger({ level: LogLevel.INFO }),
+  logger: new DefaultLogger(),  // Không truyền level
 });
 
 const eventDispatcher = client.eventDispatcher;
 
-// Lắng nghe sự kiện message
 eventDispatcher.on('im.message.receive_v1', async (data) => {
   try {
     console.log('>>> Sự kiện nhận được:', JSON.stringify(data, null, 2));
@@ -38,7 +37,6 @@ eventDispatcher.on('im.message.receive_v1', async (data) => {
 
     console.log(`📩 Người dùng gửi: ${userMessage}`);
 
-    // Gọi OpenAI API
     const openaiRes = await axios.post(
       'https://api.openai.com/v1/chat/completions',
       {
@@ -56,15 +54,10 @@ eventDispatcher.on('im.message.receive_v1', async (data) => {
     const botReply = openaiRes.data.choices[0].message.content;
     console.log('🤖 Phản hồi từ ChatGPT:', botReply);
 
-    // Gửi tin nhắn lại cho người dùng
     await client.im.message.reply({
-      path: {
-        message_id: messageId,
-      },
+      path: { message_id: messageId },
       data: {
-        content: JSON.stringify({
-          text: botReply,
-        }),
+        content: JSON.stringify({ text: botReply }),
         msg_type: 'text',
       },
     });
