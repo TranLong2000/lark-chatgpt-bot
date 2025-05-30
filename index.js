@@ -2,7 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const bodyParser = require('body-parser');
-const { Client, createLogger } = require('@larksuiteoapi/node-sdk');
+const { Client } = require('@larksuiteoapi/node-sdk');
 const OpenAI = require('openai');
 
 const app = express();
@@ -15,7 +15,6 @@ const client = new Client({
   domain: 'https://open.larksuite.com',
   encryptKey: process.env.LARK_ENCRYPT_KEY,
   verificationToken: process.env.LARK_VERIFICATION_TOKEN,
-  logger: createLogger({ level: 'info' }), // ✅ sửa ở đây
 });
 
 const openai = new OpenAI({
