@@ -5,39 +5,38 @@ import bodyParser from 'koa-bodyparser';
 const app = new Koa();
 const router = new Router();
 
-const verifyToken = process.env.LARK_VERIFICATION_TOKEN || 'VGe82LO24Vl8HjmBlHtPNcbkpFpujLSX'; // Thay token thật nếu cần test hardcode
+const VERIFY_TOKEN = process.env.LARK_VERIFICATION_TOKEN || 'VGe82LO24Vl8HjmBlHtPNcbkpFpujLSX';
 
 router.post('/webhook', async (ctx) => {
-  const tokenFromHeader = ctx.headers['x-lark-request-token'];
+  const verifyToken = ctx.headers['x-lark-verify-token'];
+  console.log('Expected verify token:', VERIFY_TOKEN);
+  console.log('Received token from header:', verifyToken);
 
-  console.log('--- WEBHOOK RECEIVED ---');
-  console.log('Expected verify token:', verifyToken);
-  console.log('Received token from header:', tokenFromHeader);
-  console.log('Request body:', ctx.request.body);
-
-  if (!tokenFromHeader) {
-    console.log('[❌] Missing verify token in header!');
+  if (!verifyToken) {
+    console.error('[❌] Missing verify token in header!');
     ctx.status = 401;
-    ctx.body = '[❌] Missing verify token';
+    ctx.body = 'Missing verify token';
     return;
   }
 
-  if (tokenFromHeader !== verifyToken) {
-    console.log('[❌] Invalid verify token:', tokenFromHeader);
+  if (verifyToken !== VERIFY_TOKEN) {
+    console.error('[❌] Invalid verify token:', verifyToken);
     ctx.status = 401;
-    ctx.body = '[❌] Invalid verify token: ' + tokenFromHeader;
+    ctx.body = 'Invalid verify token';
     return;
   }
 
-  // Xử lý sự kiện từ Lark ở đây
-  ctx.status = 200;
+  // Xử lý payload webhook ở đây
+  const payload = ctx.request.body;
+  console.log('Webhook payload:', payload);
+
   ctx.body = 'ok';
 });
 
 app.use(bodyParser());
 app.use(router.routes()).use(router.allowedMethods());
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Server started on port ${port}`);
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`Server started on port ${PORT}`);
 });
