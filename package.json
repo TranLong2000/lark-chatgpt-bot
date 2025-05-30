@@ -1,16 +1,14 @@
 {
   "name": "lark-gpt-bot",
   "version": "1.0.0",
-  "description": "Lark chatbot tích hợp OpenAI GPT",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "dotenv": "^16.0.3",
+    "@larksuiteoapi/node-sdk": "^1.4.1",
+    "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "node-fetch": "^3.3.1",
-    "openai": "^4.14.0"
-  },
-  "type": "module"
+    "openai": "^4.29.1"
+  }
 }
