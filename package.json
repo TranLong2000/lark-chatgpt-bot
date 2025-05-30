@@ -9,6 +9,7 @@
   "dependencies": {
     "koa": "^2.14.2",
     "koa-bodyparser": "^4.3.0",
+    "koa-router": "^12.0.0",               // ← THÊM DÒNG NÀY
     "@larksuiteoapi/node-sdk": "^1.2.4",
     "openai": "^4.20.0"
   }
