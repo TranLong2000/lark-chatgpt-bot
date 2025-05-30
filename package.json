@@ -7,7 +7,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "^3.0.0",
+    "@larksuiteoapi/node-sdk": "^2.0.8",
     "koa": "^2.13.4",
     "koa-bodyparser": "^4.3.0",
     "openai": "^4.27.0"
