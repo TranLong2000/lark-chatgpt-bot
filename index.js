@@ -1,88 +1,76 @@
-require('dotenv').config();
 const express = require('express');
-const fetch = require('node-fetch');
 const bodyParser = require('body-parser');
+const { default: LarkClient, EVENT } = require('@larksuiteoapi/node-sdk');
+const { OpenAI } = require('openai');
 
-// Lấy tenant_access_token từ Lark
-async function getTenantAccessToken() {
-  const response = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      app_id: process.env.LARK_APP_ID,
-      app_secret: process.env.LARK_APP_SECRET
-    })
-  });
+require('dotenv').config();
 
-  const data = await response.json();
-  if (data.code !== 0) {
-    console.error('[❌] Failed to get token:', data);
-    return null;
-  }
-
-  console.log('[✅] Lấy token thành công');
-  return data.tenant_access_token;
-}
-
-let tenantAccessToken = null;
-
-// Hàm gửi message trả lời về Lark
-async function replyToLarkMessage(openId, content) {
-  if (!tenantAccessToken) {
-    tenantAccessToken = await getTenantAccessToken();
-  }
-
-  const response = await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=open_id', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${tenantAccessToken}`
-    },
-    body: JSON.stringify({
-      receive_id: openId,
-      msg_type: 'text',
-      content: JSON.stringify({ text: content })
-    })
-  });
-
-  const data = await response.json();
-  if (data.code !== 0) {
-    console.error('[❌] Lỗi khi gửi message:', data);
-  } else {
-    console.log('[✅] Đã gửi message thành công');
-  }
-}
-
-// Tạo server Express
 const app = express();
 app.use(bodyParser.json());
 
-// Endpoint webhook
+// Khởi tạo Lark Client
+const client = new LarkClient({
+  appId: process.env.LARK_APP_ID,
+  appSecret: process.env.LARK_APP_SECRET,
+  encryptKey: process.env.LARK_ENCRYPT_KEY,
+  verificationToken: process.env.LARK_VERIFICATION_TOKEN,
+  domain: process.env.LARK_DOMAIN || 'https://open.larksuite.com',
+});
+
+// Khởi tạo OpenAI Client
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+// Webhook xử lý tin nhắn
 app.post('/webhook', async (req, res) => {
-  const { type, challenge, event } = req.body;
+  const body = req.body;
 
-  // Bắt tay verify token
-  if (type === 'url_verification') {
-    return res.send({ challenge });
+  // Xác thực token
+  if (body.token !== process.env.LARK_VERIFICATION_TOKEN) {
+    console.error('[❌] Invalid verify token:', body.token);
+    return res.status(401).send('Unauthorized');
   }
 
-  // Nhận message
-  if (event && event.message) {
-    const openId = event.sender.sender_id.open_id;
-    const userMessage = event.message.content;
-
-    console.log('[📩] Nhận message:', userMessage);
-
-    // Gửi lại một câu trả lời mẫu
-    await replyToLarkMessage(openId, 'Bot đã nhận được tin nhắn của bạn!');
+  // Xử lý challenge verification
+  if (body.type === 'url_verification') {
+    return res.send({ challenge: body.challenge });
   }
 
-  res.sendStatus(200);
+  // Xử lý message event
+  if (body.header && body.header.event_type === 'im.message.receive_v1') {
+    const message = body.event.message;
+    const senderId = body.event.sender.sender_id.user_id;
+
+    const text = JSON.parse(message.content).text;
+
+    try {
+      const chatResponse = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: text }],
+      });
+
+      const reply = chatResponse.choices[0].message.content;
+
+      await client.im.message.create({
+        data: {
+          receive_id_type: 'user_id',
+          content: JSON.stringify({ text: reply }),
+          msg_type: 'text',
+          receive_id: senderId,
+        },
+      });
+
+    } catch (err) {
+      console.error('Lỗi GPT hoặc gửi tin nhắn:', err);
+    }
+  }
+
+  res.status(200).send('OK');
 });
 
 // Khởi động server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  tenantAccessToken = await getTenantAccessToken(); // Lấy token lần đầu
-  console.log(`🚀 Server đang chạy tại http://localhost:${PORT}`);
+const PORT = process.env.PORT || 8080;
+app.listen(PORT, () => {
+  console.log(`🚀 Server is running on port ${PORT}`);
 });
