@@ -1,8 +1,8 @@
-const express = require('express'); 
+const express = require('express');
 const lark = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 
-// Chỉ load dotenv khi chạy local
+// Chỉ load .env khi không chạy production (Railway đã inject env sẵn)
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
@@ -33,7 +33,9 @@ const dispatcher = new lark.EventDispatcher({
   verificationToken: LARK_VERIFICATION_TOKEN,
   encryptKey: LARK_ENCRYPT_KEY,
 }).register({
-  'im.message.receive_v1': async ({ event }) => {
+  'im.message.receive_v1': async (params) => {
+    const event = params.event;
+
     try {
       console.log('>>> Event nhận được:', JSON.stringify(event, null, 2));
 
@@ -56,7 +58,7 @@ const dispatcher = new lark.EventDispatcher({
       const tokenRes = await client.tenantAccessToken.get();
       const tenantAccessToken = tokenRes.tenant_access_token;
 
-      // Gọi OpenAI Chat Completion API
+      // Gọi OpenAI Chat Completion
       const openaiRes = await axios.post(
         'https://api.openai.com/v1/chat/completions',
         {
@@ -76,52 +78,35 @@ const dispatcher = new lark.EventDispatcher({
 
       const replyText = openaiRes.data.choices[0].message.content;
 
-      // Gửi tin nhắn trả lời
+      // Gửi phản hồi đến user
       await client.im.message.create({
         headers: {
           Authorization: `Bearer ${tenantAccessToken}`,
         },
-        data: {
+        params: {
           receive_id_type: 'user_id',
+        },
+        data: {
           receive_id: event.sender.sender_id.user_id,
-          content: JSON.stringify({ text: replyText }),
           msg_type: 'text',
+          content: JSON.stringify({ text: replyText }),
         },
       });
 
       console.log('✅ Đã gửi phản hồi thành công');
-
     } catch (err) {
       console.error('❌ Lỗi xử lý message:', err);
-
-      // Thử gửi tin nhắn lỗi cho user
-      try {
-        const tokenRes = await client.tenantAccessToken.get();
-        const tenantAccessToken = tokenRes.tenant_access_token;
-
-        await client.im.message.create({
-          headers: {
-            Authorization: `Bearer ${tenantAccessToken}`,
-          },
-          data: {
-            receive_id_type: 'user_id',
-            receive_id: event?.sender?.sender_id?.user_id || '',
-            content: JSON.stringify({ text: 'Bot gặp lỗi khi xử lý. Vui lòng thử lại sau.' }),
-            msg_type: 'text',
-          },
-        });
-      } catch (error) {
-        console.error('❌ Lỗi gửi phản hồi lỗi:', error);
-      }
     }
   },
 });
 
 app.use('/webhook', lark.adaptExpress(dispatcher, { autoChallenge: true }));
 
-app.get('/', (req, res) => res.send('✅ Bot đang chạy với OpenAI!'));
+app.get('/', (req, res) => {
+  res.send('✅ Bot Lark x OpenAI đang chạy');
+});
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`🚀 Server chạy tại cổng ${PORT}`);
+  console.log(`🚀 Server đang chạy tại cổng ${PORT}`);
 });
