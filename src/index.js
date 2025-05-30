@@ -1,4 +1,4 @@
-const express = require('express');
+const express = require('express'); 
 const lark = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 require('dotenv').config();
@@ -92,7 +92,7 @@ app.use('/webhook', lark.adaptExpress(dispatcher, { autoChallenge: true }));
 
 app.get('/', (req, res) => res.send('✅ Bot đang chạy với OpenAI!'));
 
-const PORT = process.env.POST || 8080;
+const PORT = process.env.PORT || 8080;  // Sửa POST thành PORT
 app.listen(PORT, () => {
   console.log(`🚀 Server chạy tại cổng ${PORT}`);
 });
