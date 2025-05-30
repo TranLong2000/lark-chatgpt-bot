@@ -2,7 +2,7 @@ const express = require('express');
 const lark = require('@larksuiteoapi/node-sdk');
 const axios = require('axios');
 
-// Chỉ load dotenv khi chạy local, tránh lỗi deploy cloud không có module dotenv
+// Load dotenv khi chưa phải production
 if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
@@ -34,9 +34,10 @@ const dispatcher = new lark.EventDispatcher({
   encryptKey: LARK_ENCRYPT_KEY,
 }).register({
   'im.message.receive_v1': async ({ event }) => {
-    console.log('🔔 Nhận event im.message.receive_v1:', event);
-
     try {
+      console.log('>>> Đã nhận event im.message.receive_v1');
+      console.log('Event:', JSON.stringify(event));
+
       const rawContent = event.message.content || '{}';
       const parsed = JSON.parse(rawContent);
       const userText = parsed.text || '[Không có nội dung]';
@@ -62,37 +63,51 @@ const dispatcher = new lark.EventDispatcher({
       );
 
       const replyText = openaiRes.data.choices[0].message.content;
-      console.log('🤖 Phản hồi AI:', replyText);
 
-      // Gửi lại phản hồi đến người dùng trên Lark (gửi message mới)
+      // Lấy Tenant Access Token để gửi tin nhắn
+      const tokenRes = await client.tenantAccessToken.get();
+      const tenantAccessToken = tokenRes.tenant_access_token;
+
+      // Gửi lại phản hồi đến người dùng trên Lark
       await client.im.message.create({
+        headers: {
+          Authorization: `Bearer ${tenantAccessToken}`,
+        },
         data: {
-          receive_id_type: 'message_id',
-          receive_id: event.message.message_id,
-          msg_type: 'text',
+          receive_id_type: 'user_id',
+          receive_id: event.sender.sender_id.user_id,
           content: JSON.stringify({
             text: replyText,
           }),
+          msg_type: 'text',
         },
       });
+
+      console.log('✅ Đã gửi phản hồi thành công');
 
     } catch (err) {
       console.error('❌ Lỗi xử lý message:', err);
 
-      // Gửi tin nhắn lỗi cho người dùng
       try {
+        // Lấy tenant token để gửi message lỗi
+        const tokenRes = await client.tenantAccessToken.get();
+        const tenantAccessToken = tokenRes.tenant_access_token;
+
         await client.im.message.create({
+          headers: {
+            Authorization: `Bearer ${tenantAccessToken}`,
+          },
           data: {
-            receive_id_type: 'message_id',
-            receive_id: event.message.message_id,
-            msg_type: 'text',
+            receive_id_type: 'user_id',
+            receive_id: event.sender.sender_id.user_id,
             content: JSON.stringify({
               text: 'Bot gặp lỗi khi xử lý. Vui lòng thử lại sau.',
             }),
+            msg_type: 'text',
           },
         });
-      } catch (err2) {
-        console.error('❌ Lỗi gửi tin nhắn lỗi:', err2);
+      } catch (error) {
+        console.error('❌ Lỗi gửi phản hồi lỗi:', error);
       }
     }
   },
