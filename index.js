@@ -1,91 +1,81 @@
 import Koa from 'koa';
 import Router from 'koa-router';
 import bodyParser from 'koa-bodyparser';
-import axios from 'axios';
-import { OpenAI } from 'openai';
 import dotenv from 'dotenv';
+import { Client, createLarkMiddleware } from '@larksuiteoapi/node-sdk';
+import OpenAI from 'openai';
 
 dotenv.config();
 
-const app = new Koa();
-const router = new Router();
-const PORT = process.env.PORT || 8080;
+// Khởi tạo Lark client
+const larkClient = new Client({
+  appId: process.env.LARK_APP_ID,
+  appSecret: process.env.LARK_APP_SECRET,
+  disableTokenCache: false,
+  domain: 'https://open.larksuite.com',
+});
 
-// Init OpenAI
+// Khởi tạo OpenAI client
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Get tenant access token
-let tenantToken = null;
-async function getTenantAccessToken() {
-  const res = await axios.post('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-    app_id: process.env.LARK_APP_ID,
-    app_secret: process.env.LARK_APP_SECRET,
-  });
-  tenantToken = res.data.tenant_access_token;
-  console.log('[✅] Tenant token acquired.');
-}
-await getTenantAccessToken();
+// Tạo app Koa
+const app = new Koa();
+const router = new Router();
 
-// Handle Lark webhook
-router.post('/webhook', async (ctx) => {
-  const event = ctx.request.body;
+// Xử lý webhook từ Lark
+router.post('/webhook', createLarkMiddleware({
+  appId: process.env.LARK_APP_ID,
+  appSecret: process.env.LARK_APP_SECRET,
+  encryptKey: process.env.LARK_ENCRYPT_KEY,
+  verificationToken: process.env.LARK_VERIFICATION_TOKEN,
+  eventHandler: async (event) => {
+    console.log('[✅] Event received:', JSON.stringify(event, null, 2));
 
-  // Decrypt (Lark may send encrypted data — skip for now if plaintext)
-  const message = event.event?.message;
-  if (!message) {
-    ctx.status = 400;
-    ctx.body = 'No message received';
-    return;
-  }
+    if (event.header.event_type === 'im.message.receive_v1') {
+      const messageId = event.event.message.message_id;
+      const content = JSON.parse(event.event.message.content);
+      const userMessage = content.text;
 
-  const userMessage = message.content ? JSON.parse(message.content).text : '';
-  const chatId = message.chat_id;
+      console.log('User message:', userMessage);
 
-  console.log('🔹 User message:', userMessage);
+      try {
+        const aiResponse = await openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: 'Bạn là trợ lý AI.' },
+            { role: 'user', content: userMessage }
+          ],
+        });
 
-  // Send message to OpenAI
-  try {
-    const completion = await openai.chat.completions.create({
-      messages: [{ role: 'user', content: userMessage }],
-      model: 'gpt-4',
-    });
+        const reply = aiResponse.choices[0].message.content;
 
-    const botReply = completion.choices[0].message.content;
+        await larkClient.im.message.reply({
+          path: {
+            message_id: messageId,
+          },
+          data: {
+            content: JSON.stringify({ text: reply }),
+            msg_type: 'text',
+          },
+        });
 
-    // Reply to user
-    await axios.post(
-      'https://open.larksuite.com/open-apis/im/v1/messages',
-      {
-        receive_id: chatId,
-        msg_type: 'text',
-        content: JSON.stringify({ text: botReply }),
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${tenantToken}`,
-          'Content-Type': 'application/json',
-        },
-        params: {
-          receive_id_type: 'chat_id',
-        },
+        console.log('[✅] Replied to message');
+      } catch (err) {
+        console.error('[❌] Error while calling OpenAI or replying:', err);
       }
-    );
+    }
+  },
+}));
 
-    ctx.status = 200;
-    ctx.body = 'OK';
-  } catch (err) {
-    console.error('❌ OpenAI or Lark error:', err.message);
-    ctx.status = 500;
-    ctx.body = 'Internal error';
-  }
-});
-
+// Middleware
 app.use(bodyParser());
 app.use(router.routes());
 app.use(router.allowedMethods());
 
+// Start server
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`🚀 Server started on port ${PORT}`);
 });
