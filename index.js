@@ -2,15 +2,15 @@ import Koa from 'koa';
 import Router from 'koa-router';
 import bodyParser from 'koa-bodyparser';
 import dotenv from 'dotenv';
-import lark from '@larksuiteoapi/node-sdk';
+import larkSDK from '@larksuiteoapi/node-sdk'; // 👈 import default
 import { OpenAI } from 'openai';
 
 dotenv.config();
 
+const { createClient } = larkSDK; // 👈 lấy hàm từ object default
+
 const app = new Koa();
 const router = new Router();
-
-const { createClient } = lark;
 
 const client = createClient({
   appId: process.env.LARK_APP_ID,
@@ -24,7 +24,7 @@ const openai = new OpenAI({
 router.post('/webhook', async (ctx) => {
   const { challenge, header, event } = ctx.request.body;
 
-  // Trả challenge khi verify
+  // Trả về challenge nếu có (xác minh webhook lần đầu)
   if (challenge) {
     ctx.body = { challenge };
     return;
@@ -57,7 +57,7 @@ router.post('/webhook', async (ctx) => {
       ctx.status = 200;
       ctx.body = 'OK';
     } catch (err) {
-      console.error('❌ Error handling message:', err);
+      console.error('❌ OpenAI Error:', err);
       ctx.status = 500;
       ctx.body = 'Internal Server Error';
     }
@@ -73,5 +73,5 @@ app.use(router.allowedMethods());
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server is running on port ${PORT}`);
 });
