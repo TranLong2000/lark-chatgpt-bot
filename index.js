@@ -1,112 +1,61 @@
 import express from 'express';
-import crypto from 'crypto';
-import dotenv from 'dotenv';
+import bodyParser from 'body-parser';
 import axios from 'axios';
+import dotenv from 'dotenv';
 
 dotenv.config();
+
 const app = express();
-app.use(express.json());
+const port = process.env.PORT || 8080;
 
-const PORT = process.env.PORT || 3000;
+app.use(bodyParser.json());
 
-// Lấy access token động từ Lark
-let cachedToken = null;
-let tokenExpire = 0;
-
-async function getTenantAccessToken() {
-  const now = Date.now();
-  if (cachedToken && now < tokenExpire) {
-    return cachedToken;
-  }
-
-  const res = await axios.post('https://open.larkoffice.com/open-apis/auth/v3/tenant_access_token/internal', {
-    app_id: process.env.LARK_APP_ID,
-    app_secret: process.env.LARK_APP_SECRET
-  });
-
-  cachedToken = res.data.tenant_access_token;
-  tokenExpire = now + res.data.expire * 1000 - 60_000; // Trừ 1 phút dự phòng
-  return cachedToken;
-}
-
-// Hàm xác minh chữ ký Lark
-function verifySignature(req) {
-  const timestamp = req.headers['x-lark-request-timestamp'];
-  const nonce = req.headers['x-lark-request-nonce'];
-  const signature = req.headers['x-lark-signature'];
-  const body = JSON.stringify(req.body);
-  const encryptKey = process.env.LARK_ENCRYPT_KEY;
-
-  const raw = timestamp + nonce + encryptKey + body;
-  const hash = crypto.createHash('sha256').update(raw).digest('hex');
-  return hash === signature;
-}
-
-// Endpoint webhook
 app.post('/webhook', async (req, res) => {
   const event = req.body;
 
-  // Trả lời challenge khi verify
-  if (event.type === 'url_verification') {
-    return res.send({ challenge: event.challenge });
-  }
+  if (event?.header?.event_type === 'im.message.receive_v1') {
+    const messageId = event.event.message.message_id;
+    const userMessage = event.event.message.content;
 
-  if (!verifySignature(req)) {
-    return res.status(401).send('Invalid signature');
-  }
+    console.log('🔔 Received message:', userMessage);
 
-  // Xử lý tin nhắn
-  if (event.header.event_type === 'im.message.receive_v1') {
-    const message = event.event.message;
-    const senderId = event.event.sender.sender_id.user_id;
-
-    // Giải mã nội dung tin nhắn (giả sử text/plain)
-    const content = JSON.parse(message.content);
-    const text = content.text;
-
-    // Gọi OpenAI ChatGPT API
-    let reply = 'Xin lỗi, tôi không thể trả lời ngay bây giờ.';
     try {
-      const openaiRes = await axios.post('https://api.openai.com/v1/chat/completions', {
-        model: 'gpt-3.5-turbo',
-        messages: [{ role: 'user', content: text }]
-      }, {
-        headers: {
-          'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      reply = openaiRes.data.choices[0].message.content;
-    } catch (err) {
-      console.error('Lỗi gọi OpenAI:', err?.response?.data || err.message);
-    }
-
-    // Gửi lại tin nhắn cho người dùng
-    try {
-      const token = await getTenantAccessToken();
-
-      await axios.post('https://open.larkoffice.com/open-apis/im/v1/messages', {
-        receive_id: senderId,
-        content: JSON.stringify({ text: reply }),
-        msg_type: 'text'
-      }, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
+      const completion = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model: 'gpt-3.5-turbo',
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            { role: 'user', content: userMessage }
+          ],
         },
-        params: {
-          receive_id_type: 'user_id'
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
         }
-      });
-    } catch (err) {
-      console.error('Lỗi gửi tin nhắn về Lark:', err?.response?.data || err.message);
+      );
+
+      const reply = completion.data.choices[0].message.content;
+      console.log('💬 Replying with:', reply);
+
+      // TODO: Gửi trả lời về Lark ở đây nếu cần
+
+    } catch (error) {
+      console.error('❌ Error from OpenAI:', error?.response?.data || error.message);
     }
+  } else {
+    console.log('⛔ Không phải message event hoặc thiếu header:', event);
   }
 
-  res.sendStatus(200);
+  res.status(200).send('OK');
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+app.get('/', (req, res) => {
+  res.send('Bot is running');
+});
+
+app.listen(port, () => {
+  console.log(`✅ Server is running on port ${port}`);
 });
