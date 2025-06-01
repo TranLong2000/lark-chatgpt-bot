@@ -2,13 +2,12 @@ import Koa from 'koa';
 import Router from 'koa-router';
 import bodyParser from 'koa-bodyparser';
 import dotenv from 'dotenv';
-import larkSDK from '@larksuiteoapi/node-sdk'; // 👈 import default
-import { OpenAI } from 'openai';
+import larkSDK from '@larksuiteoapi/node-sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
-const { createClient } = larkSDK; // 👈 lấy hàm từ object default
-
+const { createClient } = larkSDK;
 const app = new Koa();
 const router = new Router();
 
@@ -17,14 +16,15 @@ const client = createClient({
   appSecret: process.env.LARK_APP_SECRET,
 });
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
+
+// 👉 Lưu hội thoại theo userId
+const chatSessions = new Map(); // userId => chat object
 
 router.post('/webhook', async (ctx) => {
-  const { challenge, header, event } = ctx.request.body;
+  const { challenge, event } = ctx.request.body;
 
-  // Trả về challenge nếu có (xác minh webhook lần đầu)
   if (challenge) {
     ctx.body = { challenge };
     return;
@@ -35,16 +35,25 @@ router.post('/webhook', async (ctx) => {
     const userId = event.sender.sender_id.user_id;
 
     try {
-      const chatCompletion = await openai.chat.completions.create({
-        model: 'gpt-4',
-        messages: [
-          { role: 'system', content: 'Bạn là trợ lý AI của Lark.' },
-          { role: 'user', content: messageText },
-        ],
-      });
+      // Lấy hoặc tạo session chat mới
+      let chat = chatSessions.get(userId);
+      if (!chat) {
+        chat = model.startChat({
+          history: [
+            {
+              role: 'system',
+              parts: [{ text: 'Bạn là trợ lý AI của Lark.' }],
+            },
+          ],
+        });
+        chatSessions.set(userId, chat);
+      }
 
-      const reply = chatCompletion.choices[0].message.content;
+      // Gửi tin nhắn người dùng vào hội thoại
+      const result = await chat.sendMessage(messageText);
+      const reply = result.response.text();
 
+      // Gửi lại cho Lark
       await client.im.message.create({
         receive_id_type: 'user_id',
         body: {
@@ -57,7 +66,7 @@ router.post('/webhook', async (ctx) => {
       ctx.status = 200;
       ctx.body = 'OK';
     } catch (err) {
-      console.error('❌ OpenAI Error:', err);
+      console.error('❌ Gemini Error:', err);
       ctx.status = 500;
       ctx.body = 'Internal Server Error';
     }
