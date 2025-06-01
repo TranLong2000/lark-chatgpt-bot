@@ -7,7 +7,12 @@ require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// Khởi tạo OpenAI client với baseURL OpenRouter
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  baseURL: 'https://openrouter.ai/api/v1',
+});
 
 app.use(bodyParser.json());
 
@@ -91,8 +96,9 @@ app.post('/webhook', async (req, res) => {
       const parsedContent = JSON.parse(messageText);
       const userMessage = parsedContent.text;
 
+      // Gọi OpenRouter GPT
       const chatResponse = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'openai/gpt-3.5-turbo',  // hoặc 'gpt-4o-mini' nếu bạn muốn
         messages: [{ role: 'user', content: userMessage }],
       });
 
