@@ -1,8 +1,7 @@
 const express = require('express');
 const crypto = require('crypto');
 const dotenv = require('dotenv');
-const { createOpenAI } = require('@ai-sdk/openai');
-const { streamText } = require('ai');
+const { Configuration, OpenAIApi } = require('openai');
 const { MessageCrypto } = require('@larksuiteoapi/core');
 const fetch = require('node-fetch');
 
@@ -11,7 +10,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Giữ rawBody để verify chữ ký
 app.use(express.json({
   verify: (req, res, buf) => {
     req.rawBody = buf.toString();
@@ -22,6 +20,10 @@ const larkCrypto = new MessageCrypto({
   encryptKey: process.env.LARK_ENCRYPT_KEY,
   verificationToken: process.env.LARK_VERIFICATION_TOKEN,
 });
+
+const openai = new OpenAIApi(new Configuration({
+  apiKey: process.env.OPENAI_API_KEY,
+}));
 
 app.post('/webhook', async (req, res) => {
   const timestamp = req.headers['x-lark-request-timestamp'];
@@ -62,19 +64,14 @@ app.post('/webhook', async (req, res) => {
     if (userMessage) {
       console.log(`[User Message]: ${userMessage}`);
 
-      const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
-      const { textStream } = await streamText({
-        model: openai.chat('gpt-4o'),
-        messages: [{ role: 'user', content: userMessage }],
+      const completion = await openai.createChatCompletion({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'user', content: userMessage },
+        ],
       });
 
-      const chunks = [];
-      for await (const chunk of textStream) {
-        chunks.push(chunk.text);
-      }
-
-      const finalResponse = chunks.join('');
+      const finalResponse = completion.data.choices[0].message.content;
       console.log(`[Assistant Reply]: ${finalResponse}`);
 
       await fetch('https://open.larksuite.com/open-apis/im/v1/messages', {
