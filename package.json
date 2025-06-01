@@ -2,16 +2,11 @@
   "name": "lark-gpt-bot",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@larksuiteoapi/node-sdk": "^1.0.1",
-    "koa": "^2.14.1",
-    "koa-bodyparser": "^4.3.0",
-    "koa-router": "^10.1.1",
-    "dotenv": "^16.0.3",
-    "axios": "^1.4.0"
+    "axios": "^1.9.0",
+    "dotenv": "^16.0.0"
   }
 }
