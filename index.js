@@ -1,53 +1,24 @@
-import axios from 'axios';
-import Koa from 'koa';
-import Router from 'koa-router';
-import bodyParser from 'koa-bodyparser';
-import dotenv from 'dotenv';
-dotenv.config();
+require('dotenv').config();
+const axios = require('axios');
 
-const app = new Koa();
-const router = new Router();
+const apiKey = process.env.GEMINI_API_KEY;
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-
-router.post('/webhook', async (ctx) => {
-  const { text } = ctx.request.body; // giả sử Lark gửi message text ở đây
-
-  // Gọi Gemini API qua REST (ví dụ giả định)
+async function callGemini(text) {
   try {
-    const response = await axios.post(
-      'https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateText',
-      {
-        prompt: { text },
-        temperature: 0.7,
-        candidateCount: 1,
-        maxOutputTokens: 1024,
-      },
-      {
-        headers: {
-          'Authorization': `Bearer ${GEMINI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-
-    const replyText = response.data.candidates[0].output;
-
-    ctx.body = {
-      reply: replyText,
-    };
+    const url = `https://generativelanguage.googleapis.com/v1beta2/models/text-bison-001:generateText?key=${apiKey}`;
+    
+    const response = await axios.post(url, {
+      prompt: { text },
+      temperature: 0.7,
+      candidateCount: 1,
+      maxOutputTokens: 1024,
+    });
+    console.log("Response from Gemini:", response.data);
+    return response.data;
   } catch (error) {
-    console.error('Error calling Gemini API:', error);
-    ctx.status = 500;
-    ctx.body = { error: 'Failed to call Gemini API' };
+    console.error("Error calling Gemini API:", error.response?.data || error.message);
   }
-});
+}
 
-app.use(bodyParser());
-app.use(router.routes());
-app.use(router.allowedMethods());
-
-const port = process.env.PORT || 8080;
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+// Ví dụ gọi
+callGemini("Xin chào thế giới!");
