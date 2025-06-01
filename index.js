@@ -2,44 +2,43 @@ import Koa from 'koa';
 import Router from 'koa-router';
 import bodyParser from 'koa-bodyparser';
 import dotenv from 'dotenv';
-import larkSDK from '@larksuiteoapi/node-sdk';
+import { Client } from '@larksuiteoapi/node-sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
 
-const { createClient } = larkSDK;
 const app = new Koa();
 const router = new Router();
 
-// Tạo Lark client
-const client = createClient({
+// Tạo client cho Lark
+const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
+  appType: 'self',
+  domain: process.env.LARK_DOMAIN || 'https://open.larksuite.com',
 });
 
-// Tạo Gemini model
+// Tạo model Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
 
-// Map để lưu trạng thái hội thoại của từng user
+// Lưu session hội thoại theo user
 const chatSessions = new Map();
 
 router.post('/webhook', async (ctx) => {
   const { challenge, event } = ctx.request.body;
 
-  // Trả về challenge để xác minh webhook
   if (challenge) {
     ctx.body = { challenge };
     return;
   }
 
-  // Xử lý sự kiện message
   if (event && event.message) {
     const messageText = event.message.content;
     const userId = event.sender.sender_id.user_id;
 
     try {
-      // Lấy hoặc tạo phiên hội thoại cho user
+      // Tạo hoặc lấy hội thoại của user
       let chat = chatSessions.get(userId);
       if (!chat) {
         chat = model.startChat({
@@ -53,11 +52,10 @@ router.post('/webhook', async (ctx) => {
         chatSessions.set(userId, chat);
       }
 
-      // Gửi câu hỏi người dùng vào hội thoại
       const result = await chat.sendMessage(messageText);
       const reply = result.response.text();
 
-      // Gửi phản hồi lại cho người dùng qua Lark
+      // Gửi phản hồi lại cho người dùng
       await client.im.message.create({
         receive_id_type: 'user_id',
         body: {
