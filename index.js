@@ -1,112 +1,116 @@
 import express from 'express';
 import crypto from 'crypto';
-import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
+import axios from 'axios';
 import { OpenAI } from 'openai';
 
 dotenv.config();
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
 const PORT = process.env.PORT || 8080;
-const VERIFICATION_TOKEN = process.env.LARK_VERIFICATION_TOKEN;
-const ENCRYPT_KEY_BASE64 = process.env.LARK_ENCRYPT_KEY;
-
-if (!ENCRYPT_KEY_BASE64) {
-  throw new Error("Thiếu biến môi trường LARK_ENCRYPT_KEY");
-}
-
-const ENCRYPT_KEY = Buffer.from(ENCRYPT_KEY_BASE64, 'base64');
-if (ENCRYPT_KEY.length !== 32) {
-  throw new Error(`LARK_ENCRYPT_KEY sau decode phải đủ 32 bytes, hiện tại là ${ENCRYPT_KEY.length}`);
-}
-
-const decrypt = (encrypt) => {
-  const encryptedData = Buffer.from(encrypt, 'base64');
-  const iv = encryptedData.subarray(0, 16);
-  const ciphertext = encryptedData.subarray(16);
-
-  const decipher = crypto.createDecipheriv('aes-256-cbc', ENCRYPT_KEY, iv);
-  let decrypted = decipher.update(ciphertext, null, 'utf8');
-  decrypted += decipher.final('utf8');
-  return JSON.parse(decrypted);
-};
 
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
-app.post('/webhook', async (req, res) => {
-  const { encrypt, challenge, token, type, schema } = req.body;
+function decryptEncryptKey(encryptKey, iv) {
+  const key = Buffer.from(encryptKey, 'base64');
 
-  // 1. Verification challenge
-  if (type === 'url_verification') {
+  if (key.length !== 32) {
+    throw new Error(`LARK_ENCRYPT_KEY sau decode phải đủ 32 bytes, hiện tại là ${key.length}`);
+  }
+
+  const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+  return (encrypted) => {
+    const encryptedBuffer = Buffer.from(encrypted, 'base64');
+    let decrypted = decipher.update(encryptedBuffer, undefined, 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+  };
+}
+
+async function getTenantAccessToken() {
+  const res = await axios.post('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+    app_id: process.env.LARK_APP_ID,
+    app_secret: process.env.LARK_APP_SECRET,
+  });
+
+  return res.data.tenant_access_token;
+}
+
+async function sendLarkMessage(receiveId, text) {
+  const token = await getTenantAccessToken();
+
+  try {
+    const res = await axios.post(
+      `https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=user_id`,
+      {
+        receive_id: receiveId,
+        msg_type: 'text',
+        content: JSON.stringify({ text }),
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    console.log('✅ Đã gửi tin nhắn thành công tới user:', receiveId);
+  } catch (err) {
+    console.error('❌ Gửi tin nhắn Lark thất bại!');
+    if (err.response) {
+      console.error('👉 Response code:', err.response.status);
+      console.error('👉 Response data:', err.response.data);
+    } else {
+      console.error('👉 Lỗi khác:', err.message);
+    }
+  }
+}
+
+app.post('/webhook', async (req, res) => {
+  const { challenge, encrypt, header } = req.body;
+
+  if (challenge) {
     return res.json({ challenge });
   }
 
-  // 2. Token verification
-  if (token !== VERIFICATION_TOKEN) {
-    return res.status(401).send('Invalid token');
-  }
-
   try {
-    const eventBody = decrypt(encrypt);
-    const eventType = eventBody.header?.event_type;
+    const iv = Buffer.from('0000000000000000');
+    const decrypt = decryptEncryptKey(process.env.LARK_ENCRYPT_KEY, iv);
+    const decrypted = JSON.parse(decrypt(encrypt));
 
-    if (eventType === 'im.message.receive_v1') {
-      const messageText = eventBody.event?.message?.content;
-      const parsedContent = JSON.parse(messageText);
-      const userMessage = parsedContent.text?.trim();
+    const event = decrypted.event;
 
-      if (userMessage) {
-        const reply = await openai.chat.completions.create({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            { role: 'system', content: 'Bạn là trợ lý AI hữu ích.' },
-            { role: 'user', content: userMessage }
-          ]
-        });
+    if (event.message && event.message.message_type === 'text') {
+      const userMessage = JSON.parse(event.message.content).text;
+      const userId = event.sender.sender_id.user_id;
 
-        const replyText = reply.choices[0].message.content;
-        const replyPayload = {
-          receive_id: eventBody.event.sender.sender_id.user_id,
-          msg_type: 'text',
-          content: JSON.stringify({ text: replyText })
-        };
+      console.log('📥 Nhận tin nhắn từ user:', userId, '-', userMessage);
 
-        // Gửi lại reply về cho Lark
-        await fetch('https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=user_id', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${await getTenantToken()}`
-          },
-          body: JSON.stringify(replyPayload)
-        });
-      }
+      const reply = await openai.chat.completions.create({
+        model: 'gpt-4',
+        messages: [
+          { role: 'system', content: 'Bạn là trợ lý AI của Lark.' },
+          { role: 'user', content: userMessage },
+        ],
+      });
+
+      const aiReply = reply.choices[0].message.content;
+      console.log('🤖 Trả lời từ GPT:', aiReply);
+
+      await sendLarkMessage(userId, aiReply);
     }
 
-    res.status(200).send('OK');
+    res.sendStatus(200);
   } catch (error) {
-    console.error('Webhook xử lý lỗi:', error);
-    res.status(500).send('Internal Error');
+    console.error('❌ Webhook xử lý lỗi:', error);
+    res.sendStatus(500);
   }
 });
-
-async function getTenantToken() {
-  const res = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      app_id: process.env.LARK_APP_ID,
-      app_secret: process.env.LARK_APP_SECRET
-    })
-  });
-
-  const data = await res.json();
-  return data.tenant_access_token;
-}
 
 app.listen(PORT, () => {
   console.log(`✅ Server is running on port ${PORT}`);
