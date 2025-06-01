@@ -36,7 +36,7 @@ function logRequest(req) {
   }
 }
 
-// Xác thực chữ ký từ Lark
+// Xác thực chữ ký từ Lark (sửa lại để so sánh hex string)
 function verifyLarkSignature(req) {
   try {
     const timestamp = req.headers['x-lark-request-timestamp'];
@@ -54,21 +54,11 @@ function verifyLarkSignature(req) {
     const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'base64');
     const hmac = crypto.createHmac('sha256', key);
     hmac.update(str);
-    const expected = hmac.digest(); // Buffer
+    const expected = hmac.digest('hex'); // chuyển sang hex string
 
-    // Xử lý chữ ký nhận được
-    let signatureBuffer;
-    // Kiểm tra nếu là hex string 64 ký tự thì convert từ hex
-    if (/^[0-9a-f]{64}$/i.test(signature)) {
-      signatureBuffer = Buffer.from(signature, 'hex');
-    } else {
-      // Nếu không, giả định Base64
-      signatureBuffer = Buffer.from(signature, 'base64');
-    }
-
-    if (expected.length !== signatureBuffer.length || !crypto.timingSafeEqual(expected, signatureBuffer)) {
+    if (expected.toLowerCase() !== signature.toLowerCase()) {
       console.error('[Verify] Signature mismatch');
-      console.error('Expected (base64):', expected.toString('base64'));
+      console.error('Expected (hex):', expected);
       console.error('Received:', signature);
       return false;
     }
