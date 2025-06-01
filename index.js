@@ -11,31 +11,35 @@ const { createClient } = larkSDK;
 const app = new Koa();
 const router = new Router();
 
+// Tạo Lark client
 const client = createClient({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
 });
 
+// Tạo Gemini model
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
 
-// 👉 Lưu hội thoại theo userId
-const chatSessions = new Map(); // userId => chat object
+// Map để lưu trạng thái hội thoại của từng user
+const chatSessions = new Map();
 
 router.post('/webhook', async (ctx) => {
   const { challenge, event } = ctx.request.body;
 
+  // Trả về challenge để xác minh webhook
   if (challenge) {
     ctx.body = { challenge };
     return;
   }
 
+  // Xử lý sự kiện message
   if (event && event.message) {
     const messageText = event.message.content;
     const userId = event.sender.sender_id.user_id;
 
     try {
-      // Lấy hoặc tạo session chat mới
+      // Lấy hoặc tạo phiên hội thoại cho user
       let chat = chatSessions.get(userId);
       if (!chat) {
         chat = model.startChat({
@@ -49,11 +53,11 @@ router.post('/webhook', async (ctx) => {
         chatSessions.set(userId, chat);
       }
 
-      // Gửi tin nhắn người dùng vào hội thoại
+      // Gửi câu hỏi người dùng vào hội thoại
       const result = await chat.sendMessage(messageText);
       const reply = result.response.text();
 
-      // Gửi lại cho Lark
+      // Gửi phản hồi lại cho người dùng qua Lark
       await client.im.message.create({
         receive_id_type: 'user_id',
         body: {
