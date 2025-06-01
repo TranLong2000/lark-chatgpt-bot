@@ -1,112 +1,112 @@
 const express = require('express');
+const bodyParser = require('body-parser');
 const crypto = require('crypto');
-const dotenv = require('dotenv');
-const { Configuration, OpenAIApi } = require('openai');
-const { MessageCrypto } = require('@larksuiteoapi/core');
-const fetch = require('node-fetch');
-
-dotenv.config();
+const axios = require('axios');
+const { OpenAI } = require('openai');
+require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 8080;
+const port = process.env.PORT || 3000;
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-app.use(express.json({
-  verify: (req, res, buf) => {
-    req.rawBody = buf.toString();
+app.use(bodyParser.json());
+
+function verifySignature(timestamp, nonce, body, signature) {
+  const encryptKey = process.env.LARK_ENCRYPT_KEY;
+  const raw = `${timestamp}${nonce}${encryptKey}${body}`;
+  const hash = crypto.createHash('sha256').update(raw).digest('hex');
+  return hash === signature;
+}
+
+function decryptMessage(encrypt) {
+  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
+  const aesKey = crypto.createHash('sha256').update(key).digest();
+  const data = Buffer.from(encrypt, 'base64');
+  const iv = data.slice(0, 16);
+  const encryptedText = data.slice(16);
+
+  const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
+  let decrypted = decipher.update(encryptedText);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+
+  return JSON.parse(decrypted.toString());
+}
+
+async function replyToLark(messageId, content) {
+  try {
+    const appAccessTokenResp = await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`,
+      {
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET,
+      }
+    );
+    const token = appAccessTokenResp.data.app_access_token;
+
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
+      {
+        msg_type: 'text',
+        content: JSON.stringify({ text: content }),
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+  } catch (err) {
+    console.error('[Reply Error]', err?.response?.data || err.message);
   }
-}));
-
-const larkCrypto = new MessageCrypto({
-  encryptKey: process.env.LARK_ENCRYPT_KEY,
-  verificationToken: process.env.LARK_VERIFICATION_TOKEN,
-});
-
-const openai = new OpenAIApi(new Configuration({
-  apiKey: process.env.OPENAI_API_KEY,
-}));
+}
 
 app.post('/webhook', async (req, res) => {
+  const signature = req.headers['x-lark-signature'];
   const timestamp = req.headers['x-lark-request-timestamp'];
   const nonce = req.headers['x-lark-request-nonce'];
-  const signature = req.headers['x-lark-signature'];
-  const rawBody = req.rawBody;
+  const body = JSON.stringify(req.body);
 
   console.log('\n--- New Webhook Request ---');
   console.log('Headers:', req.headers);
-  console.log('Body:', rawBody);
+  console.log('Body:', body);
 
-  const stringToSign = timestamp + nonce + rawBody;
-  const expectedSignature = crypto
-    .createHmac('sha256', process.env.LARK_ENCRYPT_KEY)
-    .update(stringToSign)
-    .digest('hex');
-
-  console.log('[Verify] Expected (hex):', expectedSignature);
-  console.log('[Verify] Received:', signature);
-
-  if (expectedSignature !== signature) {
-    console.log('[Webhook] Invalid signature – stop.');
+  if (!verifySignature(timestamp, nonce, body, signature)) {
+    console.warn('[Webhook] Invalid signature – stop.');
     return res.status(401).send('Invalid signature');
   }
 
-  const { encrypt } = JSON.parse(rawBody);
-  const decrypted = larkCrypto.decryptMessage(encrypt);
-  console.log('[Decrypted Body]:', decrypted);
+  const { encrypt } = req.body;
+  const decrypted = decryptMessage(encrypt);
 
-  if (decrypted.type === 'url_verification') {
-    return res.send({ challenge: decrypted.challenge });
+  if (decrypted.header.event_type === 'url_verification') {
+    return res.send({ challenge: decrypted.event.challenge });
   }
 
-  if (decrypted.schema === '2.0' && decrypted.header.event_type === 'im.message.receive_v1') {
-    const message = decrypted.event.message;
-    const userMessage = message.content ? JSON.parse(message.content).text : '';
+  if (decrypted.header.event_type === 'im.message.receive_v1') {
+    const messageText = decrypted.event.message.content;
+    const messageId = decrypted.event.message.message_id;
 
-    if (userMessage) {
-      console.log(`[User Message]: ${userMessage}`);
+    try {
+      const parsedContent = JSON.parse(messageText);
+      const userMessage = parsedContent.text;
 
-      const completion = await openai.createChatCompletion({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'user', content: userMessage },
-        ],
+      const chatResponse = await openai.chat.completions.create({
+        model: 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: userMessage }],
       });
 
-      const finalResponse = completion.data.choices[0].message.content;
-      console.log(`[Assistant Reply]: ${finalResponse}`);
-
-      await fetch('https://open.larksuite.com/open-apis/im/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${await getTenantAccessToken()}`,
-        },
-        body: JSON.stringify({
-          receive_id: message.sender.sender_id.user_id,
-          content: JSON.stringify({ text: finalResponse }),
-          msg_type: 'text',
-          receive_id_type: 'user_id',
-        }),
-      });
+      const reply = chatResponse.choices[0].message.content;
+      await replyToLark(messageId, reply);
+    } catch (error) {
+      console.error('[OpenAI Error]', error);
+      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi gọi OpenAI.');
     }
   }
 
-  return res.sendStatus(200);
+  res.send({ code: 0 });
 });
 
-async function getTenantAccessToken() {
-  const resp = await fetch(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/tenant_access_token/internal/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      app_id: process.env.LARK_APP_ID,
-      app_secret: process.env.LARK_APP_SECRET,
-    }),
-  });
-
-  const data = await resp.json();
-  return data.tenant_access_token;
-}
-
-app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+app.listen(port, () => {
+  console.log(`✅ Server running on port ${port}`);
 });
