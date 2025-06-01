@@ -2,7 +2,6 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const axios = require('axios');
-const { OpenAI } = require('openai');
 require('dotenv').config();
 
 const app = express();
@@ -10,19 +9,7 @@ const port = process.env.PORT || 3000;
 
 // Debug check biến môi trường OpenRouter API Key
 console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? 'FOUND' : 'NOT FOUND');
-console.log(
-  'OPENROUTER_API_KEY value:',
-  process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.substring(0, 8) + '...' : 'undefined'
-);
-
-// Khởi tạo OpenAI client với baseURL OpenRouter
-const openai = new OpenAI({
-  apiKey: process.env.OPENROUTER_API_KEY,
-  baseURL: 'https://openrouter.ai/api/v1',
-  defaultHeaders: {
-    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-  },
-});
+console.log('OPENROUTER_API_KEY value:', process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.substring(0, 8) + '...' : 'undefined');
 
 app.use(bodyParser.json());
 
@@ -106,22 +93,33 @@ app.post('/webhook', async (req, res) => {
       const parsedContent = JSON.parse(messageText);
       const userMessage = parsedContent.text;
 
-      // Gọi OpenRouter GPT
-      const chatResponse = await openai.chat.completions.create({
-        model: 'openai/gpt-3.5-turbo', // hoặc 'openai/gpt-4o' nếu bạn muốn
-        messages: [{ role: 'user', content: userMessage }],
-      });
+      // Gọi OpenRouter API
+      const chatResponse = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: 'openai/gpt-3.5-turbo', // hoặc 'openai/gpt-4o'
+          messages: [{ role: 'user', content: userMessage }],
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://yourdomain.com/', // hoặc domain thật của bạn
+            'X-Title': 'My Lark Bot',
+          },
+        }
+      );
 
-      const reply = chatResponse.choices[0].message.content;
+      const reply = chatResponse.data.choices[0].message.content;
       await replyToLark(messageId, reply);
     } catch (error) {
-      console.error('[OpenAI Error]', error);
+      console.error('[OpenRouter Error]', error.message);
       if (error.response) {
         console.error('Response data:', error.response.data);
         console.error('Response status:', error.response.status);
         console.error('Response headers:', error.response.headers);
       }
-      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi gọi GPT.');
+      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi gọi OpenRouter.');
     }
   }
 
