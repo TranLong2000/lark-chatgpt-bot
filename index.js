@@ -9,13 +9,25 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
+// Middleware để lấy rawBody phục vụ verify chữ ký webhook
+app.use((req, res, next) => {
+  let data = [];
+  req.on('data', chunk => {
+    data.push(chunk);
+  });
+  req.on('end', () => {
+    req.rawBody = Buffer.concat(data).toString();
+    next();
+  });
+});
+
 const PORT = process.env.PORT || 8080;
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// Hàm verify webhook signature (theo docs Lark)
+// Hàm xác thực webhook Lark
 function verifyLarkSignature(req) {
   const timestamp = req.headers['x-lark-request-timestamp'];
   const nonce = req.headers['x-lark-request-nonce'];
@@ -34,18 +46,7 @@ function verifyLarkSignature(req) {
   return signature === expectedSignature;
 }
 
-// Middleware để lấy rawBody phục vụ verify chữ ký
-app.use((req, res, next) => {
-  let data = [];
-  req.on('data', chunk => {
-    data.push(chunk);
-  });
-  req.on('end', () => {
-    req.rawBody = Buffer.concat(data).toString();
-    next();
-  });
-});
-
+// Hàm giải mã encrypt payload
 function decryptEncryptKey(encryptKey, iv, encrypted) {
   const key = Buffer.from(encryptKey, 'base64');
   if (key.length !== 32) {
@@ -58,6 +59,7 @@ function decryptEncryptKey(encryptKey, iv, encrypted) {
   return decrypted;
 }
 
+// Lấy tenant_access_token từ Lark
 async function getTenantAccessToken() {
   const res = await axios.post('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
     app_id: process.env.LARK_APP_ID,
@@ -66,6 +68,7 @@ async function getTenantAccessToken() {
   return res.data.tenant_access_token;
 }
 
+// Gửi tin nhắn text cho user
 async function sendLarkMessage(receiveId, text) {
   const token = await getTenantAccessToken();
 
@@ -98,7 +101,7 @@ async function sendLarkMessage(receiveId, text) {
 
 app.post('/webhook', async (req, res) => {
   try {
-    // Verify webhook signature
+    // Xác thực webhook
     if (!verifyLarkSignature(req)) {
       console.error('❌ Webhook verify signature failed');
       return res.sendStatus(401);
@@ -115,8 +118,7 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(400);
     }
 
-    const iv = Buffer.alloc(16, 0); // 16 bytes zero IV
-
+    const iv = Buffer.alloc(16, 0);
     const decryptedStr = decryptEncryptKey(process.env.LARK_ENCRYPT_KEY, iv, body.encrypt);
     const decrypted = JSON.parse(decryptedStr);
 
@@ -126,22 +128,33 @@ app.post('/webhook', async (req, res) => {
       const userMessage = JSON.parse(event.message.content).text;
       const userId = event.sender.sender_id.user_id;
 
-      console.log('📥 Nhận tin nhắn từ user:', userId, '-', userMessage);
+      // Trả về ngay 200 cho Lark, tránh timeout lỗi 499
+      res.sendStatus(200);
 
-      const reply = await openai.chat.completions.create({
-        model: 'gpt-4', // Hoặc 'gpt-4o-mini' nếu bạn dùng OpenRouter
-        messages: [
-          { role: 'system', content: 'Bạn là trợ lý AI của Lark.' },
-          { role: 'user', content: userMessage },
-        ],
-      });
+      // Xử lý bất đồng bộ phần AI & gửi tin nhắn
+      (async () => {
+        try {
+          const reply = await openai.chat.completions.create({
+            model: 'gpt-4', // Hoặc model phù hợp bạn dùng
+            messages: [
+              { role: 'system', content: 'Bạn là trợ lý AI của Lark.' },
+              { role: 'user', content: userMessage },
+            ],
+          });
 
-      const aiReply = reply.choices[0].message.content;
-      console.log('🤖 Trả lời từ GPT:', aiReply);
+          const aiReply = reply.choices[0].message.content;
+          console.log('🤖 Trả lời từ GPT:', aiReply);
 
-      await sendLarkMessage(userId, aiReply);
+          await sendLarkMessage(userId, aiReply);
+        } catch (e) {
+          console.error('❌ Lỗi khi gọi OpenAI hoặc gửi tin nhắn:', e);
+        }
+      })();
+
+      return;
     }
 
+    // Nếu event khác hoặc không có message text, trả về 200
     res.sendStatus(200);
   } catch (error) {
     console.error('❌ Webhook xử lý lỗi:', error);
