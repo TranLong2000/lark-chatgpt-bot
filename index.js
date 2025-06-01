@@ -54,11 +54,21 @@ function verifyLarkSignature(req) {
     const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'base64');
     const hmac = crypto.createHmac('sha256', key);
     hmac.update(str);
-    const expected = hmac.digest('base64');
+    const expected = hmac.digest(); // Buffer
 
-    if (expected !== signature) {
+    // Xử lý chữ ký nhận được
+    let signatureBuffer;
+    // Kiểm tra nếu là hex string 64 ký tự thì convert từ hex
+    if (/^[0-9a-f]{64}$/i.test(signature)) {
+      signatureBuffer = Buffer.from(signature, 'hex');
+    } else {
+      // Nếu không, giả định Base64
+      signatureBuffer = Buffer.from(signature, 'base64');
+    }
+
+    if (expected.length !== signatureBuffer.length || !crypto.timingSafeEqual(expected, signatureBuffer)) {
       console.error('[Verify] Signature mismatch');
-      console.error('Expected:', expected);
+      console.error('Expected (base64):', expected.toString('base64'));
       console.error('Received:', signature);
       return false;
     }
