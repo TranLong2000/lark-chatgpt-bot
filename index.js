@@ -8,6 +8,10 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Debug check biến môi trường OpenAI API Key
+console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? 'FOUND' : 'NOT FOUND');
+console.log('OPENAI_API_KEY value:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.substring(0, 8) + '...' : 'undefined');
+
 // Khởi tạo OpenAI client với baseURL OpenRouter
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -105,7 +109,13 @@ app.post('/webhook', async (req, res) => {
       const reply = chatResponse.choices[0].message.content;
       await replyToLark(messageId, reply);
     } catch (error) {
+      // In log chi tiết lỗi OpenAI
       console.error('[OpenAI Error]', error);
+      if (error.response) {
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
+        console.error('Response headers:', error.response.headers);
+      }
       await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi gọi OpenAI.');
     }
   }
