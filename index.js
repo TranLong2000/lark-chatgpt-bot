@@ -10,7 +10,7 @@ dotenv.config();
 const app = new Koa();
 const router = new Router();
 
-// Tạo client cho Lark
+// Khởi tạo Lark SDK client
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
@@ -18,16 +18,21 @@ const client = new Client({
   domain: process.env.LARK_DOMAIN || 'https://open.larksuite.com',
 });
 
-// Tạo model Gemini
+// Khởi tạo Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
 
-// Lưu session hội thoại theo user
+// Session lưu theo user
 const chatSessions = new Map();
 
 router.post('/webhook', async (ctx) => {
-  const { challenge, event } = ctx.request.body;
+  const body = ctx.request.body;
 
+  console.log('👉 Webhook received:', JSON.stringify(body, null, 2));
+
+  const { challenge, event } = body;
+
+  // Trả về challenge cho Lark xác minh lần đầu
   if (challenge) {
     ctx.body = { challenge };
     return;
@@ -38,7 +43,7 @@ router.post('/webhook', async (ctx) => {
     const userId = event.sender.sender_id.user_id;
 
     try {
-      // Tạo hoặc lấy hội thoại của user
+      // Khởi tạo hoặc lấy session hội thoại của user
       let chat = chatSessions.get(userId);
       if (!chat) {
         chat = model.startChat({
@@ -55,7 +60,7 @@ router.post('/webhook', async (ctx) => {
       const result = await chat.sendMessage(messageText);
       const reply = result.response.text();
 
-      // Gửi phản hồi lại cho người dùng
+      // Gửi phản hồi lại người dùng
       await client.im.message.create({
         receive_id_type: 'user_id',
         body: {
@@ -68,7 +73,7 @@ router.post('/webhook', async (ctx) => {
       ctx.status = 200;
       ctx.body = 'OK';
     } catch (err) {
-      console.error('❌ Gemini Error:', err);
+      console.error('❌ Gemini error:', err);
       ctx.status = 500;
       ctx.body = 'Internal Server Error';
     }
@@ -78,7 +83,7 @@ router.post('/webhook', async (ctx) => {
   }
 });
 
-app.use(bodyParser());
+app.use(bodyParser()); // ⚠️ bodyparser phải đặt trước router
 app.use(router.routes());
 app.use(router.allowedMethods());
 
