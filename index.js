@@ -26,13 +26,12 @@ const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
 const chatSessions = new Map();
 
 router.post('/webhook', async (ctx) => {
-  const body = ctx.request.body;
+  // In log nhận webhook từ Lark để debug
+  console.log('👉 Webhook received:', JSON.stringify(ctx.request.body, null, 2));
 
-  console.log('👉 Webhook received:', JSON.stringify(body, null, 2));
+  const { challenge, event } = ctx.request.body;
 
-  const { challenge, event } = body;
-
-  // Trả về challenge cho Lark xác minh lần đầu
+  // Trả về challenge cho Lark xác minh webhook lần đầu
   if (challenge) {
     ctx.body = { challenge };
     return;
@@ -83,7 +82,7 @@ router.post('/webhook', async (ctx) => {
   }
 });
 
-app.use(bodyParser()); // ⚠️ bodyparser phải đặt trước router
+app.use(bodyParser()); // Phải đặt trước router để đọc body json
 app.use(router.routes());
 app.use(router.allowedMethods());
 
