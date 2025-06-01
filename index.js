@@ -8,14 +8,20 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Debug check biến môi trường OpenAI API Key
-console.log('OPENAI_API_KEY:', process.env.OPENAI_API_KEY ? 'FOUND' : 'NOT FOUND');
-console.log('OPENAI_API_KEY value:', process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.substring(0, 8) + '...' : 'undefined');
+// Debug check biến môi trường OpenRouter API Key
+console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? 'FOUND' : 'NOT FOUND');
+console.log(
+  'OPENROUTER_API_KEY value:',
+  process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.substring(0, 8) + '...' : 'undefined'
+);
 
 // Khởi tạo OpenAI client với baseURL OpenRouter
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: process.env.OPENROUTER_API_KEY,
   baseURL: 'https://openrouter.ai/api/v1',
+  defaultHeaders: {
+    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+  },
 });
 
 app.use(bodyParser.json());
@@ -102,21 +108,20 @@ app.post('/webhook', async (req, res) => {
 
       // Gọi OpenRouter GPT
       const chatResponse = await openai.chat.completions.create({
-        model: 'openai/gpt-3.5-turbo',  // hoặc 'gpt-4o-mini' nếu bạn muốn
+        model: 'openai/gpt-3.5-turbo', // hoặc 'openai/gpt-4o' nếu bạn muốn
         messages: [{ role: 'user', content: userMessage }],
       });
 
       const reply = chatResponse.choices[0].message.content;
       await replyToLark(messageId, reply);
     } catch (error) {
-      // In log chi tiết lỗi OpenAI
       console.error('[OpenAI Error]', error);
       if (error.response) {
         console.error('Response data:', error.response.data);
         console.error('Response status:', error.response.status);
         console.error('Response headers:', error.response.headers);
       }
-      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi gọi OpenAI.');
+      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi gọi GPT.');
     }
   }
 
