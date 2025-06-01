@@ -1,7 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import crypto from 'crypto';
-import { Configuration, OpenAIApi } from 'openai';
+import OpenAI from 'openai';
 
 dotenv.config();
 
@@ -14,9 +14,9 @@ const LARK_VERIFICATION_TOKEN = process.env.LARK_VERIFICATION_TOKEN;
 const LARK_ENCRYPT_KEY = process.env.LARK_ENCRYPT_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-const openai = new OpenAIApi(new Configuration({
+const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
-}));
+});
 
 function decryptEncryptKey(encryptKey, encryptData) {
   const key = Buffer.from(encryptKey, 'base64');
@@ -43,34 +43,29 @@ app.post('/webhook', async (req, res) => {
       return res.status(400).send('No encrypt field');
     }
 
-    // Giải mã dữ liệu webhook
     const decrypted = decryptEncryptKey(LARK_ENCRYPT_KEY, encryptData);
     const event = JSON.parse(decrypted);
 
-    // Xác minh token
     if (event.header.token !== LARK_VERIFICATION_TOKEN) {
       return res.status(403).send('Verification token mismatch');
     }
 
-    // Xử lý sự kiện message
     if (event.header.event_type === 'im.message.receive_v1') {
       const message = event.event.message;
       if (message.message_type !== 'text') {
         return res.send('Only text messages supported');
       }
 
-      const userText = message.content;
+      const userText = JSON.parse(message.content).text;
 
-      // Gọi OpenAI GPT
-      const response = await openai.createChatCompletion({
+      const response = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [{ role: 'user', content: userText }],
         max_tokens: 300,
       });
 
-      const botReply = response.data.choices[0].message.content;
+      const botReply = response.choices[0].message.content;
 
-      // Trả về tin nhắn cho Lark
       const reply = {
         msg_type: 'text',
         content: botReply,
