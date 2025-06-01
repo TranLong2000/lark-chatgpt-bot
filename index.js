@@ -1,5 +1,5 @@
-require('dotenv').config();
-const axios = require('axios');
+import 'dotenv/config';
+import axios from 'axios';
 
 const apiKey = process.env.GEMINI_API_KEY;
 
@@ -20,5 +20,4 @@ async function callGemini(text) {
   }
 }
 
-// Ví dụ gọi
 callGemini("Xin chào thế giới!");
