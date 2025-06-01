@@ -9,7 +9,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// Middleware lưu rawBody để verify chữ ký
+// Middleware lưu rawBody để verify signature
 app.use((req, res, next) => {
   let data = [];
   req.on('data', chunk => data.push(chunk));
@@ -32,28 +32,28 @@ function verifyLarkSignature(req) {
     const signature = req.headers['x-lark-signature'];
 
     if (!timestamp || !nonce || !signature) {
-      console.error('ERROR: Missing authentication headers from Lark');
+      console.error('[Verify] Missing headers');
       return false;
     }
 
-    const encryptKey = process.env.LARK_ENCRYPT_KEY;
-    const encryptKeyBuffer = Buffer.from(encryptKey, 'base64');
-
+    const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'base64');
     const str = `${timestamp}${nonce}${req.rawBody || ''}`;
-    const hmac = crypto.createHmac('sha256', encryptKeyBuffer);
-    hmac.update(str);
-    const expectedSignature = hmac.digest('base64');
 
-    if (signature !== expectedSignature) {
-      console.error('ERROR: Signature verification failed');
-      console.error('  -> expected:', expectedSignature);
-      console.error('  -> received:', signature);
+    const hmac = crypto.createHmac('sha256', key);
+    hmac.update(str);
+    const expected = hmac.digest('base64');
+
+    if (expected !== signature) {
+      console.error('[Verify] Signature mismatch');
+      console.error('[Verify] Expected:', expected);
+      console.error('[Verify] Received:', signature);
       return false;
     }
-    console.log('SUCCESS: Signature verified');
+
+    console.log('[Verify] Signature OK');
     return true;
   } catch (err) {
-    console.error('ERROR: Signature verification error:', err);
+    console.error('[Verify] Exception:', err.message);
     return false;
   }
 }
@@ -62,7 +62,7 @@ function decryptEncryptKey(encryptKey, iv, encrypted) {
   try {
     const key = Buffer.from(encryptKey, 'base64');
     if (key.length !== 32) {
-      throw new Error(`LARK_ENCRYPT_KEY after base64 decode must be 32 bytes, current length: ${key.length}`);
+      throw new Error(`LARK_ENCRYPT_KEY must be 32 bytes after base64 decode, but got ${key.length}`);
     }
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     const encryptedBuffer = Buffer.from(encrypted, 'base64');
@@ -70,7 +70,7 @@ function decryptEncryptKey(encryptKey, iv, encrypted) {
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (err) {
-    console.error('ERROR: Decrypt encrypt failed:', err);
+    console.error('[Decrypt] Error:', err.message);
     throw err;
   }
 }
@@ -83,7 +83,7 @@ async function getTenantAccessToken() {
     });
     return res.data.tenant_access_token;
   } catch (err) {
-    console.error('ERROR: Failed to get tenant_access_token:', err.response?.data || err.message);
+    console.error('[Token] Error:', err.response?.data || err.message);
     throw err;
   }
 }
@@ -105,20 +105,19 @@ async function sendLarkMessage(receiveId, text) {
         },
       }
     );
-    console.log('SUCCESS: Message sent to user:', receiveId);
+    console.log('[Send] Message sent to user:', receiveId);
   } catch (err) {
-    console.error('ERROR: Failed to send Lark message!');
+    console.error('[Send] Error sending message');
     if (err.response) {
-      console.error('--> Response code:', err.response.status);
-      console.error('--> Response data:', err.response.data);
+      console.error('[Send] Response:', err.response.status, err.response.data);
     } else {
-      console.error('--> Other error:', err.message);
+      console.error('[Send] Message:', err.message);
     }
   }
 }
 
 app.post('/webhook', async (req, res) => {
-  console.log('Received webhook at:', new Date().toISOString());
+  console.log('--- Webhook Received ---');
 
   try {
     if (!verifyLarkSignature(req)) {
@@ -128,19 +127,23 @@ app.post('/webhook', async (req, res) => {
     const body = req.body;
 
     if (body.challenge) {
-      console.log('Webhook challenge received:', body.challenge);
+      console.log('[Challenge]', body.challenge);
       return res.json({ challenge: body.challenge });
     }
 
     if (!body.encrypt) {
-      console.error('ERROR: Webhook payload missing encrypt field');
+      console.error('[Webhook] Missing encrypt field');
       return res.sendStatus(400);
     }
 
     const iv = Buffer.alloc(16, 0);
     const decryptedStr = decryptEncryptKey(process.env.LARK_ENCRYPT_KEY, iv, body.encrypt);
     const decrypted = JSON.parse(decryptedStr);
-    console.log('Decrypted payload:', JSON.stringify(decrypted));
+
+    console.log('[Webhook] Decrypted:', JSON.stringify(decrypted));
+
+    // Trả về 200 NGAY để tránh lỗi 499
+    res.sendStatus(200);
 
     const event = decrypted.event;
 
@@ -148,11 +151,9 @@ app.post('/webhook', async (req, res) => {
       const userMessage = JSON.parse(event.message.content).text;
       const userId = event.sender.sender_id.user_id;
 
-      console.log('Received message from user:', userId, '-', userMessage);
+      console.log('[Message] From:', userId, '-', userMessage);
 
-      // Trả về 200 ngay để tránh lỗi 499 timeout
-      res.sendStatus(200);
-
+      // Xử lý nền
       (async () => {
         try {
           const reply = await openai.chat.completions.create({
@@ -164,22 +165,21 @@ app.post('/webhook', async (req, res) => {
           });
 
           const aiReply = reply.choices[0].message.content;
-          console.log('GPT reply:', aiReply);
+          console.log('[GPT Reply]', aiReply);
 
           await sendLarkMessage(userId, aiReply);
         } catch (err) {
-          console.error('ERROR: OpenAI call or send message error:', err);
+          console.error('[AI Handler] Error:', err.message);
+          if (err.stack) console.error(err.stack);
         }
       })();
-
-      return;
+    } else {
+      console.log('[Webhook] Event is not a text message');
     }
-
-    console.log('Non-text message event received, ignored');
-    res.sendStatus(200);
-  } catch (error) {
-    console.error('ERROR: Webhook handling error:', error);
-    res.sendStatus(500);
+  } catch (err) {
+    console.error('[Webhook] Fatal error:', err.message);
+    if (err.stack) console.error(err.stack);
+    // không gọi res.send vì đã gửi ở trên
   }
 });
 
