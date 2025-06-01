@@ -32,7 +32,7 @@ function verifyLarkSignature(req) {
     const signature = req.headers['x-lark-signature'];
 
     if (!timestamp || !nonce || !signature) {
-      console.error('❌ Thiếu header xác thực từ Lark');
+      console.error('ERROR: Missing authentication headers from Lark');
       return false;
     }
 
@@ -45,15 +45,15 @@ function verifyLarkSignature(req) {
     const expectedSignature = hmac.digest('base64');
 
     if (signature !== expectedSignature) {
-      console.error('❌ Chữ ký không hợp lệ');
+      console.error('ERROR: Signature verification failed');
       console.error('  -> expected:', expectedSignature);
       console.error('  -> received:', signature);
       return false;
     }
-    console.log('✅ Xác thực chữ ký thành công');
+    console.log('SUCCESS: Signature verified');
     return true;
   } catch (err) {
-    console.error('❌ Lỗi verify chữ ký:', err);
+    console.error('ERROR: Signature verification error:', err);
     return false;
   }
 }
@@ -62,7 +62,7 @@ function decryptEncryptKey(encryptKey, iv, encrypted) {
   try {
     const key = Buffer.from(encryptKey, 'base64');
     if (key.length !== 32) {
-      throw new Error(`LARK_ENCRYPT_KEY sau decode phải đủ 32 bytes, hiện tại là ${key.length}`);
+      throw new Error(`LARK_ENCRYPT_KEY after base64 decode must be 32 bytes, current length: ${key.length}`);
     }
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     const encryptedBuffer = Buffer.from(encrypted, 'base64');
@@ -70,7 +70,7 @@ function decryptEncryptKey(encryptKey, iv, encrypted) {
     decrypted += decipher.final('utf8');
     return decrypted;
   } catch (err) {
-    console.error('❌ Lỗi giải mã encrypt:', err);
+    console.error('ERROR: Decrypt encrypt failed:', err);
     throw err;
   }
 }
@@ -83,7 +83,7 @@ async function getTenantAccessToken() {
     });
     return res.data.tenant_access_token;
   } catch (err) {
-    console.error('❌ Lỗi lấy tenant_access_token:', err.response?.data || err.message);
+    console.error('ERROR: Failed to get tenant_access_token:', err.response?.data || err.message);
     throw err;
   }
 }
@@ -105,8 +105,84 @@ async function sendLarkMessage(receiveId, text) {
         },
       }
     );
-    console.log('✅ Đã gửi tin nhắn thành công tới user:', receiveId);
+    console.log('SUCCESS: Message sent to user:', receiveId);
   } catch (err) {
-    console.error('❌ Gửi tin nhắn Lark thất bại!');
+    console.error('ERROR: Failed to send Lark message!');
     if (err.response) {
-      console.error('👉 Response co
+      console.error('--> Response code:', err.response.status);
+      console.error('--> Response data:', err.response.data);
+    } else {
+      console.error('--> Other error:', err.message);
+    }
+  }
+}
+
+app.post('/webhook', async (req, res) => {
+  console.log('Received webhook at:', new Date().toISOString());
+
+  try {
+    if (!verifyLarkSignature(req)) {
+      return res.sendStatus(401);
+    }
+
+    const body = req.body;
+
+    if (body.challenge) {
+      console.log('Webhook challenge received:', body.challenge);
+      return res.json({ challenge: body.challenge });
+    }
+
+    if (!body.encrypt) {
+      console.error('ERROR: Webhook payload missing encrypt field');
+      return res.sendStatus(400);
+    }
+
+    const iv = Buffer.alloc(16, 0);
+    const decryptedStr = decryptEncryptKey(process.env.LARK_ENCRYPT_KEY, iv, body.encrypt);
+    const decrypted = JSON.parse(decryptedStr);
+    console.log('Decrypted payload:', JSON.stringify(decrypted));
+
+    const event = decrypted.event;
+
+    if (event.message && event.message.message_type === 'text') {
+      const userMessage = JSON.parse(event.message.content).text;
+      const userId = event.sender.sender_id.user_id;
+
+      console.log('Received message from user:', userId, '-', userMessage);
+
+      // Trả về 200 ngay để tránh lỗi 499 timeout
+      res.sendStatus(200);
+
+      (async () => {
+        try {
+          const reply = await openai.chat.completions.create({
+            model: 'gpt-4',
+            messages: [
+              { role: 'system', content: 'Bạn là trợ lý AI của Lark.' },
+              { role: 'user', content: userMessage },
+            ],
+          });
+
+          const aiReply = reply.choices[0].message.content;
+          console.log('GPT reply:', aiReply);
+
+          await sendLarkMessage(userId, aiReply);
+        } catch (err) {
+          console.error('ERROR: OpenAI call or send message error:', err);
+        }
+      })();
+
+      return;
+    }
+
+    console.log('Non-text message event received, ignored');
+    res.sendStatus(200);
+  } catch (error) {
+    console.error('ERROR: Webhook handling error:', error);
+    res.sendStatus(500);
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
+});
