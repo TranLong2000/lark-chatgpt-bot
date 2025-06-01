@@ -1,29 +1,26 @@
-import express from 'express';
-import crypto from 'crypto';
-import { Buffer } from 'buffer';
-import bodyParser from 'body-parser';
-import { Configuration, OpenAIApi } from 'openai';
+const express = require('express');
+const crypto = require('crypto');
+const { Buffer } = require('buffer');
+const bodyParser = require('body-parser');
+const { Configuration, OpenAIApi } = require('openai');
 
 const app = express();
 const port = process.env.PORT || 8080;
 
-// ✅ Middleware giữ lại raw body để verify chữ ký
 app.use(bodyParser.json({
   verify: (req, res, buf) => {
     req.rawBody = buf.toString();
   }
 }));
 
-// ✅ OpenAI cấu hình
 const openai = new OpenAIApi(new Configuration({
   apiKey: process.env.OPENAI_API_KEY,
 }));
 
-// ✅ Hàm giải mã payload từ Lark
 function decryptLarkPayload(encrypt) {
   try {
     const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'base64');
-    const iv = key.slice(0, 16); // AES key cũng dùng làm IV
+    const iv = key.slice(0, 16);
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
     let decrypted = decipher.update(encrypt, 'base64', 'utf8');
     decrypted += decipher.final('utf8');
@@ -34,7 +31,6 @@ function decryptLarkPayload(encrypt) {
   }
 }
 
-// ✅ Hàm xác minh chữ ký từ Lark
 function verifyLarkSignature(req) {
   try {
     const timestamp = req.headers['x-lark-request-timestamp'];
@@ -60,7 +56,6 @@ function verifyLarkSignature(req) {
   }
 }
 
-// ✅ Route webhook
 app.post('/webhook', async (req, res) => {
   console.log('--- New Webhook Request ---');
   console.log('Headers:', req.headers);
@@ -76,12 +71,10 @@ app.post('/webhook', async (req, res) => {
 
   console.log('[Webhook] Decrypted Payload:', payload);
 
-  // Handle challenge
   if (payload.type === 'url_verification') {
     return res.send({ challenge: payload.challenge });
   }
 
-  // Handle message
   if (payload.header.event_type === 'im.message.receive_v1') {
     const message = payload.event.message.content;
     const text = JSON.parse(message).text;
@@ -94,7 +87,6 @@ app.post('/webhook', async (req, res) => {
 
       const reply = completion.data.choices[0].message.content;
       console.log('[GPT] Reply:', reply);
-      // TODO: gửi reply lại qua API Lark nếu cần
     } catch (err) {
       console.error('[GPT] Error:', err.message);
     }
