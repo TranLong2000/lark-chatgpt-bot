@@ -1,30 +1,28 @@
-import express from 'express';
-import crypto from 'crypto';
-import dotenv from 'dotenv';
-import { createOpenAI } from '@ai-sdk/openai';
-import { streamText } from 'ai';
-import { buffer } from 'stream/consumers';
-import { MessageCrypto } from '@larksuiteoapi/core';
+const express = require('express');
+const crypto = require('crypto');
+const dotenv = require('dotenv');
+const { createOpenAI } = require('@ai-sdk/openai');
+const { streamText } = require('ai');
+const { MessageCrypto } = require('@larksuiteoapi/core');
+const fetch = require('node-fetch');
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Lưu raw body để verify signature
+// Giữ rawBody để verify chữ ký
 app.use(express.json({
   verify: (req, res, buf) => {
     req.rawBody = buf.toString();
   }
 }));
 
-// Lark crypto (dùng để decrypt body)
 const larkCrypto = new MessageCrypto({
   encryptKey: process.env.LARK_ENCRYPT_KEY,
   verificationToken: process.env.LARK_VERIFICATION_TOKEN,
 });
 
-// Webhook endpoint
 app.post('/webhook', async (req, res) => {
   const timestamp = req.headers['x-lark-request-timestamp'];
   const nonce = req.headers['x-lark-request-nonce'];
@@ -35,7 +33,6 @@ app.post('/webhook', async (req, res) => {
   console.log('Headers:', req.headers);
   console.log('Body:', rawBody);
 
-  // Xác thực chữ ký HMAC-SHA256
   const stringToSign = timestamp + nonce + rawBody;
   const expectedSignature = crypto
     .createHmac('sha256', process.env.LARK_ENCRYPT_KEY)
@@ -50,23 +47,21 @@ app.post('/webhook', async (req, res) => {
     return res.status(401).send('Invalid signature');
   }
 
-  // Giải mã nội dung
   const { encrypt } = JSON.parse(rawBody);
   const decrypted = larkCrypto.decryptMessage(encrypt);
   console.log('[Decrypted Body]:', decrypted);
 
-  // Đáp ứng event challenge (nếu có)
   if (decrypted.type === 'url_verification') {
     return res.send({ challenge: decrypted.challenge });
   }
 
-  // Xử lý message
   if (decrypted.schema === '2.0' && decrypted.header.event_type === 'im.message.receive_v1') {
     const message = decrypted.event.message;
     const userMessage = message.content ? JSON.parse(message.content).text : '';
 
     if (userMessage) {
       console.log(`[User Message]: ${userMessage}`);
+
       const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
       const { textStream } = await streamText({
@@ -101,7 +96,6 @@ app.post('/webhook', async (req, res) => {
   return res.sendStatus(200);
 });
 
-// Hàm lấy tenant access token
 async function getTenantAccessToken() {
   const resp = await fetch(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/tenant_access_token/internal/`, {
     method: 'POST',
@@ -116,7 +110,6 @@ async function getTenantAccessToken() {
   return data.tenant_access_token;
 }
 
-// Start server
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
 });
