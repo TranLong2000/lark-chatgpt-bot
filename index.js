@@ -2,7 +2,7 @@ import Koa from 'koa';
 import Router from 'koa-router';
 import bodyParser from 'koa-bodyparser';
 import dotenv from 'dotenv';
-import { Client } from '@larksuiteoapi/node-sdk';
+import { Client, encrypt } from '@larksuiteoapi/node-sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 dotenv.config();
@@ -10,79 +10,84 @@ dotenv.config();
 const app = new Koa();
 const router = new Router();
 
-// Khởi tạo Lark SDK client
 const client = new Client({
   appId: process.env.LARK_APP_ID,
   appSecret: process.env.LARK_APP_SECRET,
   appType: 'self',
   domain: process.env.LARK_DOMAIN || 'https://open.larksuite.com',
+  verificationToken: process.env.LARK_VERIFICATION_TOKEN,
+  encryptKey: process.env.LARK_ENCRYPT_KEY,
 });
 
-// Khởi tạo Gemini client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
 
-// Session lưu theo user
 const chatSessions = new Map();
 
 router.post('/webhook', async (ctx) => {
-  // In log nhận webhook từ Lark để debug
-  console.log('👉 Webhook received:', JSON.stringify(ctx.request.body, null, 2));
+  const { encrypt: encryptedData } = ctx.request.body;
 
-  const { challenge, event } = ctx.request.body;
-
-  // Trả về challenge cho Lark xác minh webhook lần đầu
-  if (challenge) {
-    ctx.body = { challenge };
-    return;
-  }
-
-  if (event && event.message) {
-    const messageText = event.message.content;
-    const userId = event.sender.sender_id.user_id;
-
+  if (encryptedData) {
     try {
-      // Khởi tạo hoặc lấy session hội thoại của user
-      let chat = chatSessions.get(userId);
-      if (!chat) {
-        chat = model.startChat({
-          history: [
-            {
-              role: 'system',
-              parts: [{ text: 'Bạn là trợ lý AI của Lark.' }],
-            },
-          ],
-        });
-        chatSessions.set(userId, chat);
+      const decrypted = encrypt.decrypt(encryptedData, process.env.LARK_ENCRYPT_KEY);
+      const data = JSON.parse(decrypted);
+
+      console.log('👉 Decrypted webhook data:', JSON.stringify(data, null, 2));
+
+      const { challenge, event } = data;
+
+      if (challenge) {
+        ctx.body = { challenge };
+        return;
       }
 
-      const result = await chat.sendMessage(messageText);
-      const reply = result.response.text();
+      if (event && event.message) {
+        const messageText = event.message.content;
+        const userId = event.sender.sender_id.user_id;
 
-      // Gửi phản hồi lại người dùng
-      await client.im.message.create({
-        receive_id_type: 'user_id',
-        body: {
-          receive_id: userId,
-          msg_type: 'text',
-          content: JSON.stringify({ text: reply }),
-        },
-      });
+        let chat = chatSessions.get(userId);
+        if (!chat) {
+          chat = model.startChat({
+            history: [
+              {
+                role: 'system',
+                parts: [{ text: 'Bạn là trợ lý AI của Lark.' }],
+              },
+            ],
+          });
+          chatSessions.set(userId, chat);
+        }
 
-      ctx.status = 200;
-      ctx.body = 'OK';
+        const result = await chat.sendMessage(messageText);
+        const reply = result.response.text();
+
+        await client.im.message.create({
+          receive_id_type: 'user_id',
+          body: {
+            receive_id: userId,
+            msg_type: 'text',
+            content: JSON.stringify({ text: reply }),
+          },
+        });
+
+        ctx.status = 200;
+        ctx.body = 'ok';
+      } else {
+        ctx.status = 400;
+        ctx.body = 'Bad Request';
+      }
     } catch (err) {
-      console.error('❌ Gemini error:', err);
+      console.error('❌ Decrypt or processing error:', err);
       ctx.status = 500;
       ctx.body = 'Internal Server Error';
     }
   } else {
     ctx.status = 400;
-    ctx.body = 'Bad Request';
+    ctx.body = 'No encrypted data';
   }
 });
 
-app.use(bodyParser()); // Phải đặt trước router để đọc body json
+app.use(bodyParser());
 app.use(router.routes());
 app.use(router.allowedMethods());
 
