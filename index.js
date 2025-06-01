@@ -1,114 +1,93 @@
 import express from 'express';
-import crypto from 'crypto';
 import dotenv from 'dotenv';
-import OpenAI from 'openai';
+import crypto from 'crypto';
+import { Configuration, OpenAIApi } from 'openai';
 
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 8080;
+app.use(express.json());
 
-// Middleware để parse raw body (vì Lark gửi encrypted payload)
-app.use(express.json({
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
+const PORT = process.env.PORT || 8080;
+
+const LARK_VERIFICATION_TOKEN = process.env.LARK_VERIFICATION_TOKEN;
+const LARK_ENCRYPT_KEY = process.env.LARK_ENCRYPT_KEY;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+const openai = new OpenAIApi(new Configuration({
+  apiKey: OPENAI_API_KEY,
 }));
 
-// Chuyển base64-url sang chuẩn base64
-function base64UrlToBase64(base64Url) {
-  let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-  while (base64.length % 4 !== 0) {
-    base64 += '=';
-  }
-  return base64;
-}
-
-// Hàm decrypt payload từ Lark
-function decryptEncryptKey(encryptStr, encryptKey) {
-  const base64Key = base64UrlToBase64(encryptKey);
-  const key = Buffer.from(base64Key, 'base64');
-
-  if (key.length !== 32) {
-    throw new Error(`Invalid key length: ${key.length}, expected 32 bytes`);
-  }
-
+function decryptEncryptKey(encryptKey, encryptData) {
+  const key = Buffer.from(encryptKey, 'base64');
   const iv = key.slice(0, 16);
   const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-  decipher.setAutoPadding(false);
-
-  let decrypted = Buffer.concat([
-    decipher.update(Buffer.from(encryptStr, 'base64')),
-    decipher.final(),
-  ]);
-
-  // Xóa padding PKCS#7
-  const pad = decrypted[decrypted.length - 1];
-  decrypted = decrypted.slice(0, decrypted.length - pad);
-
-  // Bỏ 16 bytes đầu + 4 bytes chiều dài JSON
-  const jsonLength = decrypted.readUInt32BE(16);
-  const jsonPayload = decrypted.slice(20, 20 + jsonLength).toString();
-
-  return JSON.parse(jsonPayload);
+  let decrypted = decipher.update(encryptData, 'base64', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
 }
 
-// Khởi tạo OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function encryptEncryptKey(encryptKey, decryptData) {
+  const key = Buffer.from(encryptKey, 'base64');
+  const iv = key.slice(0, 16);
+  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  let encrypted = cipher.update(decryptData, 'utf8', 'base64');
+  encrypted += cipher.final('base64');
+  return encrypted;
+}
 
 app.post('/webhook', async (req, res) => {
   try {
-    // Kiểm tra header xác thực
-    const verificationToken = process.env.LARK_VERIFICATION_TOKEN;
-    const headerToken = req.headers['x-lark-verify-token'];
-    if (headerToken !== verificationToken) {
-      return res.status(401).send('Unauthorized: Invalid verification token');
+    const encryptData = req.body.encrypt;
+    if (!encryptData) {
+      return res.status(400).send('No encrypt field');
     }
 
-    const encryptKey = process.env.LARK_ENCRYPT_KEY;
-    const body = req.body;
+    // Giải mã dữ liệu webhook
+    const decrypted = decryptEncryptKey(LARK_ENCRYPT_KEY, encryptData);
+    const event = JSON.parse(decrypted);
 
-    // Nếu body có trường encrypt thì giải mã
-    let event = body;
-    if (body.encrypt) {
-      event = decryptEncryptKey(body.encrypt, encryptKey);
+    // Xác minh token
+    if (event.header.token !== LARK_VERIFICATION_TOKEN) {
+      return res.status(403).send('Verification token mismatch');
     }
 
-    // Xử lý các loại event
-    if (event.header?.event_type === 'im.message.receive_v1') {
-      const msg = event.event.message;
-      const userId = event.event.sender.sender_id.open_id;
+    // Xử lý sự kiện message
+    if (event.header.event_type === 'im.message.receive_v1') {
+      const message = event.event.message;
+      if (message.message_type !== 'text') {
+        return res.send('Only text messages supported');
+      }
 
-      console.log(`Tin nhắn nhận được từ ${userId}:`, msg.text);
+      const userText = message.content;
 
-      // Gửi prompt cho OpenAI
-      const completion = await openai.chat.completions.create({
+      // Gọi OpenAI GPT
+      const response = await openai.createChatCompletion({
         model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: msg.text }],
+        messages: [{ role: 'user', content: userText }],
+        max_tokens: 300,
       });
 
-      const replyText = completion.choices[0].message.content;
+      const botReply = response.data.choices[0].message.content;
 
-      // Trả về theo định dạng Lark yêu cầu
-      return res.json({
-        challenge: body.challenge,
+      // Trả về tin nhắn cho Lark
+      const reply = {
         msg_type: 'text',
-        content: {
-          text: replyText,
-        },
-      });
-    }
+        content: botReply,
+      };
 
-    // Trả về thành công nếu không phải event tin nhắn
-    res.json({ challenge: body.challenge || '' });
+      const replyEncrypt = encryptEncryptKey(LARK_ENCRYPT_KEY, JSON.stringify(reply));
+
+      res.json({ encrypt: replyEncrypt });
+    } else {
+      res.json({ msg: 'Not a message event' });
+    }
   } catch (err) {
     console.error('Webhook xử lý lỗi:', err);
-    res.status(500).send('Internal Server Error');
+    res.status(500).send('Server error');
   }
 });
 
-app.listen(port, () => {
-  console.log(`✅ Server is running on port ${port}`);
+app.listen(PORT, () => {
+  console.log(`✅ Server is running on port ${PORT}`);
 });
