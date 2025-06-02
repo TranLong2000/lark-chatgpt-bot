@@ -14,8 +14,6 @@ app.use(bodyParser.json());
 
 // Bộ nhớ lưu lịch sử chat
 const chatHistories = {};
-
-// Lưu messageId đã trả lời lỗi để tránh lặp lại
 const errorSentMessages = new Set();
 
 function verifySignature(timestamp, nonce, body, signature) {
@@ -88,17 +86,16 @@ app.post('/webhook', async (req, res) => {
 
   if (decrypted.header.event_type === 'im.message.receive_v1') {
     const senderId = decrypted.event.sender.sender_id;
+    const senderType = decrypted.event.sender.sender_type;
     const userId = decrypted.event.sender.user_id;
     const messageId = decrypted.event.message.message_id;
 
-    // 👉 In ra senderId để biết ai gửi (bot hay user)
     console.log('👤 senderId:', senderId);
+    console.log('👤 senderType:', senderType);
     console.log('📨 messageId:', messageId);
-    console.log('🤖 BOT_SENDER_ID:', process.env.BOT_SENDER_ID);
 
-    const BOT_SENDER_ID = process.env.BOT_SENDER_ID || 'YOUR_BOT_SENDER_ID';
-    if (senderId === BOT_SENDER_ID) {
-      console.log('➡️ Bỏ qua message do bot gửi');
+    if (senderType === 'app') {
+      console.log('➡️ Bỏ qua message do bot gửi (sender_type === app)');
       return res.send({ code: 0 });
     }
 
@@ -113,7 +110,6 @@ app.post('/webhook', async (req, res) => {
       return res.send({ code: 0 });
     }
 
-    // Bỏ qua nếu tag @all hoặc @everyone
     if (userMessage.includes('<at user_id="all">') || userMessage.toLowerCase().includes('@all') || userMessage.toLowerCase().includes('@everyone')) {
       console.log('Tin nhắn có tag @all hoặc @everyone, bỏ qua.');
       return res.send({ code: 0 });
@@ -158,7 +154,6 @@ app.post('/webhook', async (req, res) => {
       if (errorSentMessages.has(messageId)) {
         errorSentMessages.delete(messageId);
       }
-
     } catch (error) {
       console.error('[OpenRouter Error]', error.message);
       if (error.response) {
