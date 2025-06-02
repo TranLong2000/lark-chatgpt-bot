@@ -7,9 +7,7 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Debug check biến môi trường OpenRouter API Key
-console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? 'FOUND' : 'NOT FOUND');
-console.log('OPENROUTER_API_KEY value:', process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.substring(0, 8) + '...' : 'undefined');
+const chatHistories = {}; // Lưu lịch sử hội thoại theo user
 
 app.use(bodyParser.json());
 
@@ -69,10 +67,6 @@ app.post('/webhook', async (req, res) => {
   const nonce = req.headers['x-lark-request-nonce'];
   const body = JSON.stringify(req.body);
 
-  console.log('\n--- New Webhook Request ---');
-  console.log('Headers:', req.headers);
-  console.log('Body:', body);
-
   if (!verifySignature(timestamp, nonce, body, signature)) {
     console.warn('[Webhook] Invalid signature – stop.');
     return res.status(401).send('Invalid signature');
@@ -88,36 +82,61 @@ app.post('/webhook', async (req, res) => {
   if (decrypted.header.event_type === 'im.message.receive_v1') {
     const messageText = decrypted.event.message.content;
     const messageId = decrypted.event.message.message_id;
+    const userId = decrypted.event.sender.sender_id.user_id;
 
     try {
       const parsedContent = JSON.parse(messageText);
       const userMessage = parsedContent.text;
 
-      // Gọi OpenRouter API
+      // Lấy ngày giờ hiện tại theo giờ Việt Nam
+      const now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+
+      // Khởi tạo lịch sử nếu chưa có
+      if (!chatHistories[userId]) {
+        chatHistories[userId] = [
+          {
+            role: 'system',
+            content: `Bạn là một trợ lý AI thân thiện. Hôm nay là ${now}. Trả lời chính xác theo thời gian thực và kiến thức hiện tại.`,
+          },
+        ];
+      }
+
+      // Thêm tin nhắn người dùng
+      chatHistories[userId].push({ role: 'user', content: userMessage });
+
+      // Giới hạn số lượng tin nhắn (tối đa 20 để không vượt token limit)
+      if (chatHistories[userId].length > 20) {
+        chatHistories[userId] = chatHistories[userId].slice(-20);
+      }
+
+      // Gọi OpenRouter (GPT)
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
-          model: 'openai/gpt-3.5-turbo', // hoặc 'openai/gpt-4o'
-          messages: [{ role: 'user', content: userMessage }],
+          model: 'openai/gpt-4o', // Bạn có thể đổi thành 'gpt-3.5-turbo' nếu cần tiết kiệm chi phí
+          messages: chatHistories[userId],
         },
         {
           headers: {
             Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://yourdomain.com/', // hoặc domain thật của bạn
+            'HTTP-Referer': 'https://yourdomain.com/',
             'X-Title': 'My Lark Bot',
           },
         }
       );
 
       const reply = chatResponse.data.choices[0].message.content;
+
+      // Thêm câu trả lời của bot vào lịch sử
+      chatHistories[userId].push({ role: 'assistant', content: reply });
+
       await replyToLark(messageId, reply);
     } catch (error) {
       console.error('[OpenRouter Error]', error.message);
       if (error.response) {
         console.error('Response data:', error.response.data);
         console.error('Response status:', error.response.status);
-        console.error('Response headers:', error.response.headers);
       }
       await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi gọi OpenRouter.');
     }
