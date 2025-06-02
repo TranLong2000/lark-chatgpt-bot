@@ -18,6 +18,26 @@ const chatHistories = {};
 // Set lưu messageId đã gửi lỗi, tránh reply lỗi nhiều lần cho cùng 1 message
 const errorSentMessages = new Set();
 
+// Set lưu messageId đã xử lý thành công, tránh xử lý lại trùng lặp
+const processedMessageIds = new Set();
+
+// Hàm để giới hạn kích thước Set hoặc Object tránh tăng bộ nhớ vô tận
+function limitSize(setOrObj, maxSize) {
+  if (setOrObj instanceof Set) {
+    while (setOrObj.size > maxSize) {
+      // Xóa phần tử đầu tiên
+      const first = setOrObj.values().next().value;
+      setOrObj.delete(first);
+    }
+  } else if (typeof setOrObj === 'object') {
+    const keys = Object.keys(setOrObj);
+    while (keys.length > maxSize) {
+      delete setOrObj[keys[0]];
+      keys.shift();
+    }
+  }
+}
+
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
@@ -92,9 +112,8 @@ app.post('/webhook', async (req, res) => {
 
   if (decrypted.header.event_type === 'im.message.receive_v1') {
     const senderId = decrypted.event.sender.sender_id;
-    const userId = decrypted.event.sender.user_id; // user id riêng biệt
-    console.log('Sender ID:', senderId);
-    console.log('User ID:', userId);
+    const userId = decrypted.event.sender.user_id;
+    const messageId = decrypted.event.message.message_id;
 
     // Tránh bot trả lời chính nó
     const BOT_SENDER_ID = process.env.BOT_SENDER_ID || 'YOUR_BOT_SENDER_ID';
@@ -103,8 +122,13 @@ app.post('/webhook', async (req, res) => {
       return res.send({ code: 0 });
     }
 
+    // Nếu đã xử lý message này rồi thì bỏ qua luôn
+    if (processedMessageIds.has(messageId)) {
+      console.log(`[Info] Đã xử lý messageId ${messageId} trước đó, bỏ qua.`);
+      return res.send({ code: 0 });
+    }
+
     const messageText = decrypted.event.message.content;
-    const messageId = decrypted.event.message.message_id;
 
     try {
       const parsedContent = JSON.parse(messageText);
@@ -114,26 +138,30 @@ app.post('/webhook', async (req, res) => {
         chatHistories[userId] = [];
       }
 
+      // Thêm tin nhắn người dùng
       chatHistories[userId].push({ role: 'user', content: userMessage });
 
+      // Giới hạn lịch sử chat tối đa 20 câu để tránh quá dài
       if (chatHistories[userId].length > 20) {
         chatHistories[userId].splice(0, chatHistories[userId].length - 20);
       }
 
-      // Tạo system prompt kèm thời gian hiện tại để GPT hiểu bối cảnh
-      const now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
-      const systemPrompt = `Bạn là trợ lý AI thông minh, hiện tại là ${now}. Hãy trả lời câu hỏi một cách chính xác và thân thiện.`;
+      // Thêm hệ thống prompt để BOT hiểu bối cảnh thời gian, lịch sử
+      const systemPrompt = {
+        role: 'system',
+        content:
+          'Bạn là trợ lý AI thông minh, trả lời câu hỏi một cách thân thiện và chính xác. ' +
+          `Hiện tại là ngày ${new Date().toLocaleDateString('vi-VN')}, giờ ${new Date().toLocaleTimeString('vi-VN')}.`,
+      };
 
-      const messagesWithContext = [
-        { role: 'system', content: systemPrompt },
-        ...chatHistories[userId],
-      ];
+      const messagesToSend = [systemPrompt, ...chatHistories[userId]];
 
+      // Gọi OpenRouter API chat completion
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
           model: 'openai/gpt-3.5-turbo',
-          messages: messagesWithContext,
+          messages: messagesToSend,
         },
         {
           headers: {
@@ -145,14 +173,23 @@ app.post('/webhook', async (req, res) => {
 
       const reply = chatResponse.data.choices[0].message.content;
 
+      // Thêm câu trả lời bot vào lịch sử chat
       chatHistories[userId].push({ role: 'assistant', content: reply });
 
       await replyToLark(messageId, reply);
+
+      // Đánh dấu message đã xử lý thành công
+      processedMessageIds.add(messageId);
 
       // Nếu trước đó đã gửi lỗi với message này, giờ bỏ qua (đã thành công)
       if (errorSentMessages.has(messageId)) {
         errorSentMessages.delete(messageId);
       }
+
+      // Giới hạn kích thước bộ nhớ tránh tràn
+      limitSize(processedMessageIds, 1000);
+      limitSize(chatHistories, 1000);
+      limitSize(errorSentMessages, 1000);
 
     } catch (error) {
       console.error('[OpenRouter Error]', error.message);
@@ -169,6 +206,9 @@ app.post('/webhook', async (req, res) => {
       } else {
         console.log(`[Info] Đã gửi lỗi cho messageId ${messageId} trước đó, không gửi lại.`);
       }
+
+      // Trả về thành công để tránh Lark retry liên tục
+      return res.send({ code: 0 });
     }
   }
 
