@@ -8,13 +8,15 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? 'FOUND' : 'NOT FOUND');
-console.log('OPENROUTER_API_KEY value:', process.env.OPENROUTER_API_KEY?.substring(0, 8) + '...');
+console.log('OPENROUTER_API_KEY value:', process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.substring(0, 8) + '...' : 'undefined');
 
 app.use(bodyParser.json());
 
+// Bộ nhớ lưu lịch sử chat
 const chatHistories = {};
-const errorSentMessages = new Set();
-const handledMessages = new Set(); // ✅ Lưu messageId đã xử lý
+
+// Lưu messageId đã trả lời để tránh trùng lặp
+const respondedMessages = new Set();
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -33,19 +35,20 @@ function decryptMessage(encrypt) {
   const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
   let decrypted = decipher.update(encryptedText);
   decrypted = Buffer.concat([decrypted, decipher.final()]);
+
   return JSON.parse(decrypted.toString());
 }
 
 async function replyToLark(messageId, content) {
   try {
-    const appAccessTokenResp = await axios.post(
+    const tokenResp = await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`,
       {
         app_id: process.env.LARK_APP_ID,
         app_secret: process.env.LARK_APP_SECRET,
       }
     );
-    const token = appAccessTokenResp.data.app_access_token;
+    const token = tokenResp.data.app_access_token;
 
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
@@ -72,118 +75,98 @@ app.post('/webhook', async (req, res) => {
   const body = JSON.stringify(req.body);
 
   if (!verifySignature(timestamp, nonce, body, signature)) {
-    console.warn('[Webhook] Invalid signature');
+    console.warn('[Webhook] Invalid signature – stopped.');
     return res.status(401).send('Invalid signature');
   }
 
   const { encrypt } = req.body;
   const decrypted = decryptMessage(encrypt);
-  const eventType = decrypted.header.event_type;
 
-  if (eventType === 'url_verification') {
+  if (decrypted.header.event_type === 'url_verification') {
     return res.send({ challenge: decrypted.event.challenge });
   }
 
-  if (eventType !== 'im.message.receive_v1') {
-    return res.send({ code: 0 });
-  }
+  if (decrypted.header.event_type === 'im.message.receive_v1') {
+    const senderId = decrypted.event.sender.sender_id;
+    const senderType = decrypted.event.sender.sender_type;
+    const userId = decrypted.event.sender.user_id;
+    const messageId = decrypted.event.message.message_id;
 
-  const senderId = decrypted.event.sender.sender_id;
-  const senderType = decrypted.event.sender.sender_type;
-  const messageId = decrypted.event.message.message_id;
+    console.log('👤 senderId:', senderId);
+    console.log('👤 senderType:', senderType);
+    console.log('📨 messageId:', messageId);
 
-  console.log('👤 senderId:', senderId);
-  console.log('👤 senderType:', senderType);
-  console.log('📨 messageId:', messageId);
-
-  const BOT_SENDER_ID = process.env.BOT_SENDER_ID || 'cli_a7e94daf6878d010';
-
-  if (senderId === BOT_SENDER_ID) {
-    console.log('🤖 Bỏ qua tin nhắn từ chính bot');
-    return res.send({ code: 0 });
-  }
-
-  // ✅ Ngăn xử lý lại cùng message
-  if (handledMessages.has(messageId)) {
-    console.log(`[⚠️ Bỏ qua] messageId ${messageId} đã xử lý.`);
-    return res.send({ code: 0 });
-  }
-
-  handledMessages.add(messageId);
-  res.send({ code: 0 }); // ✅ Gửi phản hồi ngay lập tức
-
-  const userId = decrypted.event.sender.user_id;
-  const messageText = decrypted.event.message.content;
-  let userMessage = '';
-
-  try {
-    const parsedContent = JSON.parse(messageText);
-    userMessage = parsedContent.text || '';
-  } catch (e) {
-    console.warn('[Parse Error] Không thể parse messageText:', messageText);
-    return;
-  }
-
-  if (
-    userMessage.includes('<at user_id="all">') ||
-    userMessage.toLowerCase().includes('@all') ||
-    userMessage.toLowerCase().includes('@everyone')
-  ) {
-    console.log('⛔ Bỏ qua tin nhắn chứa @all/@everyone');
-    return;
-  }
-
-  try {
-    if (!chatHistories[userId]) {
-      chatHistories[userId] = [];
+    const BOT_SENDER_ID = process.env.BOT_SENDER_ID;
+    if (senderType === 'bot' || senderId === BOT_SENDER_ID) {
+      return res.send({ code: 0 });
     }
 
-    chatHistories[userId].push({ role: 'user', content: userMessage });
+    // Tránh xử lý lại 1 messageId
+    if (respondedMessages.has(messageId)) {
+      console.log(`[ℹ️] Đã xử lý messageId: ${messageId}, bỏ qua.`);
+      return res.send({ code: 0 });
+    }
+    respondedMessages.add(messageId);
 
-    if (chatHistories[userId].length > 20) {
-      chatHistories[userId].splice(0, chatHistories[userId].length - 20);
+    let userMessage = '';
+    try {
+      const parsedContent = JSON.parse(decrypted.event.message.content);
+      userMessage = parsedContent.text || '';
+    } catch (e) {
+      console.warn('[Parse Error]', decrypted.event.message.content);
+      return res.send({ code: 0 });
     }
 
-    const chatResponse = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Bạn là một trợ lý AI thông minh, luôn trả lời chính xác, ngắn gọn và cập nhật thời gian hiện tại nếu được hỏi.',
-          },
-          ...chatHistories[userId],
-        ],
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
+    if (userMessage.includes('<at user_id="all">') || userMessage.toLowerCase().includes('@all')) {
+      return res.send({ code: 0 });
+    }
+
+    try {
+      if (!chatHistories[userId]) {
+        chatHistories[userId] = [];
       }
-    );
 
-    const reply = chatResponse.data.choices[0].message.content;
-    chatHistories[userId].push({ role: 'assistant', content: reply });
+      chatHistories[userId].push({ role: 'user', content: userMessage });
 
-    await replyToLark(messageId, reply);
-    errorSentMessages.delete(messageId);
-  } catch (error) {
-    console.error('[OpenRouter Error]', error.message);
-    if (error.response) {
-      console.error('Response data:', error.response.data);
-      console.error('Response status:', error.response.status);
-    }
+      if (chatHistories[userId].length > 20) {
+        chatHistories[userId].splice(0, chatHistories[userId].length - 20);
+      }
 
-    if (!errorSentMessages.has(messageId)) {
+      const currentTime = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      const systemPrompt = {
+        role: 'system',
+        content: `Bạn là một trợ lý AI thông minh, luôn ngắn gọn, chính xác. Giờ hệ thống hiện tại là: ${currentTime}.`,
+      };
+
+      const chatResponse = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+          messages: [systemPrompt, ...chatHistories[userId]],
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      const reply = chatResponse.data.choices[0].message.content;
+      chatHistories[userId].push({ role: 'assistant', content: reply });
+
+      await replyToLark(messageId, reply);
+    } catch (error) {
+      console.error('[OpenRouter Error]', error.message);
+      if (error.response) {
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
+      }
       await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi xử lý tin nhắn của bạn.');
-      errorSentMessages.add(messageId);
-    } else {
-      console.log(`[Info] Đã gửi lỗi cho messageId ${messageId}, không gửi lại.`);
     }
   }
+
+  res.send({ code: 0 });
 });
 
 app.listen(port, () => {
