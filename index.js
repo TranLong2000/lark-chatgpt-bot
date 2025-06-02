@@ -91,8 +91,14 @@ app.post('/webhook', async (req, res) => {
     const userId = decrypted.event.sender.user_id;
     const messageId = decrypted.event.message.message_id;
 
+    // 👉 In ra senderId để biết ai gửi (bot hay user)
+    console.log('👤 senderId:', senderId);
+    console.log('📨 messageId:', messageId);
+    console.log('🤖 BOT_SENDER_ID:', process.env.BOT_SENDER_ID);
+
     const BOT_SENDER_ID = process.env.BOT_SENDER_ID || 'YOUR_BOT_SENDER_ID';
     if (senderId === BOT_SENDER_ID) {
+      console.log('➡️ Bỏ qua message do bot gửi');
       return res.send({ code: 0 });
     }
 
@@ -149,7 +155,6 @@ app.post('/webhook', async (req, res) => {
 
       await replyToLark(messageId, reply);
 
-      // Nếu trước đó có lỗi thì xoá khỏi danh sách
       if (errorSentMessages.has(messageId)) {
         errorSentMessages.delete(messageId);
       }
