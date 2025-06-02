@@ -120,11 +120,20 @@ app.post('/webhook', async (req, res) => {
         chatHistories[userId].splice(0, chatHistories[userId].length - 20);
       }
 
+      // Tạo system prompt kèm thời gian hiện tại để GPT hiểu bối cảnh
+      const now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
+      const systemPrompt = `Bạn là trợ lý AI thông minh, hiện tại là ${now}. Hãy trả lời câu hỏi một cách chính xác và thân thiện.`;
+
+      const messagesWithContext = [
+        { role: 'system', content: systemPrompt },
+        ...chatHistories[userId],
+      ];
+
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
           model: 'openai/gpt-3.5-turbo',
-          messages: chatHistories[userId],
+          messages: messagesWithContext,
         },
         {
           headers: {
