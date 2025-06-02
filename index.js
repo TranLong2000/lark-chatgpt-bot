@@ -15,6 +15,9 @@ app.use(bodyParser.json());
 // Bộ nhớ lưu lịch sử chat, key là user_id, value là mảng message
 const chatHistories = {};
 
+// Set lưu messageId đã gửi lỗi, tránh reply lỗi nhiều lần cho cùng 1 message
+const errorSentMessages = new Set();
+
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
@@ -107,20 +110,16 @@ app.post('/webhook', async (req, res) => {
       const parsedContent = JSON.parse(messageText);
       const userMessage = parsedContent.text;
 
-      // Khởi tạo lịch sử chat nếu chưa có
       if (!chatHistories[userId]) {
         chatHistories[userId] = [];
       }
 
-      // Thêm tin nhắn người dùng vào lịch sử
       chatHistories[userId].push({ role: 'user', content: userMessage });
 
-      // Giới hạn lịch sử chat chỉ giữ tối đa 10 câu hỏi để tránh quá dài
       if (chatHistories[userId].length > 20) {
         chatHistories[userId].splice(0, chatHistories[userId].length - 20);
       }
 
-      // Gọi OpenRouter API với lịch sử chat
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
@@ -137,10 +136,15 @@ app.post('/webhook', async (req, res) => {
 
       const reply = chatResponse.data.choices[0].message.content;
 
-      // Thêm câu trả lời bot vào lịch sử
       chatHistories[userId].push({ role: 'assistant', content: reply });
 
       await replyToLark(messageId, reply);
+
+      // Nếu trước đó đã gửi lỗi với message này, giờ bỏ qua (đã thành công)
+      if (errorSentMessages.has(messageId)) {
+        errorSentMessages.delete(messageId);
+      }
+
     } catch (error) {
       console.error('[OpenRouter Error]', error.message);
       if (error.response) {
@@ -148,7 +152,14 @@ app.post('/webhook', async (req, res) => {
         console.error('Response status:', error.response.status);
         console.error('Response headers:', error.response.headers);
       }
-      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi xử lý tin nhắn của bạn.');
+
+      // Chỉ reply lỗi 1 lần cho mỗi messageId
+      if (!errorSentMessages.has(messageId)) {
+        await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi xử lý tin nhắn của bạn.');
+        errorSentMessages.add(messageId);
+      } else {
+        console.log(`[Info] Đã gửi lỗi cho messageId ${messageId} trước đó, không gửi lại.`);
+      }
     }
   }
 
