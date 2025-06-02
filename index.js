@@ -14,7 +14,12 @@ app.use(bodyParser.json());
 
 // Bộ nhớ lưu lịch sử chat
 const chatHistories = {};
+
+// Lưu messageId đã trả lời lỗi để tránh lặp lại
 const errorSentMessages = new Set();
+
+// Lưu messageId đã trả lời thành công để tránh BOT trả lời 2 lần cho cùng message
+const answeredMessageIds = new Set();
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -86,18 +91,26 @@ app.post('/webhook', async (req, res) => {
 
   if (decrypted.header.event_type === 'im.message.receive_v1') {
     const senderId = decrypted.event.sender.sender_id;
-    const senderType = decrypted.event.sender.sender_type;
-    const userId = decrypted.event.sender.user_id;
+    const senderType = decrypted.event.sender.sender_type; // Đây mới là thứ quan trọng để biết tin nhắn từ bot hay user
     const messageId = decrypted.event.message.message_id;
 
     console.log('👤 senderId:', senderId);
     console.log('👤 senderType:', senderType);
     console.log('📨 messageId:', messageId);
 
+    // Nếu tin nhắn do chính bot gửi thì bỏ qua luôn
     if (senderType === 'app') {
-      console.log('➡️ Bỏ qua message do bot gửi (sender_type === app)');
+      console.log('➡️ Bỏ qua message do chính bot gửi');
       return res.send({ code: 0 });
     }
+
+    // Nếu đã trả lời rồi thì bỏ qua để tránh trả lời nhiều lần
+    if (answeredMessageIds.has(messageId)) {
+      console.log(`⚠️ Đã trả lời messageId ${messageId} trước đó, bỏ qua.`);
+      return res.send({ code: 0 });
+    }
+
+    const userId = senderId.user_id;
 
     const messageText = decrypted.event.message.content;
     let userMessage = '';
@@ -110,7 +123,12 @@ app.post('/webhook', async (req, res) => {
       return res.send({ code: 0 });
     }
 
-    if (userMessage.includes('<at user_id="all">') || userMessage.toLowerCase().includes('@all') || userMessage.toLowerCase().includes('@everyone')) {
+    // Bỏ qua nếu tag @all hoặc @everyone
+    if (
+      userMessage.includes('<at user_id="all">') ||
+      userMessage.toLowerCase().includes('@all') ||
+      userMessage.toLowerCase().includes('@everyone')
+    ) {
       console.log('Tin nhắn có tag @all hoặc @everyone, bỏ qua.');
       return res.send({ code: 0 });
     }
@@ -151,9 +169,18 @@ app.post('/webhook', async (req, res) => {
 
       await replyToLark(messageId, reply);
 
+      // Đánh dấu đã trả lời message này
+      answeredMessageIds.add(messageId);
+      if (answeredMessageIds.size > 1000) {
+        const firstKey = answeredMessageIds.values().next().value;
+        answeredMessageIds.delete(firstKey);
+      }
+
+      // Nếu trước đó có lỗi thì xoá khỏi danh sách
       if (errorSentMessages.has(messageId)) {
         errorSentMessages.delete(messageId);
       }
+
     } catch (error) {
       console.error('[OpenRouter Error]', error.message);
       if (error.response) {
