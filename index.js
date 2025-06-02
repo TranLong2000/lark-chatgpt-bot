@@ -7,7 +7,7 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-const chatHistories = {}; // Lưu lịch sử hội thoại theo user
+const chatHistories = {}; // Lưu hội thoại theo user
 
 app.use(bodyParser.json());
 
@@ -88,33 +88,34 @@ app.post('/webhook', async (req, res) => {
       const parsedContent = JSON.parse(messageText);
       const userMessage = parsedContent.text;
 
-      // Lấy ngày giờ hiện tại theo giờ Việt Nam
+      // Lấy thời gian hiện tại (giờ Việt Nam)
       const now = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
 
-      // Khởi tạo lịch sử nếu chưa có
+      // Khởi tạo hội thoại nếu chưa có
       if (!chatHistories[userId]) {
         chatHistories[userId] = [
           {
             role: 'system',
-            content: `Bạn là một trợ lý AI thân thiện. Hôm nay là ${now}. Trả lời chính xác theo thời gian thực và kiến thức hiện tại.`,
+            content: `Bạn là một trợ lý AI. Hôm nay là ${now}. Trả lời chính xác và ngắn gọn.`,
           },
         ];
       }
 
-      // Thêm tin nhắn người dùng
+      // Thêm câu hỏi mới
       chatHistories[userId].push({ role: 'user', content: userMessage });
 
-      // Giới hạn số lượng tin nhắn (tối đa 20 để không vượt token limit)
-      if (chatHistories[userId].length > 20) {
-        chatHistories[userId] = chatHistories[userId].slice(-20);
+      // Giữ lại tối đa 10 tin nhắn gần nhất
+      if (chatHistories[userId].length > 10) {
+        chatHistories[userId] = chatHistories[userId].slice(-10);
       }
 
-      // Gọi OpenRouter (GPT)
+      // Gọi API OpenRouter (giới hạn token)
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
-          model: 'openai/gpt-4o', // Bạn có thể đổi thành 'gpt-3.5-turbo' nếu cần tiết kiệm chi phí
+          model: 'openai/gpt-4o',
           messages: chatHistories[userId],
+          max_tokens: 1000 // ✅ Hạn chế token trả về
         },
         {
           headers: {
@@ -128,7 +129,7 @@ app.post('/webhook', async (req, res) => {
 
       const reply = chatResponse.data.choices[0].message.content;
 
-      // Thêm câu trả lời của bot vào lịch sử
+      // Lưu phản hồi vào lịch sử
       chatHistories[userId].push({ role: 'assistant', content: reply });
 
       await replyToLark(messageId, reply);
@@ -136,9 +137,8 @@ app.post('/webhook', async (req, res) => {
       console.error('[OpenRouter Error]', error.message);
       if (error.response) {
         console.error('Response data:', error.response.data);
-        console.error('Response status:', error.response.status);
       }
-      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi gọi OpenRouter.');
+      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra. Bạn thử lại sau nhé.');
     }
   }
 
