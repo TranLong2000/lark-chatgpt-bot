@@ -7,16 +7,10 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? 'FOUND' : 'NOT FOUND');
-console.log('OPENROUTER_API_KEY value:', process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.substring(0, 8) + '...' : 'undefined');
-
 app.use(bodyParser.json());
 
-// Bộ nhớ lưu lịch sử chat
 const chatHistories = {};
-
-// Lưu messageId đã trả lời để tránh trùng lặp
-const respondedMessages = new Set();
+const processedMessageIds = new Set();
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -75,7 +69,7 @@ app.post('/webhook', async (req, res) => {
   const body = JSON.stringify(req.body);
 
   if (!verifySignature(timestamp, nonce, body, signature)) {
-    console.warn('[Webhook] Invalid signature – stopped.');
+    console.warn('[Webhook] Invalid signature');
     return res.status(401).send('Invalid signature');
   }
 
@@ -88,36 +82,44 @@ app.post('/webhook', async (req, res) => {
 
   if (decrypted.header.event_type === 'im.message.receive_v1') {
     const senderId = decrypted.event.sender.sender_id;
-    const senderType = decrypted.event.sender.sender_type;
     const userId = decrypted.event.sender.user_id;
     const messageId = decrypted.event.message.message_id;
 
-    console.log('👤 senderId:', senderId);
-    console.log('👤 senderType:', senderType);
-    console.log('📨 messageId:', messageId);
-
-    const BOT_SENDER_ID = process.env.BOT_SENDER_ID;
-    if (senderType === 'bot' || senderId === BOT_SENDER_ID) {
+    // Bỏ qua nếu đã xử lý messageId
+    if (processedMessageIds.has(messageId)) {
+      console.log(`[Info] Message ${messageId} đã xử lý rồi, bỏ qua.`);
       return res.send({ code: 0 });
     }
 
-    // Tránh xử lý lại 1 messageId
-    if (respondedMessages.has(messageId)) {
-      console.log(`[ℹ️] Đã xử lý messageId: ${messageId}, bỏ qua.`);
+    // Đánh dấu đã xử lý
+    processedMessageIds.add(messageId);
+
+    // Giới hạn bộ nhớ lưu trữ tránh đầy bộ nhớ
+    if (processedMessageIds.size > 10000) {
+      const firstKey = processedMessageIds.values().next().value;
+      processedMessageIds.delete(firstKey);
+    }
+
+    const BOT_SENDER_ID = process.env.BOT_SENDER_ID || '';
+
+    // Nếu là tin nhắn của BOT thì bỏ qua (tránh loop)
+    if (senderId === BOT_SENDER_ID) {
+      console.log('[Info] Tin nhắn của BOT, bỏ qua');
       return res.send({ code: 0 });
     }
-    respondedMessages.add(messageId);
 
     let userMessage = '';
     try {
       const parsedContent = JSON.parse(decrypted.event.message.content);
       userMessage = parsedContent.text || '';
     } catch (e) {
-      console.warn('[Parse Error]', decrypted.event.message.content);
+      console.warn('[Parse Error] Không thể parse message');
       return res.send({ code: 0 });
     }
 
-    if (userMessage.includes('<at user_id="all">') || userMessage.toLowerCase().includes('@all')) {
+    // Bỏ qua tin nhắn có tag @all hoặc @everyone
+    if (userMessage.includes('<at user_id="all">') || userMessage.toLowerCase().includes('@all') || userMessage.toLowerCase().includes('@everyone')) {
+      console.log('[Info] Tin nhắn có tag @all hoặc @everyone, bỏ qua');
       return res.send({ code: 0 });
     }
 
@@ -132,17 +134,17 @@ app.post('/webhook', async (req, res) => {
         chatHistories[userId].splice(0, chatHistories[userId].length - 20);
       }
 
-      const currentTime = new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' });
-      const systemPrompt = {
-        role: 'system',
-        content: `Bạn là một trợ lý AI thông minh, luôn ngắn gọn, chính xác. Giờ hệ thống hiện tại là: ${currentTime}.`,
-      };
-
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
           model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-          messages: [systemPrompt, ...chatHistories[userId]],
+          messages: [
+            {
+              role: 'system',
+              content: 'Bạn là một trợ lý AI thông minh, luôn trả lời chính xác, ngắn gọn và cập nhật thời gian hiện tại nếu được hỏi.',
+            },
+            ...chatHistories[userId],
+          ],
         },
         {
           headers: {
@@ -162,6 +164,7 @@ app.post('/webhook', async (req, res) => {
         console.error('Response data:', error.response.data);
         console.error('Response status:', error.response.status);
       }
+
       await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi xử lý tin nhắn của bạn.');
     }
   }
@@ -170,5 +173,5 @@ app.post('/webhook', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`✅ Server running on port ${port}`);
+  console.log(`Server running on port ${port}`);
 });
