@@ -7,14 +7,13 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Cache đơn giản lưu message_id đã xử lý (lưu trong RAM, restart mất)
-const processedMessages = new Set();
+console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? 'FOUND' : 'NOT FOUND');
+console.log('OPENROUTER_API_KEY value:', process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.substring(0, 8) + '...' : 'undefined');
 
 app.use(bodyParser.json());
 
-// Debug biến môi trường
-console.log('OPENROUTER_API_KEY:', process.env.OPENROUTER_API_KEY ? 'FOUND' : 'NOT FOUND');
-console.log('OPENROUTER_API_KEY value:', process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.substring(0, 8) + '...' : 'undefined');
+// Bộ nhớ lưu lịch sử chat, key là user_id, value là mảng message
+const chatHistories = {};
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -39,7 +38,6 @@ function decryptMessage(encrypt) {
 
 async function replyToLark(messageId, content) {
   try {
-    // Lấy app_access_token nội bộ
     const appAccessTokenResp = await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`,
       {
@@ -49,7 +47,6 @@ async function replyToLark(messageId, content) {
     );
     const token = appAccessTokenResp.data.app_access_token;
 
-    // Gửi tin nhắn trả lời
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
       {
@@ -91,42 +88,44 @@ app.post('/webhook', async (req, res) => {
   }
 
   if (decrypted.header.event_type === 'im.message.receive_v1') {
+    const senderId = decrypted.event.sender.sender_id;
+    const userId = decrypted.event.sender.user_id; // user id riêng biệt
+    console.log('Sender ID:', senderId);
+    console.log('User ID:', userId);
+
+    // Tránh bot trả lời chính nó
+    const BOT_SENDER_ID = process.env.BOT_SENDER_ID || 'YOUR_BOT_SENDER_ID';
+    if (senderId === BOT_SENDER_ID) {
+      console.log('Tin nhắn từ bot, bỏ qua để tránh vòng lặp.');
+      return res.send({ code: 0 });
+    }
+
+    const messageText = decrypted.event.message.content;
     const messageId = decrypted.event.message.message_id;
 
-    // Trả về nhanh để tránh Lark gửi lại webhook
-    res.send({ code: 0 });
-
-    // Bỏ qua nếu đã xử lý message này rồi
-    if (processedMessages.has(messageId)) {
-      console.log(`[Webhook] Message ${messageId} đã xử lý, bỏ qua.`);
-      return;
-    }
-
-    // Bỏ qua tin nhắn do BOT gửi (đặt BOT_SENDER_ID trong .env)
-    const senderId = decrypted.event.sender?.sender_id || '';
-    if (senderId === process.env.BOT_SENDER_ID) {
-      console.log('[Webhook] Tin nhắn do BOT gửi, bỏ qua.');
-      return;
-    }
-
-    processedMessages.add(messageId);
-
     try {
-      const messageText = decrypted.event.message.content;
       const parsedContent = JSON.parse(messageText);
       const userMessage = parsedContent.text;
 
-      if (!userMessage || userMessage.trim() === '') {
-        await replyToLark(messageId, 'Bạn chưa nhập nội dung tin nhắn.');
-        return;
+      // Khởi tạo lịch sử chat nếu chưa có
+      if (!chatHistories[userId]) {
+        chatHistories[userId] = [];
       }
 
-      // Gọi OpenRouter API trả lời
+      // Thêm tin nhắn người dùng vào lịch sử
+      chatHistories[userId].push({ role: 'user', content: userMessage });
+
+      // Giới hạn lịch sử chat chỉ giữ tối đa 10 câu hỏi để tránh quá dài
+      if (chatHistories[userId].length > 20) {
+        chatHistories[userId].splice(0, chatHistories[userId].length - 20);
+      }
+
+      // Gọi OpenRouter API với lịch sử chat
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
           model: 'openai/gpt-3.5-turbo',
-          messages: [{ role: 'user', content: userMessage }],
+          messages: chatHistories[userId],
         },
         {
           headers: {
@@ -137,18 +136,23 @@ app.post('/webhook', async (req, res) => {
       );
 
       const reply = chatResponse.data.choices[0].message.content;
-      await replyToLark(messageId, reply);
 
+      // Thêm câu trả lời bot vào lịch sử
+      chatHistories[userId].push({ role: 'assistant', content: reply });
+
+      await replyToLark(messageId, reply);
     } catch (error) {
       console.error('[OpenRouter Error]', error.message);
-
-      // Chỉ gửi 1 lần tin nhắn lỗi, không retry
-      await replyToLark(messageId, 'Xin lỗi, hiện tại bot gặp lỗi, vui lòng thử lại sau.');
+      if (error.response) {
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
+        console.error('Response headers:', error.response.headers);
+      }
+      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi xử lý tin nhắn của bạn.');
     }
-  } else {
-    // Trả về cho các event khác
-    res.send({ code: 0 });
   }
+
+  res.send({ code: 0 });
 });
 
 app.listen(port, () => {
