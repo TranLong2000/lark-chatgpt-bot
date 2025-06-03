@@ -17,6 +17,7 @@ app.use(bodyParser.json());
 
 const chatHistories = new Map();
 const processedMessageIds = new Set();
+const recentFiles = new Map(); // Lưu file_key gần nhất của mỗi user
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -67,32 +68,37 @@ async function replyToLark(messageId, content) {
 }
 
 async function extractFileContent(fileUrl, fileType) {
-  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-  const buffer = Buffer.from(response.data);
+  try {
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data);
 
-  if (fileType === 'pdf') {
-    const data = await pdfParse(buffer);
-    return data.text.trim();
+    if (fileType === 'pdf') {
+      const data = await pdfParse(buffer);
+      return data.text.trim();
+    }
+
+    if (fileType === 'docx') {
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value.trim();
+    }
+
+    if (fileType === 'xlsx') {
+      const workbook = xlsx.read(buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+      return sheet.map(row => row.join(' ')).join('\n');
+    }
+
+    if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
+      const { data: { text } } = await Tesseract.recognize(buffer, 'eng+vie');
+      return text.trim();
+    }
+
+    return '[Không hỗ trợ định dạng file này]';
+  } catch (err) {
+    console.error('[Extract File Error]', err.message);
+    return `[Lỗi khi đọc file: ${err.message}]`;
   }
-
-  if (fileType === 'docx') {
-    const result = await mammoth.extractRawText({ buffer });
-    return result.value.trim();
-  }
-
-  if (fileType === 'xlsx') {
-    const workbook = xlsx.read(buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-    return sheet.map(row => row.join(' ')).join('\n');
-  }
-
-  if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-    const { data: { text } } = await Tesseract.recognize(buffer, 'eng+vie');
-    return text.trim();
-  }
-
-  return '';
 }
 
 app.post('/webhook', async (req, res) => {
@@ -135,18 +141,18 @@ app.post('/webhook', async (req, res) => {
       userMessage = parsed.text || '';
     } catch (e) {}
 
+    // Bỏ qua @all
     if (userMessage.includes('@all') || userMessage.includes('<at user_id="all">')) {
       return res.send({ code: 0 });
     }
 
-    // Xử lý file hoặc ảnh
     let extractedText = '';
-    const fileKey = message?.file_key || message?.image_key;
-    const fileName = message?.file_name || 'image.png';
-    const isImage = !!message?.image_key;
+    const fileKey = message?.file_key;
+    const fileName = message?.file_name || '';
 
     if (fileKey) {
-      console.log('[Webhook] File detected, processing:', fileName);
+      recentFiles.set(senderId, { fileKey, fileName });
+      console.log(`[Webhook] File received: ${fileName}`);
       try {
         const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
           app_id: process.env.LARK_APP_ID,
@@ -155,19 +161,50 @@ app.post('/webhook', async (req, res) => {
         const token = tokenResp.data.app_access_token;
 
         const fileResp = await axios.get(
-          `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download`,
+          `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
           {
             headers: { Authorization: `Bearer ${token}` },
           }
         );
 
         const url = fileResp.data.data.url;
-        const ext = isImage ? 'png' : fileName.split('.').pop().toLowerCase();
+        const ext = fileName.split('.').pop().toLowerCase();
         extractedText = await extractFileContent(url, ext);
         userMessage += `\n[Nội dung từ file "${fileName}"]:\n${extractedText}`;
       } catch (e) {
-        console.error('[File Error]', e.message);
+        console.error('[File Download Error]', e?.response?.data || e.message);
         userMessage += `\n[Gặp lỗi khi đọc file: ${fileName}]`;
+      }
+    }
+
+    // Nếu người dùng nhắn: "đọc ảnh vừa gửi"
+    if (!fileKey && userMessage.toLowerCase().includes('ảnh vừa gửi')) {
+      const recent = recentFiles.get(senderId);
+      if (recent) {
+        try {
+          const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+            app_id: process.env.LARK_APP_ID,
+            app_secret: process.env.LARK_APP_SECRET,
+          });
+          const token = tokenResp.data.app_access_token;
+
+          const fileResp = await axios.get(
+            `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${recent.fileKey}/download_url`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+
+          const url = fileResp.data.data.url;
+          const ext = recent.fileName.split('.').pop().toLowerCase();
+          extractedText = await extractFileContent(url, ext);
+          userMessage += `\n[Nội dung từ ảnh "${recent.fileName}"]:\n${extractedText}`;
+        } catch (e) {
+          console.error('[File Download Error]', e?.response?.data || e.message);
+          userMessage += `\n[Gặp lỗi khi đọc ảnh vừa gửi: ${recent.fileName}]`;
+        }
+      } else {
+        userMessage += `\n[Không tìm thấy ảnh nào bạn đã gửi gần đây]`;
       }
     }
 
