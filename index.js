@@ -87,7 +87,7 @@ app.post('/webhook', async (req, res) => {
     const chatType = decrypted.event.message.chat_type;
     const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
 
-    // 🐛 In ra senderId để lấy BOT_SENDER_ID
+    // 🐞 In ra sender_id để xác định BOT_SENDER_ID
     console.log('[Debug] Sender ID:', senderId);
 
     if (processedMessageIds.has(messageId)) {
@@ -103,7 +103,7 @@ app.post('/webhook', async (req, res) => {
 
     const BOT_SENDER_ID = process.env.BOT_SENDER_ID || '';
     if (senderId === BOT_SENDER_ID) {
-      console.log('[Info] Tin nhắn của BOT, bỏ qua');
+      console.log('[Info] Tin nhắn của chính BOT, bỏ qua.');
       return res.send({ code: 0 });
     }
 
@@ -116,7 +116,7 @@ app.post('/webhook', async (req, res) => {
       return res.send({ code: 0 });
     }
 
-    // 🚫 Bỏ qua nếu tag @all
+    // ❌ Bỏ qua nếu có tag @all hoặc tương tự
     const lowerMsg = userMessage.toLowerCase();
     if (
       lowerMsg.includes('<at user_id="all">') ||
@@ -124,11 +124,19 @@ app.post('/webhook', async (req, res) => {
       lowerMsg.includes('@everyone') ||
       lowerMsg.includes('@_all')
     ) {
-      console.log('[Info] Tin nhắn có tag @all hoặc tương tự, bỏ qua');
+      console.log('[Info] Tin nhắn có tag @all, bỏ qua.');
       return res.send({ code: 0 });
     }
 
     try {
+      // ⏰ Giờ Việt Nam
+      const now = new Date();
+      now.setHours(now.getHours() + 7);
+      const nowVN = now.toLocaleString('vi-VN', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour12: false,
+      });
+
       const cache = chatHistories.get(chatKey);
       if (cache && Date.now() - cache.lastUpdated > 2 * 60 * 60 * 1000) {
         chatHistories.delete(chatKey);
@@ -147,10 +155,6 @@ app.post('/webhook', async (req, res) => {
 
       current.lastUpdated = Date.now();
 
-      const nowVN = new Date().toLocaleString('vi-VN', {
-        timeZone: 'Asia/Ho_Chi_Minh',
-      });
-
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
@@ -158,7 +162,7 @@ app.post('/webhook', async (req, res) => {
           messages: [
             {
               role: 'system',
-              content: `Bạn là một trợ lý AI thông minh, luôn trả lời chính xác, ngắn gọn và cập nhật theo thời gian hiện tại nếu được hỏi. Thời gian hiện tại là: ${nowVN}.`,
+              content: `Bạn là một trợ lý AI thông minh. Luôn trả lời ngắn gọn, rõ ràng, chính xác và KHÔNG sử dụng bất kỳ định dạng như **in đậm**, *in nghiêng*, Markdown hay ký tự đặc biệt nào. Nếu người dùng hỏi thời gian, hãy trả lời theo giờ Việt Nam. Thời gian hiện tại là: ${nowVN}.`,
             },
             ...current.messages,
           ],
@@ -180,7 +184,6 @@ app.post('/webhook', async (req, res) => {
       console.error('[OpenRouter Error]', error.message);
       if (error.response) {
         console.error('Response data:', error.response.data);
-        console.error('Response status:', error.response.status);
       }
 
       await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi xử lý tin nhắn của bạn.');
