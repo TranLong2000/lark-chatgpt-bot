@@ -84,8 +84,11 @@ app.post('/webhook', async (req, res) => {
     const senderId = decrypted.event.sender.sender_id;
     const messageId = decrypted.event.message.message_id;
     const chatId = decrypted.event.message.chat_id;
-    const chatType = decrypted.event.message.chat_type; // 'p2p' hoặc 'group'
+    const chatType = decrypted.event.message.chat_type;
     const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
+
+    // 🐛 Log senderId để bạn copy làm BOT_SENDER_ID
+    console.log('[Debug] Sender ID:', senderId);
 
     if (processedMessageIds.has(messageId)) {
       console.log(`[Info] Message ${messageId} đã xử lý rồi, bỏ qua.`);
@@ -113,28 +116,24 @@ app.post('/webhook', async (req, res) => {
       return res.send({ code: 0 });
     }
 
-    // Không trả lời nếu có tag all
-    const hasAtAll =
-      chatType === 'group' &&
-      (
-        userMessage.toLowerCase().includes('@all') ||
-        userMessage.toLowerCase().includes('@everyone') ||
-        userMessage.toLowerCase().includes('@_all')
-      );
-
-    if (hasAtAll) {
-      console.log('[Info] Tin nhắn có tag @all hoặc @everyone, bỏ qua');
+    // 🚫 Bỏ qua nếu có tag @all
+    const lowerMsg = userMessage.toLowerCase();
+    if (
+      lowerMsg.includes('<at user_id="all">') ||
+      lowerMsg.includes('@all') ||
+      lowerMsg.includes('@everyone') ||
+      lowerMsg.includes('@_all')
+    ) {
+      console.log('[Info] Tin nhắn có tag @all hoặc tương tự, bỏ qua');
       return res.send({ code: 0 });
     }
 
     try {
-      // Xoá nếu quá 2 tiếng
       const cache = chatHistories.get(chatKey);
       if (cache && Date.now() - cache.lastUpdated > 2 * 60 * 60 * 1000) {
         chatHistories.delete(chatKey);
       }
 
-      // Tạo mới nếu chưa có
       if (!chatHistories.has(chatKey)) {
         chatHistories.set(chatKey, { messages: [], lastUpdated: Date.now() });
       }
