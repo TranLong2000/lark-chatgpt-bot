@@ -81,11 +81,15 @@ app.post('/webhook', async (req, res) => {
   }
 
   if (decrypted.header.event_type === 'im.message.receive_v1') {
+    const message = decrypted.event.message;
     const senderId = decrypted.event.sender.sender_id;
-    const messageId = decrypted.event.message.message_id;
-    const chatId = decrypted.event.message.chat_id;
-    const chatType = decrypted.event.message.chat_type; // 'p2p' hoặc 'group'
+    const messageId = message.message_id;
+    const chatId = message.chat_id;
+    const chatType = message.chat_type; // 'p2p' hoặc 'group'
     const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
+
+    console.log('[Received Message]');
+    console.dir(message, { depth: null });
 
     if (processedMessageIds.has(messageId)) {
       console.log(`[Info] Message ${messageId} đã xử lý rồi, bỏ qua.`);
@@ -106,18 +110,28 @@ app.post('/webhook', async (req, res) => {
 
     let userMessage = '';
     try {
-      const parsedContent = JSON.parse(decrypted.event.message.content);
+      const parsedContent = JSON.parse(message.content);
       userMessage = parsedContent.text || '';
     } catch (e) {
       console.warn('[Parse Error] Không thể parse message');
       return res.send({ code: 0 });
     }
 
-    // Bỏ qua nếu là tag @all trong nhóm
-    const mentions = decrypted.event.message.mentions || [];
-    const hasAtAll = mentions.some(m => m.id?.user_id === 'all');
-    if (chatType === 'group' && (hasAtAll || userMessage.toLowerCase().includes('@all') || userMessage.toLowerCase().includes('@everyone'))) {
-      console.log('[Info] Tin nhắn trong nhóm có tag @all hoặc @everyone, bỏ qua');
+    // Kiểm tra tag @all trong nhóm
+    const mentions = message.mentions || [];
+    const mentionText = JSON.stringify(message);
+    const hasAtAll =
+      chatType === 'group' &&
+      (
+        mentions.some(m => m.name?.toLowerCase() === '@all') ||
+        mentions.some(m => m.id?.user_id === 'all') ||
+        userMessage.toLowerCase().includes('@all') ||
+        userMessage.toLowerCase().includes('@everyone') ||
+        mentionText.includes('<at user_id="all">')
+      );
+
+    if (hasAtAll) {
+      console.log('[Info] Tin nhắn trong nhóm có tag @all, bỏ qua');
       return res.send({ code: 0 });
     }
 
