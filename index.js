@@ -113,8 +113,11 @@ app.post('/webhook', async (req, res) => {
       return res.send({ code: 0 });
     }
 
-    if (userMessage.includes('<at user_id="all">') || userMessage.toLowerCase().includes('@all') || userMessage.toLowerCase().includes('@everyone')) {
-      console.log('[Info] Tin nhắn có tag @all hoặc @everyone, bỏ qua');
+    // Bỏ qua nếu là tag @all trong nhóm
+    const mentions = decrypted.event.message.mentions || [];
+    const hasAtAll = mentions.some(m => m.id?.user_id === 'all');
+    if (chatType === 'group' && (hasAtAll || userMessage.toLowerCase().includes('@all') || userMessage.toLowerCase().includes('@everyone'))) {
+      console.log('[Info] Tin nhắn trong nhóm có tag @all hoặc @everyone, bỏ qua');
       return res.send({ code: 0 });
     }
 
