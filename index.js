@@ -87,7 +87,7 @@ app.post('/webhook', async (req, res) => {
     const chatType = decrypted.event.message.chat_type;
     const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
 
-    // 🐛 Log senderId để bạn copy làm BOT_SENDER_ID
+    // 🐛 In ra senderId để lấy BOT_SENDER_ID
     console.log('[Debug] Sender ID:', senderId);
 
     if (processedMessageIds.has(messageId)) {
@@ -116,7 +116,7 @@ app.post('/webhook', async (req, res) => {
       return res.send({ code: 0 });
     }
 
-    // 🚫 Bỏ qua nếu có tag @all
+    // 🚫 Bỏ qua nếu tag @all
     const lowerMsg = userMessage.toLowerCase();
     if (
       lowerMsg.includes('<at user_id="all">') ||
@@ -147,6 +147,10 @@ app.post('/webhook', async (req, res) => {
 
       current.lastUpdated = Date.now();
 
+      const nowVN = new Date().toLocaleString('vi-VN', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+      });
+
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
@@ -154,7 +158,7 @@ app.post('/webhook', async (req, res) => {
           messages: [
             {
               role: 'system',
-              content: 'Bạn là một trợ lý AI thông minh, luôn trả lời chính xác, ngắn gọn và cập nhật thời gian hiện tại nếu được hỏi.',
+              content: `Bạn là một trợ lý AI thông minh, luôn trả lời chính xác, ngắn gọn và cập nhật theo thời gian hiện tại nếu được hỏi. Thời gian hiện tại là: ${nowVN}.`,
             },
             ...current.messages,
           ],
