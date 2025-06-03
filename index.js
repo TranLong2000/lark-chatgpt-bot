@@ -2,6 +2,12 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const pdfParse = require('pdf-parse');
+const mammoth = require('mammoth');
+const xlsx = require('xlsx');
+const Tesseract = require('tesseract.js');
 require('dotenv').config();
 
 const app = express();
@@ -35,13 +41,10 @@ function decryptMessage(encrypt) {
 
 async function replyToLark(messageId, content) {
   try {
-    const tokenResp = await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`,
-      {
-        app_id: process.env.LARK_APP_ID,
-        app_secret: process.env.LARK_APP_SECRET,
-      }
-    );
+    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+      app_id: process.env.LARK_APP_ID,
+      app_secret: process.env.LARK_APP_SECRET,
+    });
     const token = tokenResp.data.app_access_token;
 
     await axios.post(
@@ -62,6 +65,35 @@ async function replyToLark(messageId, content) {
   }
 }
 
+async function extractFileContent(fileUrl, fileType) {
+  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+  const buffer = Buffer.from(response.data);
+
+  if (fileType === 'pdf') {
+    const data = await pdfParse(buffer);
+    return data.text.trim();
+  }
+
+  if (fileType === 'docx') {
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value.trim();
+  }
+
+  if (fileType === 'xlsx') {
+    const workbook = xlsx.read(buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    return sheet.map(row => row.join(' ')).join('\n');
+  }
+
+  if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
+    const { data: { text } } = await Tesseract.recognize(buffer, 'eng+vie');
+    return text.trim();
+  }
+
+  return '';
+}
+
 app.post('/webhook', async (req, res) => {
   const signature = req.headers['x-lark-signature'];
   const timestamp = req.headers['x-lark-request-timestamp'];
@@ -69,7 +101,6 @@ app.post('/webhook', async (req, res) => {
   const body = JSON.stringify(req.body);
 
   if (!verifySignature(timestamp, nonce, body, signature)) {
-    console.warn('[Webhook] Invalid signature');
     return res.status(401).send('Invalid signature');
   }
 
@@ -85,76 +116,82 @@ app.post('/webhook', async (req, res) => {
     const messageId = decrypted.event.message.message_id;
     const chatId = decrypted.event.message.chat_id;
     const chatType = decrypted.event.message.chat_type;
+    const message = decrypted.event.message;
     const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
 
-    // 🐞 In ra sender_id để xác định BOT_SENDER_ID
     console.log('[Debug] Sender ID:', senderId);
 
-    if (processedMessageIds.has(messageId)) {
-      console.log(`[Info] Message ${messageId} đã xử lý rồi, bỏ qua.`);
-      return res.send({ code: 0 });
-    }
-
+    if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
     processedMessageIds.add(messageId);
-    if (processedMessageIds.size > 10000) {
-      const firstKey = processedMessageIds.values().next().value;
-      processedMessageIds.delete(firstKey);
-    }
 
     const BOT_SENDER_ID = process.env.BOT_SENDER_ID || '';
-    if (senderId === BOT_SENDER_ID) {
-      console.log('[Info] Tin nhắn của chính BOT, bỏ qua.');
-      return res.send({ code: 0 });
-    }
+    if (senderId === BOT_SENDER_ID) return res.send({ code: 0 });
 
     let userMessage = '';
     try {
-      const parsedContent = JSON.parse(decrypted.event.message.content);
-      userMessage = parsedContent.text || '';
-    } catch (e) {
-      console.warn('[Parse Error] Không thể parse message');
+      const parsed = JSON.parse(message.content);
+      userMessage = parsed.text || '';
+    } catch (e) {}
+
+    // Bỏ qua @all
+    if (userMessage.includes('@all') || userMessage.includes('<at user_id="all">')) {
       return res.send({ code: 0 });
     }
 
-    // ❌ Bỏ qua nếu có tag @all hoặc tương tự
-    const lowerMsg = userMessage.toLowerCase();
-    if (
-      lowerMsg.includes('<at user_id="all">') ||
-      lowerMsg.includes('@all') ||
-      lowerMsg.includes('@everyone') ||
-      lowerMsg.includes('@_all')
-    ) {
-      console.log('[Info] Tin nhắn có tag @all, bỏ qua.');
-      return res.send({ code: 0 });
+    // Nếu là file
+    let extractedText = '';
+    const fileKey = message?.file_key;
+    const fileName = message?.file_name || '';
+
+    if (fileKey) {
+      try {
+        const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+          app_id: process.env.LARK_APP_ID,
+          app_secret: process.env.LARK_APP_SECRET,
+        });
+        const token = tokenResp.data.app_access_token;
+
+        const fileResp = await axios.get(
+          `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
+          {
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+
+        const url = fileResp.data.data.url;
+        const ext = fileName.split('.').pop().toLowerCase();
+        extractedText = await extractFileContent(url, ext);
+        userMessage += `\n[Nội dung từ file "${fileName}"]:\n${extractedText}`;
+      } catch (e) {
+        console.error('[File Error]', e.message);
+        userMessage += `\n[Gặp lỗi khi đọc file: ${fileName}]`;
+      }
     }
+
+    // Giờ Việt Nam
+    const now = new Date();
+    now.setHours(now.getHours() + 7);
+    const nowVN = now.toLocaleString('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour12: false,
+    });
+
+    if (!chatHistories.has(chatKey)) {
+      chatHistories.set(chatKey, { messages: [], lastUpdated: Date.now() });
+    }
+
+    const current = chatHistories.get(chatKey);
+    if (Date.now() - current.lastUpdated > 2 * 60 * 60 * 1000) {
+      current.messages = [];
+    }
+
+    current.messages.push({ role: 'user', content: userMessage });
+    if (current.messages.length > 20) {
+      current.messages.splice(0, current.messages.length - 20);
+    }
+    current.lastUpdated = Date.now();
 
     try {
-      // ⏰ Giờ Việt Nam
-      const now = new Date();
-      now.setHours(now.getHours() + 7);
-      const nowVN = now.toLocaleString('vi-VN', {
-        timeZone: 'Asia/Ho_Chi_Minh',
-        hour12: false,
-      });
-
-      const cache = chatHistories.get(chatKey);
-      if (cache && Date.now() - cache.lastUpdated > 2 * 60 * 60 * 1000) {
-        chatHistories.delete(chatKey);
-      }
-
-      if (!chatHistories.has(chatKey)) {
-        chatHistories.set(chatKey, { messages: [], lastUpdated: Date.now() });
-      }
-
-      const current = chatHistories.get(chatKey);
-      current.messages.push({ role: 'user', content: userMessage });
-
-      if (current.messages.length > 20) {
-        current.messages.splice(0, current.messages.length - 20);
-      }
-
-      current.lastUpdated = Date.now();
-
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
@@ -162,7 +199,7 @@ app.post('/webhook', async (req, res) => {
           messages: [
             {
               role: 'system',
-              content: `Bạn là một trợ lý AI thông minh. Luôn trả lời ngắn gọn, rõ ràng, chính xác và KHÔNG sử dụng bất kỳ định dạng như **in đậm**, *in nghiêng*, Markdown hay ký tự đặc biệt nào. Nếu người dùng hỏi thời gian, hãy trả lời theo giờ Việt Nam. Thời gian hiện tại là: ${nowVN}.`,
+              content: `Bạn là một trợ lý AI thông minh. Trả lời ngắn gọn, rõ ràng, không sử dụng ký tự đặc biệt. Giờ Việt Nam hiện tại là: ${nowVN}`,
             },
             ...current.messages,
           ],
@@ -177,16 +214,10 @@ app.post('/webhook', async (req, res) => {
 
       const reply = chatResponse.data.choices[0].message.content;
       current.messages.push({ role: 'assistant', content: reply });
-      current.lastUpdated = Date.now();
-
       await replyToLark(messageId, reply);
     } catch (error) {
-      console.error('[OpenRouter Error]', error.message);
-      if (error.response) {
-        console.error('Response data:', error.response.data);
-      }
-
-      await replyToLark(messageId, 'Xin lỗi, có lỗi xảy ra khi xử lý tin nhắn của bạn.');
+      console.error('[Chat Error]', error?.response?.data || error.message);
+      await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý file hoặc câu hỏi của bạn.');
     }
   }
 
