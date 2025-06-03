@@ -2,12 +2,9 @@ const express = require('express');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const xlsx = require('xlsx');
-const Tesseract = require('tesseract.js');
 require('dotenv').config();
 
 const app = express();
@@ -65,7 +62,7 @@ async function replyToLark(messageId, content) {
   }
 }
 
-async function extractFileContent(fileUrl, fileType, fileName = '') {
+async function extractFileContent(fileUrl, fileType) {
   const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
   const buffer = Buffer.from(response.data);
 
@@ -87,21 +84,28 @@ async function extractFileContent(fileUrl, fileType, fileName = '') {
   }
 
   if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-    console.log('[ExtractFileContent] Start OCR for:', fileName, 'Type:', fileType, 'Size:', buffer.length);
     try {
-      // Lưu file ảnh tạm để debug
-      const tempPath = path.join(__dirname, 'temp_img.' + fileType);
-      fs.writeFileSync(tempPath, buffer);
-      console.log('[ExtractFileContent] Saved temp image for debug:', tempPath);
-
-      // Chạy OCR với ngôn ngữ 'eng' (thử trước, nếu muốn tiếng Việt thì đổi thành 'eng+vie' và cài language packs)
-      const { data: { text } } = await Tesseract.recognize(buffer, 'eng', {
-        logger: m => console.log('[Tesseract]', m),
+      const ocrApiKey = process.env.OCR_SPACE_API_KEY;
+      // Gửi ảnh dưới dạng base64 đến OCR.space API
+      const ocrResponse = await axios.post('https://api.ocr.space/parse/image', null, {
+        params: {
+          apikey: ocrApiKey,
+          language: 'vie+eng',
+          isOverlayRequired: false,
+        },
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        data: `base64Image=data:image/${fileType};base64,${buffer.toString('base64')}`,
       });
-      console.log('[ExtractFileContent] OCR Result:', text);
-      return text.trim();
+
+      if (ocrResponse.data && ocrResponse.data.ParsedResults && ocrResponse.data.ParsedResults.length > 0) {
+        return ocrResponse.data.ParsedResults[0].ParsedText.trim();
+      } else {
+        throw new Error('Không có kết quả OCR');
+      }
     } catch (error) {
-      console.error('[ExtractFileContent] OCR Error:', error);
+      console.error('[OCR.space Error]', error.message || error);
       return '';
     }
   }
@@ -134,8 +138,6 @@ app.post('/webhook', async (req, res) => {
     const message = decrypted.event.message;
     const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
 
-    console.log('[Debug] Sender ID:', senderId);
-
     if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
     processedMessageIds.add(messageId);
 
@@ -148,12 +150,10 @@ app.post('/webhook', async (req, res) => {
       userMessage = parsed.text || '';
     } catch (e) {}
 
-    // Bỏ qua @all
     if (userMessage.includes('@all') || userMessage.includes('<at user_id="all">')) {
       return res.send({ code: 0 });
     }
 
-    // Nếu là file
     let extractedText = '';
     const fileKey = message?.file_key;
     const fileName = message?.file_name || '';
@@ -175,7 +175,7 @@ app.post('/webhook', async (req, res) => {
 
         const url = fileResp.data.data.url;
         const ext = fileName.split('.').pop().toLowerCase();
-        extractedText = await extractFileContent(url, ext, fileName);
+        extractedText = await extractFileContent(url, ext);
         userMessage += `\n[Nội dung từ file "${fileName}"]:\n${extractedText}`;
       } catch (e) {
         console.error('[File Error]', e.message);
