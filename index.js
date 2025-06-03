@@ -15,12 +15,9 @@ const port = process.env.PORT || 3000;
 
 app.use(bodyParser.json());
 
-// Lưu lịch sử chat theo từng user hoặc group
 const chatHistories = new Map();
-// Để tránh xử lý tin nhắn trùng lặp
 const processedMessageIds = new Set();
 
-// Hàm kiểm tra chữ ký Lark gửi tới
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
@@ -28,7 +25,6 @@ function verifySignature(timestamp, nonce, body, signature) {
   return hash === signature;
 }
 
-// Hàm giải mã message từ Lark (AES-256-CBC)
 function decryptMessage(encrypt) {
   const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
   const aesKey = crypto.createHash('sha256').update(key).digest();
@@ -43,7 +39,6 @@ function decryptMessage(encrypt) {
   return JSON.parse(decrypted.toString());
 }
 
-// Hàm gửi trả lời tin nhắn đến Lark
 async function replyToLark(messageId, content) {
   try {
     const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
@@ -70,7 +65,6 @@ async function replyToLark(messageId, content) {
   }
 }
 
-// Hàm đọc nội dung file (pdf, docx, xlsx, ảnh)
 async function extractFileContent(fileUrl, fileType) {
   const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
   const buffer = Buffer.from(response.data);
@@ -107,13 +101,19 @@ app.post('/webhook', async (req, res) => {
   const body = JSON.stringify(req.body);
 
   if (!verifySignature(timestamp, nonce, body, signature)) {
+    console.error('[Verify Signature] Invalid signature');
     return res.status(401).send('Invalid signature');
   }
 
   const { encrypt } = req.body;
-  const decrypted = decryptMessage(encrypt);
+  let decrypted;
+  try {
+    decrypted = decryptMessage(encrypt);
+  } catch (e) {
+    console.error('[Decrypt Error]', e);
+    return res.status(400).send('Decrypt failed');
+  }
 
-  // Xử lý xác thực URL
   if (decrypted.header.event_type === 'url_verification') {
     return res.send({ challenge: decrypted.event.challenge });
   }
@@ -128,11 +128,9 @@ app.post('/webhook', async (req, res) => {
 
     console.log('[Debug] Sender ID:', senderId);
 
-    // Tránh xử lý tin nhắn đã xử lý rồi
     if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
     processedMessageIds.add(messageId);
 
-    // Không phản hồi tin nhắn của chính bot
     const BOT_SENDER_ID = process.env.BOT_SENDER_ID || '';
     if (senderId === BOT_SENDER_ID) return res.send({ code: 0 });
 
@@ -142,12 +140,10 @@ app.post('/webhook', async (req, res) => {
       userMessage = parsed.text || '';
     } catch (e) {}
 
-    // Bỏ qua tin nhắn có @all
     if (userMessage.includes('@all') || userMessage.includes('<at user_id="all">')) {
       return res.send({ code: 0 });
     }
 
-    // Nếu có file đính kèm, tải và trích xuất nội dung
     let extractedText = '';
     const fileKey = message?.file_key;
     const fileName = message?.file_name || '';
@@ -162,18 +158,25 @@ app.post('/webhook', async (req, res) => {
 
         const fileResp = await axios.get(
           `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          }
+          { headers: { Authorization: `Bearer ${token}` } }
         );
 
         const url = fileResp.data.data.url;
+        console.log('[Debug] File download URL:', url);
+
         const ext = fileName.split('.').pop().toLowerCase();
-        extractedText = await extractFileContent(url, ext);
+
+        try {
+          extractedText = await extractFileContent(url, ext);
+        } catch (e) {
+          console.error('[Extract File Error]', e);
+          extractedText = `[Lỗi đọc file: ${fileName}]`;
+        }
+
         userMessage += `\n[Nội dung từ file "${fileName}"]:\n${extractedText}`;
       } catch (e) {
-        console.error('[File Error]', e.message);
-        userMessage += `\n[Gặp lỗi khi đọc file: ${fileName}]`;
+        console.error('[File Download URL Error]', e.response?.data || e.message);
+        userMessage += `\n[Gặp lỗi khi lấy URL file: ${fileName}]`;
       }
     }
 
@@ -225,8 +228,8 @@ app.post('/webhook', async (req, res) => {
       current.messages.push({ role: 'assistant', content: reply });
       await replyToLark(messageId, reply);
     } catch (error) {
-      console.error('[Chat Error]', error?.response?.data || error.message);
-      await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý file hoặc câu hỏi của bạn.');
+      console.error('[Chat Completion Error]', error.response?.data || error.message);
+      await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý câu hỏi hoặc file của bạn.');
     }
   }
 
