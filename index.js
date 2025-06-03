@@ -63,54 +63,63 @@ async function replyToLark(messageId, content) {
 }
 
 async function extractFileContent(fileUrl, fileType) {
-  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-  const buffer = Buffer.from(response.data);
+  try {
+    console.log(`[extractFileContent] Downloading file: ${fileUrl}`);
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data);
+    console.log(`[extractFileContent] File downloaded, size: ${buffer.length} bytes`);
 
-  if (fileType === 'pdf') {
-    const data = await pdfParse(buffer);
-    return data.text.trim();
-  }
+    if (fileType === 'pdf') {
+      const data = await pdfParse(buffer);
+      console.log('[extractFileContent] Extracted PDF text length:', data.text.length);
+      return data.text.trim();
+    }
 
-  if (fileType === 'docx') {
-    const result = await mammoth.extractRawText({ buffer });
-    return result.value.trim();
-  }
+    if (fileType === 'docx') {
+      const result = await mammoth.extractRawText({ buffer });
+      console.log('[extractFileContent] Extracted DOCX text length:', result.value.length);
+      return result.value.trim();
+    }
 
-  if (fileType === 'xlsx') {
-    const workbook = xlsx.read(buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-    return sheet.map(row => row.join(' ')).join('\n');
-  }
+    if (fileType === 'xlsx') {
+      const workbook = xlsx.read(buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+      const text = sheet.map(row => row.join(' ')).join('\n');
+      console.log('[extractFileContent] Extracted XLSX text length:', text.length);
+      return text;
+    }
 
-  if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-    try {
+    if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
+      console.log('[extractFileContent] Calling OCR.space API for image file...');
       const ocrApiKey = process.env.OCR_SPACE_API_KEY;
-      // Gửi ảnh dưới dạng base64 đến OCR.space API
-      const ocrResponse = await axios.post('https://api.ocr.space/parse/image', null, {
-        params: {
-          apikey: ocrApiKey,
-          language: 'vie+eng',
-          isOverlayRequired: false,
-        },
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        data: `base64Image=data:image/${fileType};base64,${buffer.toString('base64')}`,
+      const base64Image = buffer.toString('base64');
+
+      const params = new URLSearchParams();
+      params.append('apikey', ocrApiKey);
+      params.append('language', 'vie+eng');
+      params.append('isOverlayRequired', 'false');
+      params.append('base64Image', `data:image/${fileType};base64,${base64Image}`);
+
+      const ocrResponse = await axios.post('https://api.ocr.space/parse/image', params.toString(), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
 
       if (ocrResponse.data && ocrResponse.data.ParsedResults && ocrResponse.data.ParsedResults.length > 0) {
+        console.log('[extractFileContent] OCR text length:', ocrResponse.data.ParsedResults[0].ParsedText.length);
         return ocrResponse.data.ParsedResults[0].ParsedText.trim();
       } else {
-        throw new Error('Không có kết quả OCR');
+        console.error('[extractFileContent] OCR.space returned no parsed results');
+        return '';
       }
-    } catch (error) {
-      console.error('[OCR.space Error]', error.message || error);
-      return '';
     }
-  }
 
-  return '';
+    console.log('[extractFileContent] Unsupported file type:', fileType);
+    return '';
+  } catch (error) {
+    console.error('[extractFileContent] Error:', error.message || error);
+    return '';
+  }
 }
 
 app.post('/webhook', async (req, res) => {
@@ -120,11 +129,17 @@ app.post('/webhook', async (req, res) => {
   const body = JSON.stringify(req.body);
 
   if (!verifySignature(timestamp, nonce, body, signature)) {
+    console.warn('[Webhook] Invalid signature');
     return res.status(401).send('Invalid signature');
   }
 
-  const { encrypt } = req.body;
-  const decrypted = decryptMessage(encrypt);
+  let decrypted;
+  try {
+    decrypted = decryptMessage(req.body.encrypt);
+  } catch (error) {
+    console.error('[Webhook] Decrypt message error:', error.message || error);
+    return res.status(400).send('Decrypt failed');
+  }
 
   if (decrypted.header.event_type === 'url_verification') {
     return res.send({ challenge: decrypted.event.challenge });
@@ -138,11 +153,17 @@ app.post('/webhook', async (req, res) => {
     const message = decrypted.event.message;
     const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
 
-    if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
+    if (processedMessageIds.has(messageId)) {
+      console.log('[Webhook] Duplicate messageId, ignoring:', messageId);
+      return res.send({ code: 0 });
+    }
     processedMessageIds.add(messageId);
 
     const BOT_SENDER_ID = process.env.BOT_SENDER_ID || '';
-    if (senderId === BOT_SENDER_ID) return res.send({ code: 0 });
+    if (senderId === BOT_SENDER_ID) {
+      console.log('[Webhook] Message from BOT itself, ignoring');
+      return res.send({ code: 0 });
+    }
 
     let userMessage = '';
     try {
@@ -151,6 +172,7 @@ app.post('/webhook', async (req, res) => {
     } catch (e) {}
 
     if (userMessage.includes('@all') || userMessage.includes('<at user_id="all">')) {
+      console.log('[Webhook] Message contains @all, ignoring');
       return res.send({ code: 0 });
     }
 
@@ -160,6 +182,8 @@ app.post('/webhook', async (req, res) => {
 
     if (fileKey) {
       try {
+        console.log('[Webhook] File detected, processing:', fileName, fileKey);
+
         const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
           app_id: process.env.LARK_APP_ID,
           app_secret: process.env.LARK_APP_SECRET,
@@ -168,17 +192,17 @@ app.post('/webhook', async (req, res) => {
 
         const fileResp = await axios.get(
           `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
-          {
-            headers: { Authorization: `Bearer ${token}` },
-          }
+          { headers: { Authorization: `Bearer ${token}` } }
         );
 
         const url = fileResp.data.data.url;
         const ext = fileName.split('.').pop().toLowerCase();
+        console.log(`[Webhook] Download URL: ${url}, extension: ${ext}`);
+
         extractedText = await extractFileContent(url, ext);
         userMessage += `\n[Nội dung từ file "${fileName}"]:\n${extractedText}`;
       } catch (e) {
-        console.error('[File Error]', e.message);
+        console.error('[Webhook] File processing error:', e.message || e);
         userMessage += `\n[Gặp lỗi khi đọc file: ${fileName}]`;
       }
     }
@@ -230,8 +254,9 @@ app.post('/webhook', async (req, res) => {
       const reply = chatResponse.data.choices[0].message.content;
       current.messages.push({ role: 'assistant', content: reply });
       await replyToLark(messageId, reply);
+      console.log('[Webhook] Reply sent');
     } catch (error) {
-      console.error('[Chat Error]', error?.response?.data || error.message);
+      console.error('[Webhook] Chat error:', error?.response?.data || error.message);
       await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý file hoặc câu hỏi của bạn.');
     }
   }
