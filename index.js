@@ -9,7 +9,7 @@ const port = process.env.PORT || 3000;
 
 app.use(bodyParser.json());
 
-const chatHistories = {};
+const chatHistories = new Map();
 const processedMessageIds = new Set();
 
 function verifySignature(timestamp, nonce, body, signature) {
@@ -82,27 +82,23 @@ app.post('/webhook', async (req, res) => {
 
   if (decrypted.header.event_type === 'im.message.receive_v1') {
     const senderId = decrypted.event.sender.sender_id;
-    const userId = decrypted.event.sender.user_id;
     const messageId = decrypted.event.message.message_id;
+    const chatId = decrypted.event.message.chat_id;
+    const chatType = decrypted.event.message.chat_type; // 'p2p' hoặc 'group'
+    const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
 
-    // Bỏ qua nếu đã xử lý messageId
     if (processedMessageIds.has(messageId)) {
       console.log(`[Info] Message ${messageId} đã xử lý rồi, bỏ qua.`);
       return res.send({ code: 0 });
     }
 
-    // Đánh dấu đã xử lý
     processedMessageIds.add(messageId);
-
-    // Giới hạn bộ nhớ lưu trữ tránh đầy bộ nhớ
     if (processedMessageIds.size > 10000) {
       const firstKey = processedMessageIds.values().next().value;
       processedMessageIds.delete(firstKey);
     }
 
     const BOT_SENDER_ID = process.env.BOT_SENDER_ID || '';
-
-    // Nếu là tin nhắn của BOT thì bỏ qua (tránh loop)
     if (senderId === BOT_SENDER_ID) {
       console.log('[Info] Tin nhắn của BOT, bỏ qua');
       return res.send({ code: 0 });
@@ -117,22 +113,31 @@ app.post('/webhook', async (req, res) => {
       return res.send({ code: 0 });
     }
 
-    // Bỏ qua tin nhắn có tag @all hoặc @everyone
     if (userMessage.includes('<at user_id="all">') || userMessage.toLowerCase().includes('@all') || userMessage.toLowerCase().includes('@everyone')) {
       console.log('[Info] Tin nhắn có tag @all hoặc @everyone, bỏ qua');
       return res.send({ code: 0 });
     }
 
     try {
-      if (!chatHistories[userId]) {
-        chatHistories[userId] = [];
+      // Xoá nếu quá 2 tiếng
+      const cache = chatHistories.get(chatKey);
+      if (cache && Date.now() - cache.lastUpdated > 2 * 60 * 60 * 1000) {
+        chatHistories.delete(chatKey);
       }
 
-      chatHistories[userId].push({ role: 'user', content: userMessage });
-
-      if (chatHistories[userId].length > 20) {
-        chatHistories[userId].splice(0, chatHistories[userId].length - 20);
+      // Tạo mới nếu chưa có
+      if (!chatHistories.has(chatKey)) {
+        chatHistories.set(chatKey, { messages: [], lastUpdated: Date.now() });
       }
+
+      const current = chatHistories.get(chatKey);
+      current.messages.push({ role: 'user', content: userMessage });
+
+      if (current.messages.length > 20) {
+        current.messages.splice(0, current.messages.length - 20);
+      }
+
+      current.lastUpdated = Date.now();
 
       const chatResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
@@ -143,7 +148,7 @@ app.post('/webhook', async (req, res) => {
               role: 'system',
               content: 'Bạn là một trợ lý AI thông minh, luôn trả lời chính xác, ngắn gọn và cập nhật thời gian hiện tại nếu được hỏi.',
             },
-            ...chatHistories[userId],
+            ...current.messages,
           ],
         },
         {
@@ -155,7 +160,8 @@ app.post('/webhook', async (req, res) => {
       );
 
       const reply = chatResponse.data.choices[0].message.content;
-      chatHistories[userId].push({ role: 'assistant', content: reply });
+      current.messages.push({ role: 'assistant', content: reply });
+      current.lastUpdated = Date.now();
 
       await replyToLark(messageId, reply);
     } catch (error) {
