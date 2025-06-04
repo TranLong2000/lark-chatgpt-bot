@@ -144,21 +144,25 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
           });
           const token = tokenResp.data.app_access_token;
 
+          const content = JSON.parse(message.content);
+          const fileKey = content.file_key;
+          const fileName = content.file_name;
+          const ext = fileName.split('.').pop().toLowerCase();
+
           const fileResp = await axios.get(
-            `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${message.file_key}/download_url`,
+            `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
             {
               headers: { Authorization: `Bearer ${token}` },
             }
           );
 
           const url = fileResp.data.data.url;
-          const ext = message.file_name.split('.').pop().toLowerCase();
 
           // Lưu thông tin file theo message_id
           pendingFiles.set(messageId, {
             url,
             ext,
-            name: message.file_name,
+            name: fileName,
             timestamp: Date.now(),
           });
 
@@ -173,7 +177,6 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
 
       // Nếu message là text có parent_id (reply)
       if (messageType === 'text' && message.parent_id) {
-        // Tìm file info theo parent_id (tin nhắn chứa file)
         const fileInfo = pendingFiles.get(message.parent_id);
         if (!fileInfo) {
           await replyToLark(messageId, '⚠️ Không tìm thấy file tương ứng. Vui lòng gửi file rồi reply lại.');
@@ -184,7 +187,6 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
           const extractedText = await extractFileContent(fileInfo.url, fileInfo.ext);
           const combinedMessage = userMessage + '\n\n[Nội dung file "' + fileInfo.name + '"]:\n' + extractedText;
 
-          // Gọi OpenRouter AI
           const now = new Date();
           now.setHours(now.getHours() + 7);
           const nowVN = now.toLocaleString('vi-VN', {
@@ -192,7 +194,6 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
             hour12: false,
           });
 
-          // Gửi yêu cầu AI
           const chatResponse = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
@@ -223,7 +224,7 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         return res.send({ code: 0 });
       }
 
-      // Nếu message text không reply, hoặc không file, BOT không xử lý
+      // Nếu không phải file, không phải reply thì bỏ qua
       return res.send({ code: 0 });
     }
 
