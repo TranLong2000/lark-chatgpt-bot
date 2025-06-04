@@ -1,5 +1,4 @@
 const express = require('express');
-const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const axios = require('axios');
 const fs = require('fs');
@@ -12,8 +11,6 @@ require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-
-app.use(bodyParser.json());
 
 const chatHistories = new Map();
 const processedMessageIds = new Set();
@@ -67,175 +64,169 @@ async function replyToLark(messageId, content) {
 }
 
 async function extractFileContent(fileUrl, fileType) {
-  try {
-    console.log(`[File] Downloading from: ${fileUrl}`);
-    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-    const buffer = Buffer.from(response.data);
-    console.log(`[File] Downloaded, size: ${buffer.length} bytes, type: ${fileType}`);
+  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+  const buffer = Buffer.from(response.data);
 
-    if (fileType === 'pdf') {
-      const data = await pdfParse(buffer);
-      return data.text.trim();
-    }
-
-    if (fileType === 'docx') {
-      const result = await mammoth.extractRawText({ buffer });
-      return result.value.trim();
-    }
-
-    if (fileType === 'xlsx') {
-      const workbook = xlsx.read(buffer, { type: 'buffer' });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-      return sheet.map(row => row.join(' ')).join('\n');
-    }
-
-    if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-      console.log('[OCR] Starting OCR...');
-      const { data: { text } } = await Tesseract.recognize(buffer, 'eng+vie', {
-        logger: m => console.log(`[OCR] ${m.status} - ${Math.round(m.progress * 100)}%`)
-      });
-      console.log('[OCR] Done');
-      return text.trim();
-    }
-
-    return '[Không hỗ trợ định dạng file này]';
-  } catch (err) {
-    console.error('[Extract File Error]', err?.response?.data || err.message);
-    return `[Lỗi khi đọc file: ${err.message}]`;
+  if (fileType === 'pdf') {
+    const data = await pdfParse(buffer);
+    return data.text.trim();
   }
+
+  if (fileType === 'docx') {
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value.trim();
+  }
+
+  if (fileType === 'xlsx') {
+    const workbook = xlsx.read(buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    return sheet.map(row => row.join(' ')).join('\n');
+  }
+
+  if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
+    const result = await Tesseract.recognize(buffer, 'eng+vie');
+    return result.data.text.trim();
+  }
+
+  return '';
 }
 
-app.post('/webhook', async (req, res) => {
-  const signature = req.headers['x-lark-signature'];
-  const timestamp = req.headers['x-lark-request-timestamp'];
-  const nonce = req.headers['x-lark-request-nonce'];
-  const body = JSON.stringify(req.body);
+// Webhook handler (raw body để xác minh chữ ký)
+app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
+  try {
+    const signature = req.headers['x-lark-signature'];
+    const timestamp = req.headers['x-lark-request-timestamp'];
+    const nonce = req.headers['x-lark-request-nonce'];
+    const bodyRaw = req.body.toString();
 
-  if (!verifySignature(timestamp, nonce, body, signature)) {
-    return res.status(401).send('Invalid signature');
-  }
-
-  const { encrypt } = req.body;
-  const decrypted = decryptMessage(encrypt);
-
-  if (decrypted.header.event_type === 'url_verification') {
-    return res.send({ challenge: decrypted.event.challenge });
-  }
-
-  if (decrypted.header.event_type === 'im.message.receive_v1') {
-    const senderId = decrypted.event.sender.sender_id;
-    const messageId = decrypted.event.message.message_id;
-    const chatId = decrypted.event.message.chat_id;
-    const chatType = decrypted.event.message.chat_type;
-    const message = decrypted.event.message;
-    const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
-
-    const BOT_SENDER_ID = process.env.BOT_SENDER_ID || '';
-    if (processedMessageIds.has(messageId)) {
-      console.log('[Webhook] Duplicate messageId, ignoring:', messageId);
-      return res.send({ code: 0 });
-    }
-    processedMessageIds.add(messageId);
-
-    if (senderId === BOT_SENDER_ID) return res.send({ code: 0 });
-
-    let userMessage = '';
-    try {
-      const parsed = JSON.parse(message.content);
-      userMessage = parsed.text || '';
-    } catch (e) {}
-
-    if (userMessage.includes('@all') || userMessage.includes('<at user_id="all">')) {
-      return res.send({ code: 0 });
+    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      console.error('[Webhook] Invalid signature');
+      return res.status(401).send('Invalid signature');
     }
 
-    // Nếu là file
-    let extractedText = '';
-    const fileKey = message?.file_key;
-    const fileName = message?.file_name || '';
+    const { encrypt } = JSON.parse(bodyRaw);
+    const decrypted = decryptMessage(encrypt);
+    console.log('[Webhook] Decrypted event:', JSON.stringify(decrypted, null, 2));
 
-    if (fileKey) {
+    if (decrypted.header.event_type === 'url_verification') {
+      return res.send({ challenge: decrypted.event.challenge });
+    }
+
+    if (decrypted.header.event_type === 'im.message.receive_v1') {
+      const senderId = decrypted.event.sender.sender_id;
+      const messageId = decrypted.event.message.message_id;
+      const chatId = decrypted.event.message.chat_id;
+      const chatType = decrypted.event.message.chat_type;
+      const message = decrypted.event.message;
+      const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
+
+      if (processedMessageIds.has(messageId)) {
+        console.log('[Webhook] Duplicate messageId, ignoring:', messageId);
+        return res.send({ code: 0 });
+      }
+      processedMessageIds.add(messageId);
+
+      const BOT_SENDER_ID = process.env.BOT_SENDER_ID || '';
+      if (senderId === BOT_SENDER_ID) return res.send({ code: 0 });
+
+      let userMessage = '';
       try {
-        console.log(`[File] Getting download URL for: ${fileKey}`);
-        const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-          app_id: process.env.LARK_APP_ID,
-          app_secret: process.env.LARK_APP_SECRET,
-        });
-        const token = tokenResp.data.app_access_token;
+        const parsed = JSON.parse(message.content);
+        userMessage = parsed.text || '';
+      } catch (e) {}
 
-        const fileResp = await axios.get(
-          `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
+      // Bỏ qua @all
+      if (userMessage.includes('@all') || userMessage.includes('<at user_id="all">')) {
+        return res.send({ code: 0 });
+      }
+
+      let extractedText = '';
+      const fileKey = message?.file_key;
+      const fileName = message?.file_name || '';
+
+      if (fileKey) {
+        try {
+          const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+            app_id: process.env.LARK_APP_ID,
+            app_secret: process.env.LARK_APP_SECRET,
+          });
+          const token = tokenResp.data.app_access_token;
+
+          const fileResp = await axios.get(
+            `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            }
+          );
+
+          const url = fileResp.data.data.url;
+          const ext = fileName.split('.').pop().toLowerCase();
+          extractedText = await extractFileContent(url, ext);
+          userMessage += `\n[Nội dung từ file "${fileName}"]:\n${extractedText}`;
+        } catch (e) {
+          console.error('[File Error]', e.message);
+          userMessage += `\n[Gặp lỗi khi đọc file: ${fileName}]`;
+        }
+      }
+
+      const now = new Date();
+      now.setHours(now.getHours() + 7);
+      const nowVN = now.toLocaleString('vi-VN', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour12: false,
+      });
+
+      if (!chatHistories.has(chatKey)) {
+        chatHistories.set(chatKey, { messages: [], lastUpdated: Date.now() });
+      }
+
+      const current = chatHistories.get(chatKey);
+      if (Date.now() - current.lastUpdated > 2 * 60 * 60 * 1000) {
+        current.messages = [];
+      }
+
+      current.messages.push({ role: 'user', content: userMessage });
+      if (current.messages.length > 20) {
+        current.messages.splice(0, current.messages.length - 20);
+      }
+      current.lastUpdated = Date.now();
+
+      try {
+        const chatResponse = await axios.post(
+          'https://openrouter.ai/api/v1/chat/completions',
           {
-            headers: { Authorization: `Bearer ${token}` },
+            model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+            messages: [
+              {
+                role: 'system',
+                content: `Bạn là một trợ lý AI thông minh. Trả lời ngắn gọn, rõ ràng, không sử dụng ký tự đặc biệt. Giờ Việt Nam hiện tại là: ${nowVN}`,
+              },
+              ...current.messages,
+            ],
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
           }
         );
-        const url = fileResp.data.data.url;
-        console.log(`[File] Got download URL: ${url}`);
 
-        const ext = fileName.split('.').pop().toLowerCase();
-        extractedText = await extractFileContent(url, ext);
-        userMessage += `\n[Nội dung từ file "${fileName}"]:\n${extractedText}`;
-      } catch (e) {
-        console.error('[File Error]', e?.response?.data || e.message);
-        userMessage += `\n[Gặp lỗi khi đọc file: ${fileName}]`;
+        const reply = chatResponse.data.choices[0].message.content;
+        current.messages.push({ role: 'assistant', content: reply });
+        await replyToLark(messageId, reply);
+      } catch (error) {
+        console.error('[Chat Error]', error?.response?.data || error.message);
+        await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý file hoặc câu hỏi của bạn.');
       }
     }
 
-    // Giờ Việt Nam
-    const now = new Date();
-    now.setHours(now.getHours() + 7);
-    const nowVN = now.toLocaleString('vi-VN', {
-      timeZone: 'Asia/Ho_Chi_Minh',
-      hour12: false,
-    });
-
-    if (!chatHistories.has(chatKey)) {
-      chatHistories.set(chatKey, { messages: [], lastUpdated: Date.now() });
-    }
-
-    const current = chatHistories.get(chatKey);
-    if (Date.now() - current.lastUpdated > 2 * 60 * 60 * 1000) {
-      current.messages = [];
-    }
-
-    current.messages.push({ role: 'user', content: userMessage });
-    if (current.messages.length > 20) {
-      current.messages.splice(0, current.messages.length - 20);
-    }
-    current.lastUpdated = Date.now();
-
-    try {
-      const chatResponse = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-          model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-          messages: [
-            {
-              role: 'system',
-              content: `Bạn là một trợ lý AI thông minh. Trả lời ngắn gọn, rõ ràng, không sử dụng ký tự đặc biệt. Giờ Việt Nam hiện tại là: ${nowVN}`,
-            },
-            ...current.messages,
-          ],
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      const reply = chatResponse.data.choices[0].message.content;
-      current.messages.push({ role: 'assistant', content: reply });
-      await replyToLark(messageId, reply);
-    } catch (error) {
-      console.error('[Chat Error]', error?.response?.data || error.message);
-      await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý file hoặc câu hỏi của bạn.');
-    }
+    res.send({ code: 0 });
+  } catch (err) {
+    console.error('[Webhook] Handler error:', err.stack);
+    res.status(500).send('Internal Error');
   }
-
-  res.send({ code: 0 });
 });
 
 app.listen(port, () => {
