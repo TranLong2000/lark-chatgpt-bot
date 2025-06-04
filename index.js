@@ -13,7 +13,7 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 const processedMessageIds = new Set();
-const pendingFiles = new Map(); // messageId chứa file => { url, ext, name, timestamp }
+const pendingFiles = new Map();
 
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
@@ -135,42 +135,45 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         userMessage = parsed.text || '';
       } catch (e) {}
 
-      // Nếu message là file đính kèm
-      if (messageType === 'file') {
+      const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+        app_id: process.env.LARK_APP_ID,
+        app_secret: process.env.LARK_APP_SECRET,
+      });
+      const token = tokenResp.data.app_access_token;
+
+      // === Nhận file ===
+      if (messageType === 'file' || messageType === 'image') {
         try {
-          const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-            app_id: process.env.LARK_APP_ID,
-            app_secret: process.env.LARK_APP_SECRET,
-          });
-          const token = tokenResp.data.app_access_token;
+          const fileKey = message.file_key;
+          const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
+          const ext = fileName.split('.').pop().toLowerCase();
 
           const fileResp = await axios.get(
-            `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${message.file_key}/download_url`,
+            `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
             {
               headers: { Authorization: `Bearer ${token}` },
             }
           );
 
           const url = fileResp.data.data.url;
-          const ext = message.file_name.split('.').pop().toLowerCase();
 
           pendingFiles.set(messageId, {
             url,
             ext,
-            name: message.file_name,
+            name: fileName,
             timestamp: Date.now(),
           });
 
           await replyToLark(messageId, '✅ Đã lưu file. Vui lòng *reply* vào tin nhắn này để tôi đọc nội dung.');
         } catch (e) {
-          console.error('[File Error]', e.message);
-          await replyToLark(messageId, '❌ Gặp lỗi khi tải file. Vui lòng thử lại.');
+          console.error('[File/Image Error]', e.message);
+          await replyToLark(messageId, '❌ Gặp lỗi khi tải file hoặc ảnh. Vui lòng thử lại.');
         }
 
         return res.send({ code: 0 });
       }
 
-      // Nếu là reply vào tin nhắn chứa file
+      // === Reply để xử lý file hoặc ảnh đã lưu ===
       if (messageType === 'text' && message.parent_id) {
         const fileInfo = pendingFiles.get(message.parent_id);
         if (!fileInfo) {
@@ -219,43 +222,38 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         return res.send({ code: 0 });
       }
 
-      // Nếu có mention bot trong nhóm
-      if (messageType === 'text' && message.mentions && message.mentions.length > 0) {
-        try {
-          const now = new Date();
-          now.setHours(now.getHours() + 7);
-          const nowVN = now.toLocaleString('vi-VN', {
-            timeZone: 'Asia/Ho_Chi_Minh',
-            hour12: false,
-          });
+      // Nếu là tin nhắn text mention bot (ví dụ: "@bot hello")
+      const mentionKey = message.mentions?.[0]?.key;
+      if (messageType === 'text' && mentionKey?.includes('_user_')) {
+        const now = new Date();
+        now.setHours(now.getHours() + 7);
+        const nowVN = now.toLocaleString('vi-VN', {
+          timeZone: 'Asia/Ho_Chi_Minh',
+          hour12: false,
+        });
 
-          const chatResponse = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-              messages: [
-                {
-                  role: 'system',
-                  content: `Bạn là trợ lý AI. Trả lời ngắn gọn, rõ ràng. Giờ Việt Nam hiện tại là: ${nowVN}`,
-                },
-                { role: 'user', content: userMessage },
-              ],
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json',
+        const chatResponse = await axios.post(
+          'https://openrouter.ai/api/v1/chat/completions',
+          {
+            model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+            messages: [
+              {
+                role: 'system',
+                content: `Bạn là trợ lý AI. Trả lời ngắn gọn, rõ ràng. Giờ Việt Nam hiện tại là: ${nowVN}`,
               },
-            }
-          );
+              { role: 'user', content: userMessage },
+            ],
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
 
-          const reply = chatResponse.data.choices[0].message.content;
-          await replyToLark(messageId, reply);
-        } catch (err) {
-          console.error('[Mention Chat Error]', err?.response?.data || err.message);
-          await replyToLark(messageId, '❌ Lỗi khi xử lý AI. Vui lòng thử lại.');
-        }
-
+        const reply = chatResponse.data.choices[0].message.content;
+        await replyToLark(messageId, reply);
         return res.send({ code: 0 });
       }
 
