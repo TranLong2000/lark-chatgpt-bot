@@ -12,9 +12,8 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 3000;
 
-const chatHistories = new Map();
 const processedMessageIds = new Set();
-const pendingFiles = new Map(); // key: messageId, value: { url, ext, name, timestamp }
+const pendingFiles = new Map(); // messageId chứa file => { url, ext, name, timestamp }
 
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
@@ -122,7 +121,6 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
       const messageId = message.message_id;
       const chatId = message.chat_id;
       const chatType = message.chat_type;
-      const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
       const messageType = message.message_type;
 
       if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
@@ -137,11 +135,7 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         userMessage = parsed.text || '';
       } catch (e) {}
 
-      if (userMessage.includes('@all') || userMessage.includes('<at user_id="all">')) {
-        return res.send({ code: 0 });
-      }
-
-      // ✅ Nếu là file đính kèm
+      // Nếu message là file đính kèm
       if (messageType === 'file') {
         try {
           const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
@@ -160,8 +154,8 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
           const url = fileResp.data.data.url;
           const ext = message.file_name.split('.').pop().toLowerCase();
 
+          // Lưu thông tin file theo message_id
           pendingFiles.set(messageId, {
-            chatKey,
             url,
             ext,
             name: message.file_name,
@@ -177,74 +171,60 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         return res.send({ code: 0 });
       }
 
-      // ✅ Nếu là tin nhắn text bình thường
-      let extractedText = '';
-      if (messageType === 'text') {
-        const parentId = message.parent_id;
-        const fileInfo = parentId ? pendingFiles.get(parentId) : null;
-
-        if (fileInfo && Date.now() - fileInfo.timestamp < 10 * 60 * 1000) {
-          try {
-            extractedText = await extractFileContent(fileInfo.url, fileInfo.ext);
-            userMessage += `\n[Nội dung từ file "${fileInfo.name}"]:\n${extractedText}`;
-          } catch (e) {
-            userMessage += `\n[Gặp lỗi khi đọc file: ${fileInfo.name}]`;
-            console.error('[OCR Error]', e.message);
-          }
+      // Nếu message là text có parent_id (reply)
+      if (messageType === 'text' && message.parent_id) {
+        // Tìm file info theo parent_id (tin nhắn chứa file)
+        const fileInfo = pendingFiles.get(message.parent_id);
+        if (!fileInfo) {
+          await replyToLark(messageId, '⚠️ Không tìm thấy file tương ứng. Vui lòng gửi file rồi reply lại.');
+          return res.send({ code: 0 });
         }
-      }
 
-      // ✅ Xử lý AI
-      const now = new Date();
-      now.setHours(now.getHours() + 7);
-      const nowVN = now.toLocaleString('vi-VN', {
-        timeZone: 'Asia/Ho_Chi_Minh',
-        hour12: false,
-      });
+        try {
+          const extractedText = await extractFileContent(fileInfo.url, fileInfo.ext);
+          const combinedMessage = userMessage + '\n\n[Nội dung file "' + fileInfo.name + '"]:\n' + extractedText;
 
-      if (!chatHistories.has(chatKey)) {
-        chatHistories.set(chatKey, { messages: [], lastUpdated: Date.now() });
-      }
+          // Gọi OpenRouter AI
+          const now = new Date();
+          now.setHours(now.getHours() + 7);
+          const nowVN = now.toLocaleString('vi-VN', {
+            timeZone: 'Asia/Ho_Chi_Minh',
+            hour12: false,
+          });
 
-      const current = chatHistories.get(chatKey);
-      if (Date.now() - current.lastUpdated > 2 * 60 * 60 * 1000) {
-        current.messages = [];
-      }
-
-      current.messages.push({ role: 'user', content: userMessage });
-      if (current.messages.length > 20) {
-        current.messages.splice(0, current.messages.length - 20);
-      }
-      current.lastUpdated = Date.now();
-
-      try {
-        const chatResponse = await axios.post(
-          'https://openrouter.ai/api/v1/chat/completions',
-          {
-            model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-            messages: [
-              {
-                role: 'system',
-                content: `Bạn là một trợ lý AI thông minh. Trả lời ngắn gọn, rõ ràng, không sử dụng ký tự đặc biệt. Giờ Việt Nam hiện tại là: ${nowVN}`,
-              },
-              ...current.messages,
-            ],
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-              'Content-Type': 'application/json',
+          // Gửi yêu cầu AI
+          const chatResponse = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+              messages: [
+                {
+                  role: 'system',
+                  content: `Bạn là trợ lý AI. Trả lời ngắn gọn, rõ ràng. Giờ Việt Nam hiện tại là: ${nowVN}`,
+                },
+                { role: 'user', content: combinedMessage },
+              ],
             },
-          }
-        );
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
 
-        const reply = chatResponse.data.choices[0].message.content;
-        current.messages.push({ role: 'assistant', content: reply });
-        await replyToLark(messageId, reply);
-      } catch (error) {
-        console.error('[Chat Error]', error?.response?.data || error.message);
-        await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý file hoặc câu hỏi của bạn.');
+          const reply = chatResponse.data.choices[0].message.content;
+          await replyToLark(messageId, reply);
+        } catch (err) {
+          console.error('[Extract/Chat Error]', err?.response?.data || err.message);
+          await replyToLark(messageId, '❌ Lỗi khi đọc file hoặc xử lý AI. Vui lòng thử lại.');
+        }
+
+        return res.send({ code: 0 });
       }
+
+      // Nếu message text không reply, hoặc không file, BOT không xử lý
+      return res.send({ code: 0 });
     }
 
     res.send({ code: 0 });
