@@ -13,7 +13,12 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 const chatHistories = new Map();
+const lastFiles = new Map(); // key = chat_id, value = { fileKey, fileName }
 const processedMessageIds = new Set();
+
+// Đảm bảo thư mục lưu file tồn tại
+fs.mkdirSync('temp_files', { recursive: true });
+fs.mkdirSync('temp_images', { recursive: true });
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -63,7 +68,7 @@ async function replyToLark(messageId, content) {
   }
 }
 
-async function extractFileContent(fileUrl, fileType) {
+async function extractFileContent(fileUrl, fileType, filename) {
   const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
   const buffer = Buffer.from(response.data);
 
@@ -85,14 +90,15 @@ async function extractFileContent(fileUrl, fileType) {
   }
 
   if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-    const result = await Tesseract.recognize(buffer, 'eng+vie');
+    const filePath = path.join('temp_images', filename);
+    fs.writeFileSync(filePath, buffer);
+    const result = await Tesseract.recognize(filePath, 'eng+vie');
     return result.data.text.trim();
   }
 
   return '';
 }
 
-// Webhook handler (raw body để xác minh chữ ký)
 app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
   try {
     const signature = req.headers['x-lark-signature'];
@@ -136,37 +142,42 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         userMessage = parsed.text || '';
       } catch (e) {}
 
-      // Bỏ qua @all
-      if (userMessage.includes('@all') || userMessage.includes('<at user_id="all">')) {
-        return res.send({ code: 0 });
+      // Lưu thông tin file vừa gửi để dùng nếu sau đó user nhắn "đọc file"
+      if (message.message_type === 'file' || message.message_type === 'image') {
+        lastFiles.set(chatId, {
+          fileKey: message.file_key,
+          fileName: message.file_name || `image.${message.message_type === 'image' ? 'png' : 'bin'}`,
+        });
+        return res.send({ code: 0 }); // không phản hồi gì nếu chỉ gửi file
       }
 
+      // Nếu tin nhắn yêu cầu đọc file thì kiểm tra file trước đó
       let extractedText = '';
-      const fileKey = message?.file_key;
-      const fileName = message?.file_name || '';
+      if (userMessage.toLowerCase().includes('đọc file') || userMessage.toLowerCase().includes('đọc hình')) {
+        const fileInfo = lastFiles.get(chatId);
+        if (fileInfo?.fileKey) {
+          try {
+            const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+              app_id: process.env.LARK_APP_ID,
+              app_secret: process.env.LARK_APP_SECRET,
+            });
+            const token = tokenResp.data.app_access_token;
 
-      if (fileKey) {
-        try {
-          const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-            app_id: process.env.LARK_APP_ID,
-            app_secret: process.env.LARK_APP_SECRET,
-          });
-          const token = tokenResp.data.app_access_token;
+            const fileResp = await axios.get(
+              `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileInfo.fileKey}/download_url`,
+              { headers: { Authorization: `Bearer ${token}` } }
+            );
 
-          const fileResp = await axios.get(
-            `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
-            {
-              headers: { Authorization: `Bearer ${token}` },
-            }
-          );
-
-          const url = fileResp.data.data.url;
-          const ext = fileName.split('.').pop().toLowerCase();
-          extractedText = await extractFileContent(url, ext);
-          userMessage += `\n[Nội dung từ file "${fileName}"]:\n${extractedText}`;
-        } catch (e) {
-          console.error('[File Error]', e.message);
-          userMessage += `\n[Gặp lỗi khi đọc file: ${fileName}]`;
+            const url = fileResp.data.data.url;
+            const ext = fileInfo.fileName.split('.').pop().toLowerCase();
+            extractedText = await extractFileContent(url, ext, fileInfo.fileName);
+            userMessage += `\n[Nội dung từ file "${fileInfo.fileName}"]:\n${extractedText}`;
+          } catch (e) {
+            console.error('[File Error]', e.message);
+            userMessage += `\n[Gặp lỗi khi đọc file: ${fileInfo.fileName}]`;
+          }
+        } else {
+          userMessage += `\n[Không tìm thấy file để đọc. Hãy gửi file trước đó rồi nhắn "đọc file"]`;
         }
       }
 
@@ -200,7 +211,7 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
             messages: [
               {
                 role: 'system',
-                content: `Bạn là một trợ lý AI thông minh. Trả lời ngắn gọn, rõ ràng, không sử dụng ký tự đặc biệt. Giờ Việt Nam hiện tại là: ${nowVN}`,
+                content: `Bạn là một trợ lý AI thông minh. Giờ Việt Nam hiện tại là: ${nowVN}`,
               },
               ...current.messages,
             ],
