@@ -14,28 +14,11 @@ const port = process.env.PORT || 3000;
 
 const chatHistories = new Map();
 const processedMessageIds = new Set();
-const pendingFiles = new Map();
+const pendingFiles = new Map(); // key: messageId, value: { url, ext, name, timestamp }
 
-// Tạo thư mục nếu chưa có
-fs.mkdirSync('temp_files', { recursive: true });
-fs.mkdirSync('temp_images', { recursive: true });
-
-// Tự dọn file cũ sau 2 giờ
-setInterval(() => {
-  const now = Date.now();
-  fs.readdirSync('temp_files').forEach(file => {
-    const filePath = path.join('temp_files', file);
-    if (now - fs.statSync(filePath).mtimeMs > 2 * 60 * 60 * 1000) {
-      fs.unlinkSync(filePath);
-    }
-  });
-  fs.readdirSync('temp_images').forEach(file => {
-    const filePath = path.join('temp_images', file);
-    if (now - fs.statSync(filePath).mtimeMs > 2 * 60 * 60 * 1000) {
-      fs.unlinkSync(filePath);
-    }
-  });
-}, 60 * 60 * 1000); // mỗi giờ kiểm tra 1 lần
+if (!fs.existsSync('temp_files')) {
+  fs.mkdirSync('temp_files');
+}
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -54,7 +37,6 @@ function decryptMessage(encrypt) {
   const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
   let decrypted = decipher.update(encryptedText);
   decrypted = Buffer.concat([decrypted, decipher.final()]);
-
   return JSON.parse(decrypted.toString());
 }
 
@@ -107,10 +89,7 @@ async function extractFileContent(fileUrl, fileType) {
   }
 
   if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-    const tempPath = path.join('temp_images', `img_${Date.now()}.${fileType}`);
-    fs.writeFileSync(tempPath, buffer);
-    const result = await Tesseract.recognize(tempPath, 'eng+vie');
-    fs.unlinkSync(tempPath);
+    const result = await Tesseract.recognize(buffer, 'eng+vie');
     return result.data.text.trim();
   }
 
@@ -138,22 +117,19 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
     }
 
     if (decrypted.header.event_type === 'im.message.receive_v1') {
-      const sender = decrypted.event.sender.sender_id.open_id || decrypted.event.sender.sender_id.user_id;
-      const messageId = decrypted.event.message.message_id;
-      const chatId = decrypted.event.message.chat_id;
-      const chatType = decrypted.event.message.chat_type;
+      const senderId = decrypted.event.sender.sender_id.open_id;
       const message = decrypted.event.message;
+      const messageId = message.message_id;
+      const chatId = message.chat_id;
+      const chatType = message.chat_type;
+      const chatKey = chatType === 'p2p' ? `user_${senderId}` : `group_${chatId}`;
       const messageType = message.message_type;
-      const chatKey = chatType === 'p2p' ? `user_${sender}` : `group_${chatId}`;
 
-      if (processedMessageIds.has(messageId)) {
-        console.log('[Webhook] Duplicate messageId, ignoring:', messageId);
-        return res.send({ code: 0 });
-      }
+      if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
       processedMessageIds.add(messageId);
 
       const BOT_SENDER_ID = process.env.BOT_SENDER_ID || '';
-      if (sender === BOT_SENDER_ID) return res.send({ code: 0 });
+      if (senderId === BOT_SENDER_ID) return res.send({ code: 0 });
 
       let userMessage = '';
       try {
@@ -165,20 +141,7 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         return res.send({ code: 0 });
       }
 
-      const now = new Date();
-      now.setHours(now.getHours() + 7);
-      const nowVN = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
-
-      if (!chatHistories.has(chatKey)) {
-        chatHistories.set(chatKey, { messages: [], lastUpdated: Date.now() });
-      }
-
-      const current = chatHistories.get(chatKey);
-      if (Date.now() - current.lastUpdated > 2 * 60 * 60 * 1000) {
-        current.messages = [];
-      }
-
-      // Nếu là file đính kèm, lưu lại
+      // ✅ Nếu là file đính kèm
       if (messageType === 'file') {
         try {
           const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
@@ -189,40 +152,63 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
 
           const fileResp = await axios.get(
             `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${message.file_key}/download_url`,
-            { headers: { Authorization: `Bearer ${token}` } }
+            {
+              headers: { Authorization: `Bearer ${token}` },
+            }
           );
 
           const url = fileResp.data.data.url;
           const ext = message.file_name.split('.').pop().toLowerCase();
-          pendingFiles.set(chatKey, {
+
+          pendingFiles.set(messageId, {
+            chatKey,
             url,
             ext,
             name: message.file_name,
             timestamp: Date.now(),
           });
 
-          console.log('[Webhook] File pending saved:', message.file_name);
-          await replyToLark(messageId, `Đã nhận file "${message.file_name}". Hãy nhắn cho tôi để xử lý.`);
+          await replyToLark(messageId, '✅ Đã lưu file. Vui lòng *reply* vào tin nhắn này để tôi đọc nội dung.');
         } catch (e) {
           console.error('[File Error]', e.message);
-          await replyToLark(messageId, `Lỗi khi tải file "${message.file_name}".`);
+          await replyToLark(messageId, '❌ Gặp lỗi khi tải file. Vui lòng thử lại.');
         }
 
         return res.send({ code: 0 });
       }
 
-      // Nếu là tin nhắn, kiểm tra file đính kèm trước đó
-      if (userMessage.trim().toLowerCase().includes('đọc')) {
-        const fileInfo = pendingFiles.get(chatKey);
+      // ✅ Nếu là tin nhắn text bình thường
+      let extractedText = '';
+      if (messageType === 'text') {
+        const parentId = message.parent_id;
+        const fileInfo = parentId ? pendingFiles.get(parentId) : null;
+
         if (fileInfo && Date.now() - fileInfo.timestamp < 10 * 60 * 1000) {
           try {
-            const extracted = await extractFileContent(fileInfo.url, fileInfo.ext);
-            userMessage += `\n[Nội dung từ file "${fileInfo.name}"]:\n${extracted}`;
+            extractedText = await extractFileContent(fileInfo.url, fileInfo.ext);
+            userMessage += `\n[Nội dung từ file "${fileInfo.name}"]:\n${extractedText}`;
           } catch (e) {
             userMessage += `\n[Gặp lỗi khi đọc file: ${fileInfo.name}]`;
             console.error('[OCR Error]', e.message);
           }
         }
+      }
+
+      // ✅ Xử lý AI
+      const now = new Date();
+      now.setHours(now.getHours() + 7);
+      const nowVN = now.toLocaleString('vi-VN', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        hour12: false,
+      });
+
+      if (!chatHistories.has(chatKey)) {
+        chatHistories.set(chatKey, { messages: [], lastUpdated: Date.now() });
+      }
+
+      const current = chatHistories.get(chatKey);
+      if (Date.now() - current.lastUpdated > 2 * 60 * 60 * 1000) {
+        current.messages = [];
       }
 
       current.messages.push({ role: 'user', content: userMessage });
@@ -239,7 +225,7 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
             messages: [
               {
                 role: 'system',
-                content: `Bạn là một trợ lý AI thông minh. Trả lời ngắn gọn, rõ ràng, không dùng ký tự đặc biệt. Giờ Việt Nam hiện tại là: ${nowVN}`,
+                content: `Bạn là một trợ lý AI thông minh. Trả lời ngắn gọn, rõ ràng, không sử dụng ký tự đặc biệt. Giờ Việt Nam hiện tại là: ${nowVN}`,
               },
               ...current.messages,
             ],
@@ -257,7 +243,7 @@ app.post('/webhook', express.raw({ type: '*/*' }), async (req, res) => {
         await replyToLark(messageId, reply);
       } catch (error) {
         console.error('[Chat Error]', error?.response?.data || error.message);
-        await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý yêu cầu.');
+        await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý file hoặc câu hỏi của bạn.');
       }
     }
 
