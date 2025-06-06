@@ -13,19 +13,14 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 const processedMessageIds = new Set();
-const pendingFiles = new Map();
-
-// Bộ nhớ hội thoại theo chat_id, lưu trữ mảng message {role, content}, tự động xóa sau 2h
 const conversationMemory = new Map();
 
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
 }
 
-// Middleware parse raw cho webhook Lark
 app.use('/webhook', express.raw({ type: '*/*' }));
 
-// Xác thực chữ ký webhook Lark
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
@@ -33,7 +28,6 @@ function verifySignature(timestamp, nonce, body, signature) {
   return hash === signature;
 }
 
-// Giải mã message encrypt Lark (AES-256-CBC)
 function decryptMessage(encrypt) {
   const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
   const aesKey = crypto.createHash('sha256').update(key).digest();
@@ -47,7 +41,6 @@ function decryptMessage(encrypt) {
   return JSON.parse(decrypted.toString());
 }
 
-// Gửi reply tới Lark message
 async function replyToLark(messageId, content) {
   try {
     const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
@@ -75,7 +68,6 @@ async function replyToLark(messageId, content) {
   }
 }
 
-// Trích xuất nội dung file theo loại file
 async function extractFileContent(fileUrl, fileType) {
   const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
   const buffer = Buffer.from(response.data);
@@ -105,7 +97,6 @@ async function extractFileContent(fileUrl, fileType) {
   return '';
 }
 
-// Lấy Access Token app nội bộ
 async function getAppAccessToken() {
   const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
     app_id: process.env.LARK_APP_ID,
@@ -114,16 +105,14 @@ async function getAppAccessToken() {
   return resp.data.app_access_token;
 }
 
-// Lấy danh sách bảng trong Base
 async function getAllTables(baseId, token) {
   const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
   const resp = await axios.get(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  return resp.data.data.items; // mảng bảng
+  return resp.data.data.items;
 }
 
-// Lấy dữ liệu toàn bộ bảng
 async function getAllRows(baseId, tableId, token) {
   const rows = [];
   let pageToken = '';
@@ -138,26 +127,20 @@ async function getAllRows(baseId, tableId, token) {
   return rows;
 }
 
-// Cập nhật bộ nhớ hội thoại theo chat_id
 function updateConversationMemory(chatId, role, content) {
   if (!conversationMemory.has(chatId)) {
     conversationMemory.set(chatId, []);
   }
   const mem = conversationMemory.get(chatId);
   mem.push({ role, content });
-  // Giới hạn max 50 tin nhắn trong bộ nhớ để tránh quá lớn
-  if (mem.length > 50) {
-    mem.shift();
-  }
+  if (mem.length > 50) mem.shift();
 }
 
-// Xóa bộ nhớ cũ hơn 2h (clear toàn bộ bộ nhớ)
 setInterval(() => {
   conversationMemory.clear();
   console.log('[Memory] Cleared conversation memory (2h interval)');
 }, 2 * 60 * 60 * 1000);
 
-// Main webhook handler
 app.post('/webhook', async (req, res) => {
   try {
     const signature = req.headers['x-lark-signature'];
@@ -165,7 +148,6 @@ app.post('/webhook', async (req, res) => {
     const nonce = req.headers['x-lark-request-nonce'];
     const bodyRaw = req.body.toString();
 
-    // Kiểm tra chữ ký webhook
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
       console.error('[Webhook] Invalid signature');
       return res.status(401).send('Invalid signature');
@@ -175,24 +157,20 @@ app.post('/webhook', async (req, res) => {
     const decrypted = decryptMessage(encrypt);
     console.log('[Webhook] Decrypted event:', JSON.stringify(decrypted, null, 2));
 
-    // Xử lý url_verification (để xác thực webhook)
     if (decrypted.header.event_type === 'url_verification') {
       return res.send({ challenge: decrypted.event.challenge });
     }
 
-    // Xử lý tin nhắn mới
     if (decrypted.header.event_type === 'im.message.receive_v1') {
       const senderId = decrypted.event.sender.sender_id.open_id;
       const message = decrypted.event.message;
       const messageId = message.message_id;
       const chatId = message.chat_id;
-      const chatType = message.chat_type;
       const messageType = message.message_type;
 
       if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
       processedMessageIds.add(messageId);
 
-      // Bỏ qua tin nhắn do bot gửi (tránh vòng lặp)
       if (senderId === (process.env.BOT_SENDER_ID || '')) return res.send({ code: 0 });
 
       let userMessage = '';
@@ -203,10 +181,7 @@ app.post('/webhook', async (req, res) => {
 
       const token = await getAppAccessToken();
 
-      // --- XỬ LÝ LẤY DỮ LIỆU BASE TỪ TIN NHẮN ---
-
-      // Nếu tin nhắn có chứa link Base hoặc câu lệnh yêu cầu đọc Base
-      const baseId = process.env.LARK_BASE_ID || ''; // set biến môi trường LARK_BASE_ID cho Base chính
+      const baseId = process.env.LARK_BASE_ID || '';
       const baseLinkMatch = userMessage.match(/https:\/\/[^\s]+\/base\/([a-zA-Z0-9]+)(?:\?table=([a-zA-Z0-9]+))?/);
       const explicitTableIdMatch = userMessage.match(/tbl61rgzOwS8viB2/);
 
@@ -215,7 +190,6 @@ app.post('/webhook', async (req, res) => {
         const tableIdFromMsg = baseLinkMatch ? baseLinkMatch[2] : 'tbl61rgzOwS8viB2';
 
         try {
-          // Nếu có tableId cụ thể thì chỉ lấy bảng đó, ngược lại lấy toàn bộ bảng
           let tables = [];
           if (tableIdFromMsg) {
             tables = [
@@ -231,21 +205,16 @@ app.post('/webhook', async (req, res) => {
 
           let baseSummary = `Dữ liệu Base ID: ${baseIdFromMsg}\n`;
 
-          // Duyệt tất cả bảng hoặc bảng được chỉ định
           for (const table of tables) {
             if (table.type === 'base_table') {
               baseSummary += `\nBảng: ${table.name} (ID: ${table.table_id})\n`;
-
               const rows = await getAllRows(baseIdFromMsg, table.table_id, token);
-
               if (rows.length === 0) {
                 baseSummary += '  (Không có bản ghi)\n';
                 continue;
               }
 
-              // Lấy tối đa 10 bản ghi đầu để tránh quá dài
               const sampleRows = rows.slice(0, 10);
-
               for (const row of sampleRows) {
                 const fieldsText = Object.entries(row.fields).map(([k, v]) => `${k}: ${v}`).join('; ');
                 baseSummary += `  - ${fieldsText}\n`;
@@ -254,10 +223,8 @@ app.post('/webhook', async (req, res) => {
             }
           }
 
-          // Cập nhật bộ nhớ hội thoại
           updateConversationMemory(chatId, 'user', userMessage);
           updateConversationMemory(chatId, 'assistant', baseSummary);
-
           await replyToLark(messageId, baseSummary);
         } catch (e) {
           console.error('[Base API Error]', e?.response?.data || e.message);
@@ -267,15 +234,12 @@ app.post('/webhook', async (req, res) => {
         return res.send({ code: 0 });
       }
 
-      // --- XỬ LÝ FILE HOẶC ẢNH ĐƯỢC GỬI ---
-
       if (messageType === 'file' || messageType === 'image') {
         try {
           const fileKey = message.file_key;
           const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
           const ext = fileName.split('.').pop().toLowerCase();
 
-          // Lấy URL file từ Lark
           const fileUrlResp = await axios.get(
             `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
             { headers: { Authorization: `Bearer ${token}` } }
@@ -289,7 +253,6 @@ app.post('/webhook', async (req, res) => {
           } else {
             updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung đã trích xuất.`);
             updateConversationMemory(chatId, 'assistant', extractedText);
-
             await replyToLark(messageId, `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`);
           }
         } catch (e) {
@@ -299,18 +262,11 @@ app.post('/webhook', async (req, res) => {
         return res.send({ code: 0 });
       }
 
-      // --- XỬ LÝ TIN NHẮN VĂN BẢN THƯỜNG ---
-
       if (messageType === 'text' && userMessage.trim().length > 0) {
         updateConversationMemory(chatId, 'user', userMessage);
 
-        // Gọi AI Deepseek
         try {
-          const messages = conversationMemory.get(chatId).map(({ role, content }) => ({
-            role,
-            content,
-          }));
-
+          const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
@@ -328,7 +284,6 @@ app.post('/webhook', async (req, res) => {
 
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
           updateConversationMemory(chatId, 'assistant', assistantMessage);
-
           await replyToLark(messageId, assistantMessage);
         } catch (e) {
           console.error('[AI Error]', e?.response?.data || e.message);
@@ -338,10 +293,10 @@ app.post('/webhook', async (req, res) => {
         return res.send({ code: 0 });
       }
 
-      res.send({ code: 0 });
-    } else {
-      res.send({ code: 0 });
+      return res.send({ code: 0 });
     }
+
+    return res.send({ code: 0 });
   } catch (e) {
     console.error('[Webhook Handler Error]', e);
     res.status(500).send('Internal Server Error');
