@@ -1,304 +1,186 @@
 const express = require('express');
-const crypto = require('crypto');
-const axios = require('axios');
+const { EventDispatcher, createLarkClient } = require('@larksuiteoapi/node-sdk');
+const multer = require('multer');
 const fs = require('fs');
-const path = require('path');
-const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
-const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
-require('dotenv').config();
+const pdfParse = require('pdf-parse');
+const xlsx = require('xlsx');
+const axios = require('axios');
+const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-const processedMessageIds = new Set();
-const pendingFiles = new Map();
-const conversationMemory = new Map();
+const client = createLarkClient({
+  appId: process.env.LARK_APP_ID,
+  appSecret: process.env.LARK_APP_SECRET,
+});
 
-if (!fs.existsSync('temp_files')) {
-  fs.mkdirSync('temp_files');
-}
+const dispatcher = new EventDispatcher({
+  encryptKey: process.env.LARK_ENCRYPT_KEY,
+  verificationToken: process.env.LARK_VERIFICATION_TOKEN,
+});
 
-app.use('/webhook', express.raw({ type: '*/*' }));
+app.use(express.json());
+app.use(dispatcher.express());
 
-function verifySignature(timestamp, nonce, body, signature) {
-  const raw = `${timestamp}${nonce}${process.env.LARK_ENCRYPT_KEY}${body}`;
-  const hash = crypto.createHash('sha256').update(raw).digest('hex');
-  return hash === signature;
-}
+const upload = multer({ dest: 'uploads/' });
+app.use('/uploads', express.static('uploads'));
 
-function decryptMessage(encrypt) {
-  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
-  const aesKey = crypto.createHash('sha256').update(key).digest();
-  const data = Buffer.from(encrypt, 'base64');
-  const iv = data.slice(0, 16);
-  const encryptedText = data.slice(16);
-  const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return JSON.parse(decrypted.toString());
-}
-
-async function replyToLark(messageId, content) {
-  try {
-    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-      app_id: process.env.LARK_APP_ID,
-      app_secret: process.env.LARK_APP_SECRET,
-    });
-    const token = tokenResp.data.app_access_token;
-
-    await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
-      {
-        msg_type: 'text',
-        content: JSON.stringify({ text: content }),
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-  } catch (err) {
-    console.error('[Reply Error]', err?.response?.data || err.message);
-  }
-}
-
-async function extractFileContent(fileUrl, fileType) {
-  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-  const buffer = Buffer.from(response.data);
-
-  if (fileType === 'pdf') {
-    const data = await pdfParse(buffer);
-    return data.text.trim();
-  }
-
-  if (fileType === 'docx') {
-    const result = await mammoth.extractRawText({ buffer });
-    return result.value.trim();
-  }
-
-  if (fileType === 'xlsx') {
-    const workbook = xlsx.read(buffer, { type: 'buffer' });
-    const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { header: 1 });
-    return sheet.map(row => row.join(' ')).join('\n');
-  }
-
-  if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-    const result = await Tesseract.recognize(buffer, 'eng+vie');
-    return result.data.text.trim();
-  }
-
-  return '';
-}
-
-async function getAppAccessToken() {
-  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-    app_id: process.env.LARK_APP_ID,
-    app_secret: process.env.LARK_APP_SECRET,
-  });
-  return resp.data.app_access_token;
-}
-
-async function getAllTables(baseId, token) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
-  const resp = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return resp.data.data.items;
-}
-
-async function getAllRows(baseId, tableId, token) {
-  const rows = [];
-  let pageToken = '';
-  do {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=100&page_token=${pageToken}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    rows.push(...resp.data.data.items);
-    pageToken = resp.data.data.page_token || '';
-  } while (pageToken);
-  return rows;
-}
+const memory = {};
 
 function updateConversationMemory(chatId, role, content) {
-  if (!conversationMemory.has(chatId)) {
-    conversationMemory.set(chatId, []);
+  if (!memory[chatId]) memory[chatId] = [];
+  memory[chatId].push({ role, content });
+
+  // Chỉ giữ tối đa 20 tin gần nhất
+  if (memory[chatId].length > 20) {
+    memory[chatId] = memory[chatId].slice(-20);
   }
-  const mem = conversationMemory.get(chatId);
-  mem.push({ role, content });
-  if (mem.length > 50) mem.shift();
+
+  // Đặt hẹn xóa bộ nhớ sau 2 tiếng
+  if (!memory[chatId].timeout) {
+    memory[chatId].timeout = setTimeout(() => {
+      delete memory[chatId];
+    }, 2 * 60 * 60 * 1000);
+  }
 }
 
-setInterval(() => {
-  conversationMemory.clear();
-  console.log('[Memory] Cleared conversation memory (2h interval)');
-}, 2 * 60 * 60 * 1000);
+async function replyToLark(messageId, text) {
+  await client.im.message.reply({
+    path: { message_id: messageId },
+    data: {
+      msg_type: 'text',
+      content: JSON.stringify({ text }),
+    },
+  });
+}
 
-app.post('/webhook', async (req, res) => {
-  try {
-    const signature = req.headers['x-lark-signature'];
-    const timestamp = req.headers['x-lark-request-timestamp'];
-    const nonce = req.headers['x-lark-request-nonce'];
-    const bodyRaw = req.body.toString();
+async function getUserMessageText(event) {
+  if (event.message.message_type === 'text') {
+    return JSON.parse(event.message.content).text;
+  }
+  return '[Non-text message]';
+}
 
-    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
-      return res.status(401).send('Invalid signature');
-    }
+dispatcher.register({
+  'im.message.receive_v1': async (data) => {
+    const event = data.event;
+    const chatId = event.message.chat_id;
+    const messageId = event.message.message_id;
+    const senderId = event.sender.sender_id?.user_id || chatId;
+    const userMessage = await getUserMessageText(event);
+    const memoryKey = chatId.startsWith('oc_') ? chatId : senderId;
 
-    const { encrypt } = JSON.parse(bodyRaw);
-    const decrypted = decryptMessage(encrypt);
+    // Nếu người dùng vừa gửi file và nhắn "đọc file vừa gửi"
+    if (/đọc file vừa gửi/i.test(userMessage)) {
+      const files = fs.readdirSync('./uploads');
+      const recentFile = files
+        .map(f => ({ name: f, time: fs.statSync('./uploads/' + f).mtime }))
+        .sort((a, b) => b.time - a.time)[0];
 
-    if (decrypted.header.event_type === 'url_verification') {
-      return res.send({ challenge: decrypted.event.challenge });
-    }
+      if (!recentFile) {
+        return await replyToLark(messageId, 'Không tìm thấy file nào gần đây.');
+      }
 
-    if (decrypted.header.event_type === 'im.message.receive_v1') {
-      const senderId = decrypted.event.sender.sender_id.open_id;
-      const message = decrypted.event.message;
-      const messageId = message.message_id;
-      const chatId = message.chat_id;
-      const chatType = message.chat_type;
-      const messageType = message.message_type;
+      const filePath = './uploads/' + recentFile.name;
+      const ext = path.extname(filePath).toLowerCase();
+      let extractedText = '';
 
-      if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
-      processedMessageIds.add(messageId);
-      if (senderId === (process.env.BOT_SENDER_ID || '')) return res.send({ code: 0 });
-
-      let userMessage = '';
       try {
-        const parsed = JSON.parse(message.content);
-        userMessage = parsed.text || '';
-      } catch {}
+        if (ext === '.pdf') {
+          const buffer = fs.readFileSync(filePath);
+          const data = await pdfParse(buffer);
+          extractedText = data.text;
+        } else if (ext === '.docx') {
+          const result = await mammoth.extractRawText({ path: filePath });
+          extractedText = result.value;
+        } else if (ext === '.xlsx') {
+          const workbook = xlsx.readFile(filePath);
+          const sheetNames = workbook.SheetNames;
+          extractedText = sheetNames.map(name => {
+            const sheet = workbook.Sheets[name];
+            return `Sheet: ${name}\n` + xlsx.utils.sheet_to_csv(sheet);
+          }).join('\n\n');
+        } else if (['.jpg', '.jpeg', '.png'].includes(ext)) {
+          const result = await Tesseract.recognize(filePath, 'eng');
+          extractedText = result.data.text;
+        } else {
+          return await replyToLark(messageId, 'Không hỗ trợ định dạng file này.');
+        }
+      } catch (err) {
+        return await replyToLark(messageId, 'Lỗi khi đọc file: ' + err.message);
+      }
 
-      const token = await getAppAccessToken();
+      updateConversationMemory(memoryKey, 'user', extractedText);
 
-      const baseId = process.env.LARK_BASE_ID || '';
-      const baseLinkMatch = userMessage.match(/https:\/\/[^\s]+\/base\/([a-zA-Z0-9]+)(?:\?table=([a-zA-Z0-9]+))?/);
-      const explicitTableIdMatch = userMessage.match(/tbl61rgzOwS8viB2/);
+      const chatResponse = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+          messages: [
+            { role: 'system', content: 'Bạn là trợ lý AI, giúp phân tích nội dung văn bản người dùng cung cấp.' },
+            { role: 'user', content: `Hãy phân tích nội dung sau:\n\n${extractedText}` },
+          ],
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
 
-      if (baseLinkMatch || explicitTableIdMatch) {
-        const baseIdFromMsg = baseLinkMatch ? baseLinkMatch[1] : baseId;
-        const tableIdFromMsg = baseLinkMatch ? baseLinkMatch[2] : 'tbl61rgzOwS8viB2';
+      const reply = chatResponse.data.choices[0].message.content;
+      updateConversationMemory(memoryKey, 'assistant', reply);
+      return await replyToLark(messageId, reply);
+    }
 
-        try {
-          let tables = [];
-          if (tableIdFromMsg) {
-            tables = [{ table_id: tableIdFromMsg, name: `Bảng theo ID: ${tableIdFromMsg}`, type: 'base_table' }];
-          } else {
-            tables = await getAllTables(baseIdFromMsg, token);
-          }
+    // Nếu chứa URL đến Base hoặc ID Base
+    if (/\/base\/[a-zA-Z0-9]+/.test(userMessage) || /base_[a-zA-Z0-9]+/.test(userMessage)) {
+      try {
+        const allBases = await client.bitable.appTable.list({
+          params: { page_size: 50 },
+        });
 
-          let baseSummary = `Dữ liệu Base ID: ${baseIdFromMsg}\n`;
+        let baseSummary = '';
+
+        for (const base of allBases?.data?.items || []) {
+          const baseId = base.app_token;
+          const tablesRes = await client.bitable.appTable.list({ path: { app_token: baseId } });
+          const tables = tablesRes?.data?.items || [];
+
           for (const table of tables) {
-            if (table.type === 'base_table') {
-              baseSummary += `\nBảng: ${table.name} (ID: ${table.table_id})\n`;
-              const rows = await getAllRows(baseIdFromMsg, table.table_id, token);
-              if (rows.length === 0) {
-                baseSummary += '  (Không có bản ghi)\n';
-                continue;
-              }
-              const sampleRows = rows.slice(0, 10);
-              for (const row of sampleRows) {
-                const fieldsText = Object.entries(row.fields).map(([k, v]) => `${k}: ${v}`).join('; ');
-                baseSummary += `  - ${fieldsText}\n`;
-              }
-              if (rows.length > 10) baseSummary += `  ... (${rows.length} bản ghi)\n`;
+            const tableId = table.table_id;
+            const recordsRes = await client.bitable.appTableRecord.list({
+              path: { app_token: baseId, table_id: tableId },
+              params: { page_size: 100 },
+            });
+
+            const records = recordsRes?.data?.items || [];
+            baseSummary += `\n\n📊 Bảng: ${table.name}\n`;
+            for (const record of records) {
+              const row = Object.entries(record.fields || {})
+                .map(([key, val]) => `${key}: ${val}`)
+                .join(' | ');
+              baseSummary += row + '\n';
             }
           }
-
-          updateConversationMemory(chatId, 'user', userMessage);
-          updateConversationMemory(chatId, 'assistant', baseSummary);
-          await replyToLark(messageId, baseSummary);
-        } catch (e) {
-          console.error('[Base API Error]', e?.response?.data || e.message);
-          await replyToLark(messageId, '❌ Lỗi khi truy xuất Base, vui lòng kiểm tra quyền hoặc thử lại sau.');
         }
 
-        return res.send({ code: 0 });
-      }
+        updateConversationMemory(memoryKey, 'user', userMessage);
 
-      if (messageType === 'file' || messageType === 'image') {
-        try {
-          const fileKey = message.file_key;
-          const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
-          const ext = fileName.split('.').pop().toLowerCase();
-
-          const fileResp = await axios.get(
-            `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
-            {
-              headers: { Authorization: `Bearer ${token}` },
-            }
-          );
-          const url = fileResp.data.data.url;
-          pendingFiles.set(messageId, { url, ext, name: fileName, timestamp: Date.now() });
-          await replyToLark(messageId, '✅ Đã lưu file. Vui lòng *reply* vào tin nhắn này để tôi đọc nội dung.');
-        } catch (e) {
-          await replyToLark(messageId, '❌ Gặp lỗi khi tải file hoặc ảnh. Vui lòng thử lại.');
-        }
-
-        return res.send({ code: 0 });
-      }
-
-      if (messageType === 'text' && message.parent_id) {
-        const fileInfo = pendingFiles.get(message.parent_id);
-        if (!fileInfo) {
-          await replyToLark(messageId, '⚠️ Không tìm thấy file tương ứng. Vui lòng gửi file rồi reply lại.');
-          return res.send({ code: 0 });
-        }
-
-        try {
-          const extractedText = await extractFileContent(fileInfo.url, fileInfo.ext);
-          const combinedMessage = userMessage + '\n\n[Nội dung file "' + fileInfo.name + '"]:\n' + extractedText;
-
-          updateConversationMemory(chatId, 'user', combinedMessage);
-
-          const now = new Date(); now.setHours(now.getHours() + 7);
-          const nowVN = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
-
-          const chatResponse = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-              messages: [
-                { role: 'system', content: `Bạn là trợ lý AI. Giờ Việt Nam hiện tại là: ${nowVN}` },
-                ...conversationMemory.get(chatId) || [],
-              ],
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-            }
-          );
-
-          const reply = chatResponse.data.choices[0].message.content;
-          updateConversationMemory(chatId, 'assistant', reply);
-          await replyToLark(messageId, reply);
-        } catch (err) {
-          await replyToLark(messageId, '❌ Lỗi khi đọc file hoặc xử lý AI. Vui lòng thử lại.');
-        }
-
-        return res.send({ code: 0 });
-      }
-
-      if (messageType === 'text' && userMessage.includes('@')) {
         const now = new Date(); now.setHours(now.getHours() + 7);
         const nowVN = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
-
-        updateConversationMemory(chatId, 'user', userMessage);
 
         const chatResponse = await axios.post(
           'https://openrouter.ai/api/v1/chat/completions',
           {
             model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
             messages: [
-              { role: 'system', content: `Bạn là trợ lý AI. Giờ Việt Nam hiện tại là: ${nowVN}` },
-              ...conversationMemory.get(chatId) || [],
+              { role: 'system', content: `Bạn là trợ lý AI, giúp phân tích dữ liệu doanh nghiệp. Giờ Việt Nam hiện tại là: ${nowVN}` },
+              { role: 'user', content: `Hãy phân tích và tóm tắt dữ liệu bảng sau:\n\n${baseSummary}` },
             ],
           },
           {
@@ -310,21 +192,51 @@ app.post('/webhook', async (req, res) => {
         );
 
         const reply = chatResponse.data.choices[0].message.content;
-        updateConversationMemory(chatId, 'assistant', reply);
-        await replyToLark(messageId, reply);
-        return res.send({ code: 0 });
+        updateConversationMemory(memoryKey, 'assistant', reply);
+        return await replyToLark(messageId, reply);
+      } catch (err) {
+        return await replyToLark(messageId, 'Lỗi khi truy xuất dữ liệu Base: ' + err.message);
       }
-
-      return res.send({ code: 0 });
     }
 
-    return res.send({ code: 0 });
-  } catch (error) {
-    console.error('[Webhook Error]', error);
-    res.status(500).send('Internal Server Error');
-  }
+    // Chat thông thường
+    updateConversationMemory(memoryKey, 'user', userMessage);
+
+    const now = new Date(); now.setHours(now.getHours() + 7);
+    const nowVN = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
+
+    const chatResponse = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+        messages: [
+          { role: 'system', content: `Bạn là trợ lý AI hỗ trợ trò chuyện tiếng Việt. Giờ hiện tại (VN): ${nowVN}` },
+          ...memory[memoryKey],
+        ],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    const reply = chatResponse.data.choices[0].message.content;
+    updateConversationMemory(memoryKey, 'assistant', reply);
+    await replyToLark(messageId, reply);
+  },
+});
+
+app.post('/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).send('No file uploaded');
+  res.send({ path: '/uploads/' + req.file.filename });
+});
+
+app.get('/', (req, res) => {
+  res.send('Lark bot is running');
 });
 
 app.listen(port, () => {
-  console.log(`Bot listening on port ${port}`);
+  console.log(`Server is running on port ${port}`);
 });
