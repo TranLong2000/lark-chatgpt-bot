@@ -206,8 +206,7 @@ app.post('/webhook', async (req, res) => {
       // --- XỬ LÝ LẤY DỮ LIỆU BASE TỪ TIN NHẮN ---
 
       // Nếu tin nhắn có chứa link Base hoặc câu lệnh yêu cầu đọc Base
-      // Cố định ID bảng tbl61rgzOwS8viB2 hoặc dạng https://.../base/{baseId}?table=tbl61rgzOwS8viB2
-      const baseId = process.env.LARK_BASE_ID || ''; // bạn có thể set biến môi trường LARK_BASE_ID cho Base chính
+      const baseId = process.env.LARK_BASE_ID || ''; // set biến môi trường LARK_BASE_ID cho Base chính
       const baseLinkMatch = userMessage.match(/https:\/\/[^\s]+\/base\/([a-zA-Z0-9]+)(?:\?table=([a-zA-Z0-9]+))?/);
       const explicitTableIdMatch = userMessage.match(/tbl61rgzOwS8viB2/);
 
@@ -248,7 +247,6 @@ app.post('/webhook', async (req, res) => {
               const sampleRows = rows.slice(0, 10);
 
               for (const row of sampleRows) {
-                // row.fields là đối tượng key:value chứa dữ liệu từng trường
                 const fieldsText = Object.entries(row.fields).map(([k, v]) => `${k}: ${v}`).join('; ');
                 baseSummary += `  - ${fieldsText}\n`;
               }
@@ -312,44 +310,80 @@ app.post('/webhook', async (req, res) => {
             // Người dùng reply tin nhắn file để đọc file
             const fileInfo = pendingFiles.get(rootId);
             if (!fileInfo) {
-              await replyToLark(messageId, '❌ Không tìm thấy file để đọc.');
+              await replyToLark(messageId, '❌ Không tìm thấy file đính kèm để đọc.');
               return res.send({ code: 0 });
             }
 
-            await replyToLark(messageId, '⏳ Đang phân tích nội dung file, vui lòng chờ...');
-
             const content = await extractFileContent(fileInfo.url, fileInfo.ext);
+            if (!content) {
+              await replyToLark(messageId, '❌ Không thể đọc nội dung file hoặc file trống.');
+              return res.send({ code: 0 });
+            }
 
-            // Cập nhật bộ nhớ
-            updateConversationMemory(chatId, 'user', text);
+            updateConversationMemory(chatId, 'user', `Đọc nội dung file ${fileInfo.name}`);
             updateConversationMemory(chatId, 'assistant', content);
 
-            await replyToLark(messageId, `📄 Nội dung file:\n${content || '(Không có nội dung)'}\n\nBạn có thể hỏi thêm về file này.`);
+            await replyToLark(messageId, `Nội dung file:\n${content.slice(0, 2000)}`); // Giới hạn 2000 ký tự
 
             pendingFiles.delete(rootId);
-
             return res.send({ code: 0 });
           }
-        } catch (e) {
-          // Nếu không phải reply file, bỏ qua
-        }
+        } catch (e) {}
       }
 
-      // --- XỬ LÝ TIN NHẮN THƯỜNG (GỬI AI TRẢ LỜI) ---
+      // --- XỬ LÝ TIN NHẮN THƯỜNG (GỌI AI DEEPSEEK CÙNG DỮ LIỆU BASE) ---
 
-      // Lấy bộ nhớ hội thoại cho chatId
-      const history = conversationMemory.get(chatId) || [];
+      if (!userMessage || userMessage.trim().length === 0) {
+        return res.send({ code: 0 });
+      }
 
-      // Thêm user message vào bộ nhớ
-      updateConversationMemory(chatId, 'user', userMessage);
+      if (!baseId) {
+        await replyToLark(messageId, '❌ Chưa cấu hình biến môi trường LARK_BASE_ID để lấy dữ liệu Base.');
+        return res.send({ code: 0 });
+      }
 
-      // Gọi OpenRouter AI (deepseek-r1) qua API
       try {
-        const openRouterResp = await axios.post(
+        // Lấy danh sách bảng Base
+        const tables = await getAllTables(baseId, token);
+
+        // Lấy dữ liệu tất cả bảng (max 100 bản ghi mỗi bảng)
+        const allData = {};
+        for (const table of tables) {
+          const rows = await getAllRows(baseId, table.table_id, token);
+          allData[table.name] = rows.slice(0, 100).map(row => row.fields);
+        }
+
+        // Tạo đoạn text dữ liệu Base cho prompt AI
+        let baseDataText = 'Dữ liệu Base gồm các bảng sau:\n';
+        for (const [tableName, records] of Object.entries(allData)) {
+          baseDataText += `\nBảng: ${tableName}\n`;
+          if (records.length === 0) {
+            baseDataText += '(Không có bản ghi)\n';
+          } else {
+            records.slice(0, 5).forEach((rec, i) => {
+              baseDataText += `  #${i + 1}: ${JSON.stringify(rec)}\n`;
+            });
+            if (records.length > 5) baseDataText += `  ... (${records.length} bản ghi)\n`;
+          }
+        }
+
+        // Lấy bộ nhớ hội thoại
+        const history = conversationMemory.get(chatId) || [];
+
+        // Tạo mảng message cho AI
+        const messagesForAI = [
+          { role: 'system', content: 'Bạn là trợ lý giúp phân tích dữ liệu từ Base của Lark.' },
+          { role: 'system', content: baseDataText },
+          ...history,
+          { role: 'user', content: userMessage },
+        ];
+
+        // Gọi OpenRouter AI deepseek-r1
+        const aiResp = await axios.post(
           'https://openrouter.ai/api/v1/chat/completions',
           {
             model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-            messages: [...history, { role: 'user', content: userMessage }],
+            messages: messagesForAI,
             temperature: 0.2,
             top_p: 0.95,
           },
@@ -361,27 +395,27 @@ app.post('/webhook', async (req, res) => {
           }
         );
 
-        const assistantReply = openRouterResp.data.choices[0].message.content;
+        const assistantReply = aiResp.data.choices[0].message.content;
 
-        // Thêm assistant reply vào bộ nhớ
+        updateConversationMemory(chatId, 'user', userMessage);
         updateConversationMemory(chatId, 'assistant', assistantReply);
 
         await replyToLark(messageId, assistantReply);
       } catch (e) {
-        console.error('[AI Error]', e?.response?.data || e.message);
-        await replyToLark(messageId, '❌ Lỗi khi gọi AI, vui lòng thử lại sau.');
+        console.error('[AI Base Query Error]', e?.response?.data || e.message);
+        await replyToLark(messageId, '❌ Lỗi khi truy vấn dữ liệu Base hoặc gọi AI, vui lòng thử lại sau.');
       }
 
       return res.send({ code: 0 });
     }
 
-    res.send({ code: 0 });
-  } catch (err) {
-    console.error('[Webhook Handler Error]', err);
-    res.status(500).send('Internal Server Error');
+    return res.send({ code: 0 });
+  } catch (e) {
+    console.error('[Webhook Error]', e);
+    return res.status(500).send('Internal Server Error');
   }
 });
 
 app.listen(port, () => {
-  console.log(`Bot listening on port ${port}`);
+  console.log(`Server listening on port ${port}`);
 });
