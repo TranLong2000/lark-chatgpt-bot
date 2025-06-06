@@ -275,144 +275,76 @@ app.post('/webhook', async (req, res) => {
           const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
           const ext = fileName.split('.').pop().toLowerCase();
 
-          const fileResp = await axios.get(
-            `${process.env.LARK_DOMAIN}/open-apis/drive/v1/files/${fileKey}/download_url`,
+          // Lấy URL file từ Lark
+          const fileUrlResp = await axios.get(
+            `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          const fileUrl = fileUrlResp.data.data.download_url;
+
+          const extractedText = await extractFileContent(fileUrl, ext);
+
+          if (extractedText.length === 0) {
+            await replyToLark(messageId, 'Không thể trích xuất nội dung từ file này hoặc file trống.');
+          } else {
+            updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung đã trích xuất.`);
+            updateConversationMemory(chatId, 'assistant', extractedText);
+
+            await replyToLark(messageId, `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`);
+          }
+        } catch (e) {
+          console.error('[File Processing Error]', e?.response?.data || e.message);
+          await replyToLark(messageId, '❌ Lỗi khi xử lý file, vui lòng thử lại.');
+        }
+        return res.send({ code: 0 });
+      }
+
+      // --- XỬ LÝ TIN NHẮN VĂN BẢN THƯỜNG ---
+
+      if (messageType === 'text' && userMessage.trim().length > 0) {
+        updateConversationMemory(chatId, 'user', userMessage);
+
+        // Gọi AI Deepseek
+        try {
+          const messages = conversationMemory.get(chatId).map(({ role, content }) => ({
+            role,
+            content,
+          }));
+
+          const aiResp = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
             {
-              headers: { Authorization: `Bearer ${token}` },
+              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+              messages,
+              stream: false,
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
             }
           );
 
-          const url = fileResp.data.data.url;
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
+          updateConversationMemory(chatId, 'assistant', assistantMessage);
 
-          pendingFiles.set(messageId, {
-            url,
-            ext,
-            name: fileName,
-            timestamp: Date.now(),
-          });
-
-          await replyToLark(messageId, '✅ Đã lưu file. Vui lòng *reply* vào tin nhắn này để tôi đọc nội dung.');
+          await replyToLark(messageId, assistantMessage);
         } catch (e) {
-          console.error('[File/Image Error]', e.message);
-          await replyToLark(messageId, '❌ Lỗi khi lấy file, vui lòng thử lại.');
+          console.error('[AI Error]', e?.response?.data || e.message);
+          await replyToLark(messageId, '❌ Lỗi khi gọi AI, vui lòng thử lại sau.');
         }
+
         return res.send({ code: 0 });
       }
 
-      // --- XỬ LÝ REPLY VÀO TIN NHẮN FILE ĐỂ ĐỌC NỘI DUNG FILE ---
-
-      if (messageType === 'text') {
-        try {
-          const parsed = JSON.parse(message.content);
-          const text = parsed.text || '';
-          const rootId = decrypted.event.root_id || '';
-          if (rootId && pendingFiles.has(rootId)) {
-            // Người dùng reply tin nhắn file để đọc file
-            const fileInfo = pendingFiles.get(rootId);
-            if (!fileInfo) {
-              await replyToLark(messageId, '❌ Không tìm thấy file đính kèm để đọc.');
-              return res.send({ code: 0 });
-            }
-
-            const content = await extractFileContent(fileInfo.url, fileInfo.ext);
-            if (!content) {
-              await replyToLark(messageId, '❌ Không thể đọc nội dung file hoặc file trống.');
-              return res.send({ code: 0 });
-            }
-
-            updateConversationMemory(chatId, 'user', `Đọc nội dung file ${fileInfo.name}`);
-            updateConversationMemory(chatId, 'assistant', content);
-
-            await replyToLark(messageId, `Nội dung file:\n${content.slice(0, 2000)}`); // Giới hạn 2000 ký tự
-
-            pendingFiles.delete(rootId);
-            return res.send({ code: 0 });
-          }
-        } catch (e) {}
-      }
-
-      // --- XỬ LÝ TIN NHẮN THƯỜNG (GỌI AI DEEPSEEK CÙNG DỮ LIỆU BASE) ---
-
-      if (!userMessage || userMessage.trim().length === 0) {
-        return res.send({ code: 0 });
-      }
-
-      if (!baseId) {
-        await replyToLark(messageId, '❌ Chưa cấu hình biến môi trường LARK_BASE_ID để lấy dữ liệu Base.');
-        return res.send({ code: 0 });
-      }
-
-      try {
-        // Lấy danh sách bảng Base
-        const tables = await getAllTables(baseId, token);
-
-        // Lấy dữ liệu tất cả bảng (max 100 bản ghi mỗi bảng)
-        const allData = {};
-        for (const table of tables) {
-          const rows = await getAllRows(baseId, table.table_id, token);
-          allData[table.name] = rows.slice(0, 100).map(row => row.fields);
-        }
-
-        // Tạo đoạn text dữ liệu Base cho prompt AI
-        let baseDataText = 'Dữ liệu Base gồm các bảng sau:\n';
-        for (const [tableName, records] of Object.entries(allData)) {
-          baseDataText += `\nBảng: ${tableName}\n`;
-          if (records.length === 0) {
-            baseDataText += '(Không có bản ghi)\n';
-          } else {
-            records.slice(0, 5).forEach((rec, i) => {
-              baseDataText += `  #${i + 1}: ${JSON.stringify(rec)}\n`;
-            });
-            if (records.length > 5) baseDataText += `  ... (${records.length} bản ghi)\n`;
-          }
-        }
-
-        // Lấy bộ nhớ hội thoại
-        const history = conversationMemory.get(chatId) || [];
-
-        // Tạo mảng message cho AI
-        const messagesForAI = [
-          { role: 'system', content: 'Bạn là trợ lý giúp phân tích dữ liệu từ Base của Lark.' },
-          { role: 'system', content: baseDataText },
-          ...history,
-          { role: 'user', content: userMessage },
-        ];
-
-        // Gọi OpenRouter AI deepseek-r1
-        const aiResp = await axios.post(
-          'https://openrouter.ai/api/v1/chat/completions',
-          {
-            model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-            messages: messagesForAI,
-            temperature: 0.2,
-            top_p: 0.95,
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        const assistantReply = aiResp.data.choices[0].message.content;
-
-        updateConversationMemory(chatId, 'user', userMessage);
-        updateConversationMemory(chatId, 'assistant', assistantReply);
-
-        await replyToLark(messageId, assistantReply);
-      } catch (e) {
-        console.error('[AI Base Query Error]', e?.response?.data || e.message);
-        await replyToLark(messageId, '❌ Lỗi khi truy vấn dữ liệu Base hoặc gọi AI, vui lòng thử lại sau.');
-      }
-
-      return res.send({ code: 0 });
+      res.send({ code: 0 });
+    } else {
+      res.send({ code: 0 });
     }
-
-    return res.send({ code: 0 });
   } catch (e) {
-    console.error('[Webhook Error]', e);
-    return res.status(500).send('Internal Server Error');
+    console.error('[Webhook Handler Error]', e);
+    res.status(500).send('Internal Server Error');
   }
 });
 
