@@ -348,4 +348,42 @@ app.post('/webhook', async (req, res) => {
         const nowVN = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
 
         const chatResponse = await axios.post(
-          'https://open
+          'https://openrouter.ai/api/v1/chat/completions',
+          {
+            model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+            messages: [
+              {
+                role: 'system',
+                content: `Bạn là trợ lý AI. Trả lời ngắn gọn, rõ ràng. Giờ Việt Nam hiện tại là: ${nowVN}`,
+              },
+              ...conversationMemory.get(chatId) || [],
+            ],
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+
+        const reply = chatResponse.data.choices[0].message.content;
+        updateConversationMemory(chatId, 'assistant', reply);
+
+        await replyToLark(messageId, reply);
+        return res.send({ code: 0 });
+      }
+
+      res.send({ code: 0 });
+    } else {
+      res.send({ code: 0 });
+    }
+  } catch (e) {
+    console.error('[Webhook Handler Error]', e);
+    res.status(500).send('Internal Server Error');
+  }
+});
+
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
+});
