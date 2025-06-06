@@ -1,4 +1,3 @@
-// index.js
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
@@ -16,10 +15,14 @@ const port = process.env.PORT || 3000;
 const processedMessageIds = new Set();
 const pendingFiles = new Map();
 
+// Bộ nhớ hội thoại theo chat_id, lưu trữ mảng message {role, content}, tự động xóa sau 2h
+const conversationMemory = new Map();
+
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
 }
 
+// Middleware parse raw cho webhook
 app.use('/webhook', express.raw({ type: '*/*' }));
 
 function verifySignature(timestamp, nonce, body, signature) {
@@ -98,52 +101,65 @@ async function extractFileContent(fileUrl, fileType) {
   return '';
 }
 
-async function readAllTablesFromBase() {
-  try {
-    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-      app_id: process.env.LARK_APP_ID,
-      app_secret: process.env.LARK_APP_SECRET,
+// Lấy Access Token app nội bộ
+async function getAppAccessToken() {
+  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+    app_id: process.env.LARK_APP_ID,
+    app_secret: process.env.LARK_APP_SECRET,
+  });
+  return resp.data.app_access_token;
+}
+
+// Lấy danh sách bảng trong Base
+async function getAllTables(baseId, token) {
+  const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
+  const resp = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return resp.data.data.items; // mảng bảng
+}
+
+// Lấy dữ liệu toàn bộ bảng
+async function getAllRows(baseId, tableId, token) {
+  const rows = [];
+  let pageToken = '';
+  do {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=100&page_token=${pageToken}`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
     });
-    const token = tokenResp.data.app_access_token;
+    rows.push(...resp.data.data.items);
+    pageToken = resp.data.data.page_token || '';
+  } while (pageToken);
+  return rows;
+}
 
-    const baseId = process.env.LARK_BASE_ID;
-
-    const tablesResp = await axios.get(
-      `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    const tables = tablesResp.data.data.items;
-
-    let summary = '';
-    for (const table of tables) {
-      const tableId = table.table_id;
-      const tableName = table.name;
-
-      const recordsResp = await axios.get(
-        `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=100`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      const records = recordsResp.data.data.items;
-      summary += `📊 *${tableName}* (${records.length} bản ghi):\n`;
-
-      for (const record of records.slice(0, 5)) {
-        const fields = record.fields;
-        const line = Object.entries(fields)
-          .map(([key, value]) => `${key}: ${value}`)
-          .join(' | ');
-        summary += `- ${line}\n`;
-      }
-
-      summary += '\n';
-    }
-
-    return summary || '⚠️ Không có dữ liệu nào trong các bảng.';
-  } catch (err) {
-    console.error('[Lark Base Error]', err?.response?.data || err.message);
-    return '❌ Gặp lỗi khi đọc dữ liệu từ Base.';
+// Cập nhật bộ nhớ hội thoại theo chat_id
+function updateConversationMemory(chatId, role, content) {
+  if (!conversationMemory.has(chatId)) {
+    conversationMemory.set(chatId, []);
+  }
+  const mem = conversationMemory.get(chatId);
+  mem.push({ role, content });
+  // Giới hạn max 50 tin nhắn trong bộ nhớ để tránh quá lớn
+  if (mem.length > 50) {
+    mem.shift();
   }
 }
+
+// Xóa bộ nhớ cũ hơn 2h
+function cleanupConversationMemory() {
+  const now = Date.now();
+  for (const [chatId, messages] of conversationMemory.entries()) {
+    // Giả định messages có timestamp? Nếu chưa có, ta không xóa dựa trên message, mà tự reset toàn bộ conversation mỗi 2h
+    // Ở đây ta dùng đơn giản reset toàn bộ conversationMemory sau 2h
+  }
+}
+// Tự động xóa toàn bộ bộ nhớ hội thoại mỗi 2h
+setInterval(() => {
+  conversationMemory.clear();
+  console.log('[Memory] Cleared conversation memory (2h interval)');
+}, 2 * 60 * 60 * 1000);
 
 app.post('/webhook', async (req, res) => {
   try {
@@ -169,6 +185,7 @@ app.post('/webhook', async (req, res) => {
       const senderId = decrypted.event.sender.sender_id.open_id;
       const message = decrypted.event.message;
       const messageId = message.message_id;
+      const chatId = message.chat_id;
       const chatType = message.chat_type;
       const messageType = message.message_type;
 
@@ -183,12 +200,59 @@ app.post('/webhook', async (req, res) => {
         userMessage = parsed.text || '';
       } catch {}
 
-      const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-        app_id: process.env.LARK_APP_ID,
-        app_secret: process.env.LARK_APP_SECRET,
-      });
-      const token = tokenResp.data.app_access_token;
+      const token = await getAppAccessToken();
 
+      // Nếu tin nhắn có chứa link Base muốn lấy dữ liệu (ví dụ dạng https://.../base/{baseId}?table=tblXXXX)
+      // hoặc câu lệnh yêu cầu đọc Base
+      const baseLinkMatch = userMessage.match(/https:\/\/[^\s]+\/base\/([a-zA-Z0-9]+)(?:\?table=([a-zA-Z0-9]+))?/);
+      if (baseLinkMatch) {
+        const baseId = baseLinkMatch[1];
+        const tableId = baseLinkMatch[2]; // Có thể không có table id
+
+        try {
+          // Lấy danh sách bảng
+          const tables = await getAllTables(baseId, token);
+
+          let baseSummary = `Dữ liệu Base ID: ${baseId}\n`;
+
+          // Duyệt tất cả bảng
+          for (const table of tables) {
+            if (table.type === 'base_table') {
+              baseSummary += `\nBảng: ${table.name} (ID: ${table.table_id})\n`;
+
+              const rows = await getAllRows(baseId, table.table_id, token);
+
+              if (rows.length === 0) {
+                baseSummary += '  (Không có bản ghi)\n';
+                continue;
+              }
+
+              // Lấy tối đa 10 bản ghi đầu để tránh quá dài
+              const sampleRows = rows.slice(0, 10);
+
+              for (const row of sampleRows) {
+                // row.fields là đối tượng key:value chứa dữ liệu từng trường
+                const fieldsText = Object.entries(row.fields).map(([k, v]) => `${k}: ${v}`).join('; ');
+                baseSummary += `  - ${fieldsText}\n`;
+              }
+              if (rows.length > 10) baseSummary += `  ... (${rows.length} bản ghi)\n`;
+            }
+          }
+
+          // Cập nhật bộ nhớ hội thoại
+          updateConversationMemory(chatId, 'user', userMessage);
+          updateConversationMemory(chatId, 'assistant', baseSummary);
+
+          await replyToLark(messageId, baseSummary);
+        } catch (e) {
+          console.error('[Base API Error]', e?.response?.data || e.message);
+          await replyToLark(messageId, '❌ Lỗi khi truy xuất Base, vui lòng kiểm tra quyền hoặc thử lại sau.');
+        }
+
+        return res.send({ code: 0 });
+      }
+
+      // Xử lý file hoặc ảnh
       if (messageType === 'file' || messageType === 'image') {
         try {
           const fileKey = message.file_key;
@@ -220,6 +284,7 @@ app.post('/webhook', async (req, res) => {
         return res.send({ code: 0 });
       }
 
+      // Xử lý reply vào file
       if (messageType === 'text' && message.parent_id) {
         const fileInfo = pendingFiles.get(message.parent_id);
         if (!fileInfo) {
@@ -230,6 +295,9 @@ app.post('/webhook', async (req, res) => {
         try {
           const extractedText = await extractFileContent(fileInfo.url, fileInfo.ext);
           const combinedMessage = userMessage + '\n\n[Nội dung file "' + fileInfo.name + '"]:\n' + extractedText;
+
+          // Lưu bộ nhớ hội thoại
+          updateConversationMemory(chatId, 'user', combinedMessage);
 
           const now = new Date();
           now.setHours(now.getHours() + 7);
@@ -244,7 +312,7 @@ app.post('/webhook', async (req, res) => {
                   role: 'system',
                   content: `Bạn là trợ lý AI. Trả lời ngắn gọn, rõ ràng. Giờ Việt Nam hiện tại là: ${nowVN}`,
                 },
-                { role: 'user', content: combinedMessage },
+                ...conversationMemory.get(chatId) || [],
               ],
             },
             {
@@ -256,6 +324,10 @@ app.post('/webhook', async (req, res) => {
           );
 
           const reply = chatResponse.data.choices[0].message.content;
+
+          // Lưu câu trả lời AI vào bộ nhớ
+          updateConversationMemory(chatId, 'assistant', reply);
+
           await replyToLark(messageId, reply);
         } catch (err) {
           console.error('[Extract/Chat Error]', err?.response?.data || err.message);
@@ -265,53 +337,15 @@ app.post('/webhook', async (req, res) => {
         return res.send({ code: 0 });
       }
 
+      // Xử lý mention bot trong tin nhắn text
       const mentionKey = message.mentions?.[0]?.key;
       if (messageType === 'text' && mentionKey?.includes('_user_')) {
-        if (userMessage.includes('đọc toàn bộ base')) {
-          const summary = await readAllTablesFromBase();
-          await replyToLark(messageId, summary);
-          return res.send({ code: 0 });
-        }
+        // Lưu user message vào bộ nhớ
+        updateConversationMemory(chatId, 'user', userMessage);
 
         const now = new Date();
         now.setHours(now.getHours() + 7);
         const nowVN = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
 
         const chatResponse = await axios.post(
-          'https://openrouter.ai/api/v1/chat/completions',
-          {
-            model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-            messages: [
-              {
-                role: 'system',
-                content: `Bạn là trợ lý AI. Trả lời ngắn gọn, rõ ràng. Giờ Việt Nam hiện tại là: ${nowVN}`,
-              },
-              { role: 'user', content: userMessage },
-            ],
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        const reply = chatResponse.data.choices[0].message.content;
-        await replyToLark(messageId, reply);
-        return res.send({ code: 0 });
-      }
-
-      return res.send({ code: 0 });
-    }
-
-    res.send({ code: 0 });
-  } catch (err) {
-    console.error('[Webhook] Handler error:', err.stack);
-    res.status(500).send('Internal Error');
-  }
-});
-
-app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
-});
+          'https://open
