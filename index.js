@@ -195,25 +195,39 @@ app.post('/webhook', async (req, res) => {
 
       const token = await getAppAccessToken();
 
-      // Nếu tin nhắn có chứa link Base muốn lấy dữ liệu (ví dụ dạng https://.../base/{baseId}?table=tblXXXX)
-      // hoặc câu lệnh yêu cầu đọc Base
+      // Nếu tin nhắn có chứa link Base hoặc câu lệnh yêu cầu đọc Base
+      // Cố định ID bảng tbl61rgzOwS8viB2 hoặc dạng https://.../base/{baseId}?table=tbl61rgzOwS8viB2
+      const baseId = process.env.LARK_BASE_ID || ''; // bạn có thể set biến môi trường LARK_BASE_ID cho Base chính
       const baseLinkMatch = userMessage.match(/https:\/\/[^\s]+\/base\/([a-zA-Z0-9]+)(?:\?table=([a-zA-Z0-9]+))?/);
-      if (baseLinkMatch) {
-        const baseId = baseLinkMatch[1];
-        const tableId = baseLinkMatch[2]; // Có thể không có table id
+      const explicitTableIdMatch = userMessage.match(/tbl61rgzOwS8viB2/);
+
+      if (baseLinkMatch || explicitTableIdMatch) {
+        const baseIdFromMsg = baseLinkMatch ? baseLinkMatch[1] : baseId;
+        const tableIdFromMsg = baseLinkMatch ? baseLinkMatch[2] : 'tbl61rgzOwS8viB2';
 
         try {
-          // Lấy danh sách bảng
-          const tables = await getAllTables(baseId, token);
+          // Nếu có tableId cụ thể thì chỉ lấy bảng đó, ngược lại lấy toàn bộ bảng
+          let tables = [];
+          if (tableIdFromMsg) {
+            tables = [
+              {
+                table_id: tableIdFromMsg,
+                name: `Bảng theo ID: ${tableIdFromMsg}`,
+                type: 'base_table',
+              },
+            ];
+          } else {
+            tables = await getAllTables(baseIdFromMsg, token);
+          }
 
-          let baseSummary = `Dữ liệu Base ID: ${baseId}\n`;
+          let baseSummary = `Dữ liệu Base ID: ${baseIdFromMsg}\n`;
 
-          // Duyệt tất cả bảng
+          // Duyệt tất cả bảng hoặc bảng được chỉ định
           for (const table of tables) {
             if (table.type === 'base_table') {
               baseSummary += `\nBảng: ${table.name} (ID: ${table.table_id})\n`;
 
-              const rows = await getAllRows(baseId, table.table_id, token);
+              const rows = await getAllRows(baseIdFromMsg, table.table_id, token);
 
               if (rows.length === 0) {
                 baseSummary += '  (Không có bản ghi)\n';
@@ -331,14 +345,16 @@ app.post('/webhook', async (req, res) => {
       }
 
       // Xử lý mention bot trong tin nhắn text
-      const mentionKey = message.mentions?.[0]?.key;
-      if (messageType === 'text' && mentionKey?.includes('_user_')) {
-        // Lưu user message vào bộ nhớ
-        updateConversationMemory(chatId, 'user', userMessage);
+      if (messageType === 'text' && userMessage.includes('@')) {
+        // Xử lý logic bot trả lời thông thường, hoặc các câu lệnh đơn giản khác
 
+        // Lấy giờ hiện tại (giờ VN)
         const now = new Date();
         now.setHours(now.getHours() + 7);
         const nowVN = now.toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
+
+        // Thêm tin nhắn user vào bộ nhớ hội thoại
+        updateConversationMemory(chatId, 'user', userMessage);
 
         const chatResponse = await axios.post(
           'https://openrouter.ai/api/v1/chat/completions',
@@ -365,18 +381,19 @@ app.post('/webhook', async (req, res) => {
         updateConversationMemory(chatId, 'assistant', reply);
 
         await replyToLark(messageId, reply);
-
         return res.send({ code: 0 });
       }
+
+      return res.send({ code: 0 });
     }
 
-    res.send({ code: 0 });
-  } catch (e) {
-    console.error('[Webhook Error]', e.message);
+    return res.send({ code: 0 });
+  } catch (error) {
+    console.error('[Webhook Error]', error);
     res.status(500).send('Internal Server Error');
   }
 });
 
 app.listen(port, () => {
-  console.log(`Bot Lark running on port ${port}`);
+  console.log(`Bot listening on port ${port}`);
 });
