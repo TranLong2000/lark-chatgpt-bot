@@ -32,6 +32,11 @@ function cleanOldMemory() {
 }
 setInterval(cleanOldMemory, 10 * 60 * 1000); // Kiểm tra mỗi 10 phút
 
+// Health check endpoint cho Railway
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 // Xử lý webhook từ Lark
 app.post('/webhook', async (req, res) => {
   const body = req.body;
@@ -177,10 +182,6 @@ process.on('SIGTERM', () => {
     console.log('Server closed. Exiting process...');
     process.exit(0);
   });
-  setTimeout(() => {
-    console.error('Graceful shutdown timed out. Forcing exit...');
-    process.exit(1);
-  }, 10000);
 });
 
 process.on('SIGINT', () => {
