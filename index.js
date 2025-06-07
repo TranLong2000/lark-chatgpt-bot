@@ -7,14 +7,13 @@ app.use(express.json());
 
 // Kiểm tra biến môi trường
 const requiredEnvVars = [
-  'XAI_API_KEY',
+  'OPENROUTER_API_KEY',
   'LARK_APP_ID',
   'LARK_APP_SECRET',
   'LARK_VERIFICATION_TOKEN',
   'LARK_ENCRYPT_KEY',
-  'LARK_APP_TOKEN',
-  'LARK_TABLE_ID',
   'LARK_DOMAIN',
+  'BOT_SENDER_ID',
 ];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 if (missingEnvVars.length > 0) {
@@ -59,19 +58,23 @@ app.post('/webhook', async (req, res) => {
         return res.status(200).send('Ignored: Empty message');
       }
 
-      if (!process.env.XAI_API_KEY) {
-        await sendReply(chatId, '❌ Lỗi: Thiếu API key cho Grok. Vui lòng liên hệ quản trị viên.');
-        return res.status(200).send('Missing XAI_API_KEY');
+      if (userId === process.env.BOT_SENDER_ID) {
+        return res.status(200).send('Ignored: Message from bot');
+      }
+
+      if (!process.env.OPENROUTER_API_KEY) {
+        await sendReply(chatId, '❌ Lỗi: Thiếu API key cho OpenRouter. Vui lòng liên hệ quản trị viên.');
+        return res.status(200).send('Missing OPENROUTER_API_KEY');
       }
 
       // Gửi thông báo đang xử lý
       await sendReply(chatId, '🤖 Đang xử lý câu hỏi của bạn...');
 
-      // Gửi yêu cầu đến Grok API
+      // Gửi yêu cầu đến OpenRouter API
       const response = await axios.post(
-        'https://api.x.ai/v1/chat/completions',
+        'https://openrouter.ai/api/v1/chat/completions',
         {
-          model: 'grok-3',
+          model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
           messages: [
             {
               role: 'system',
@@ -87,18 +90,13 @@ app.post('/webhook', async (req, res) => {
         },
         {
           headers: {
-            Authorization: `Bearer ${process.env.XAI_API_KEY}`,
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
             'Content-Type': 'application/json',
           },
         }
       );
 
       const reply = response.data.choices[0].message.content.trim();
-
-      // Lưu lịch sử trò chuyện
-      if (process.env.LARK_APP_TOKEN && process.env.LARK_TABLE_ID) {
-        await storeConversation(userId, messageId, question, reply);
-      }
 
       // Cập nhật bộ nhớ chat
       chatMemories[chatId] = {
@@ -163,33 +161,6 @@ async function getTenantAccessToken() {
   } catch (error) {
     console.error('Failed to get access token:', error.message);
     throw error;
-  }
-}
-
-// Hàm lưu lịch sử trò chuyện vào bảng Lark
-async function storeConversation(userId, messageId, prompt, response) {
-  try {
-    const accessToken = await getTenantAccessToken();
-    await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${process.env.LARK_APP_TOKEN}/tables/${process.env.LARK_TABLE_ID}/records`,
-      {
-        fields: {
-          user_id: userId,
-          message_id: messageId,
-          prompt: prompt,
-          response: response,
-          timestamp: new Date().toISOString(),
-        },
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-  } catch (error) {
-    console.error('Error storing conversation:', error.message);
   }
 }
 
