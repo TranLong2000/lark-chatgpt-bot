@@ -1,7 +1,8 @@
+require("dotenv").config(); // Load biến môi trường từ .env
+
 const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
-const axiosRetry = require("axios-retry");
 const fs = require("fs");
 const path = require("path");
 const Tesseract = require("tesseract.js");
@@ -20,6 +21,10 @@ const requiredEnvVars = [
   "LARK_APP_SECRET",
   "LARK_VERIFICATION_TOKEN",
   "LARK_ENCRYPT_KEY",
+  "BOT_SENDER_ID",
+  "CHAT_ID",
+  "PORT",
+  "LARK_DOMAIN",
 ];
 const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
 if (missingEnvVars.length > 0) {
@@ -27,23 +32,14 @@ if (missingEnvVars.length > 0) {
   process.exit(1);
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 const DOMAIN = process.env.DOMAIN || `http://localhost:${PORT}`;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_VERIFICATION_TOKEN = process.env.LARK_VERIFICATION_TOKEN;
 const LARK_ENCRYPT_KEY = process.env.LARK_ENCRYPT_KEY;
-const BASE_API = "https://open.larksuite.com/open-apis/bitable/v1/apps";
-
-// Cấu hình retry cho axios
-axiosRetry(axios, {
-  retries: 3,
-  retryDelay: (retryCount) => retryCount * 1000,
-  retryCondition: (error) => {
-    return axiosRetry.isNetworkOrIdempotentRequestError(error) || error.response?.status >= 500;
-  },
-});
+const BASE_API = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps`;
 
 const chatMemories = {};
 const fileCache = {};
@@ -165,12 +161,12 @@ async function smartDataRetrieval(appToken, accessToken, analysis, schema) {
 
       let records = [];
       let pageToken = "";
-      let maxRecords = analysis.complexity === "simple" ? 100 : 500;
+      let maxRecords = analysis.complexity === "simple" ? 50 : 200; // Giảm số bản ghi để tối ưu
 
       do {
         const url = `${BASE_API}/${appToken}/tables/${tableInfo.table_id}/records`;
         const params = new URLSearchParams({
-          page_size: Math.min(100, maxRecords - records.length).toString(),
+          page_size: Math.min(50, maxRecords - records.length).toString(),
         });
 
         if (pageToken) params.append("page_token", pageToken);
@@ -422,7 +418,9 @@ async function extractTextFromFile(filePath, fileType) {
   try {
     const ext = fileType.toLowerCase();
     if (ext.includes("image")) {
-      const { data: { text } } = await Tesseract.recognize(filePath, "eng+vie");
+      const worker = await Tesseract.createWorker(["eng", "vie"]);
+      const { data: { text } } = await worker.recognize(filePath);
+      await worker.terminate();
       return text;
     } else if (ext.includes("pdf")) {
       const buffer = fs.readFileSync(filePath);
@@ -454,7 +452,7 @@ async function extractTextFromFile(filePath, fileType) {
 async function getTenantAccessToken() {
   try {
     const res = await axios.post(
-      "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
+      `${process.env.LARK_DOMAIN}/open-apis/auth/v3/tenant_access_token/internal`,
       {
         app_id: LARK_APP_ID,
         app_secret: LARK_APP_SECRET,
@@ -481,8 +479,18 @@ app.post("/webhook", async (req, res) => {
     const chat_id = event.message.chat_id;
     const sender_id = event.sender.sender_id.user_id;
 
-    const content = JSON.parse(message.content);
-    const question = content.text || "";
+    if (sender_id === process.env.BOT_SENDER_ID) {
+      return res.sendStatus(200); // Bỏ qua tin nhắn từ chính bot
+    }
+
+    let question;
+    try {
+      const content = JSON.parse(message.content);
+      question = content.text || "";
+    } catch (error) {
+      console.log("Invalid message content:", error.message);
+      return res.sendStatus(200);
+    }
 
     if (!question.trim()) {
       return res.sendStatus(200);
@@ -547,7 +555,7 @@ async function sendReply(chat_id, text) {
   try {
     const accessToken = await getTenantAccessToken();
     await axios.post(
-      "https://open.larksuite.com/open-apis/im/v1/messages",
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
       {
         receive_id: chat_id,
         content: JSON.stringify({ text }),
@@ -621,4 +629,12 @@ process.on("SIGTERM", () => {
     console.error("Graceful shutdown timed out. Forcing exit...");
     process.exit(1);
   }, 10000);
+});
+
+process.on("SIGINT", () => {
+  console.log("Received SIGINT. Performing graceful shutdown...");
+  server.close(() => {
+    console.log("Server closed. Exiting process...");
+    process.exit(0);
+  });
 });
