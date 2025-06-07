@@ -1,14 +1,12 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const axios = require("axios");
-const FormData = require("form-data");
 const fs = require("fs");
 const path = require("path");
 const Tesseract = require("tesseract.js");
 const mammoth = require("mammoth");
 const xlsx = require("xlsx");
 const pdfParse = require("pdf-parse");
-const { HttpsProxyAgent } = require("https-proxy-agent");
 
 const app = express();
 app.use(bodyParser.json());
@@ -395,41 +393,51 @@ Hãy trả lời:
   }
 }
 
-// === FILE PROCESSING (UNCHANGED) ===
+// === FILE PROCESSING ===
 async function extractTextFromFile(filePath, fileType) {
-  const ext = fileType.toLowerCase();
-  if (ext.includes("image")) {
-    const { data: { text } } = await Tesseract.recognize(filePath, "eng+vie");
-    return text;
-  } else if (ext.includes("pdf")) {
-    const buffer = fs.readFileSync(filePath);
-    const data = await pdfParse(buffer);
-    return data.text;
-  } else if (ext.includes("word") || filePath.endsWith(".docx")) {
-    const result = await mammoth.extractRawText({ path: filePath });
-    return result.value;
-  } else if (ext.includes("excel") || filePath.endsWith(".xlsx")) {
-    const workbook = xlsx.readFile(filePath);
-    let text = "";
-    workbook.SheetNames.forEach((sheetName) => {
-      const sheet = workbook.Sheets[sheetName];
-      const json = xlsx.utils.sheet_to_json(sheet, { header: 1 });
-      json.forEach((row) => {
-        text += row.join(" ") + "\n";
+  try {
+    const ext = fileType.toLowerCase();
+    if (ext.includes("image")) {
+      const { data: { text } } = await Tesseract.recognize(filePath, "eng+vie");
+      return text;
+    } else if (ext.includes("pdf")) {
+      const buffer = fs.readFileSync(filePath);
+      const data = await pdfParse(buffer);
+      return data.text;
+    } else if (ext.includes("word") || filePath.endsWith(".docx")) {
+      const result = await mammoth.extractRawText({ path: filePath });
+      return result.value;
+    } else if (ext.includes("excel") || filePath.endsWith(".xlsx")) {
+      const workbook = xlsx.readFile(filePath);
+      let text = "";
+      workbook.SheetNames.forEach((sheetName) => {
+        const sheet = workbook.Sheets[sheetName];
+        const json = xlsx.utils.sheet_to_json(sheet, { header: 1 });
+        json.forEach((row) => {
+          text += row.join(" ") + "\n";
+        });
       });
-    });
-    return text;
+      return text;
+    }
+    return "";
+  } catch (error) {
+    console.log("File extraction failed:", error.message);
+    return "";
   }
-  return "";
 }
 
-// === AUTH FUNCTIONS (UNCHANGED) ===
+// === AUTH FUNCTIONS ===
 async function getTenantAccessToken() {
-  const res = await axios.post("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
-    app_id: LARK_APP_ID,
-    app_secret: LARK_APP_SECRET,
-  });
-  return res.data.tenant_access_token;
+  try {
+    const res = await axios.post("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
+      app_id: LARK_APP_ID,
+      app_secret: LARK_APP_SECRET,
+    });
+    return res.data.tenant_access_token;
+  } catch (error) {
+    console.log("Failed to get access token:", error.message);
+    throw error;
+  }
 }
 
 // === MAIN WEBHOOK HANDLER ===
@@ -457,7 +465,11 @@ app.post("/webhook", async (req, res) => {
     }
 
     // Gửi đang xử lý
-    await sendReply(chat_id, "🤖 Đang phân tích câu hỏi và truy xuất dữ liệu...");
+    try {
+      await sendReply(chat_id, "🤖 Đang phân tích câu hỏi và truy xuất dữ liệu...");
+    } catch (error) {
+      console.log("Failed to send processing message:", error.message);
+    }
 
     try {
       // Nếu người dùng nói về đọc file
@@ -502,7 +514,11 @@ app.post("/webhook", async (req, res) => {
       
     } catch (error) {
       console.error("Error in smart processing:", error);
-      await sendReply(chat_id, "❌ Có lỗi xảy ra khi xử lý câu hỏi. Vui lòng thử lại sau.");
+      try {
+        await sendReply(chat_id, "❌ Có lỗi xảy ra khi xử lý câu hỏi. Vui lòng thử lại sau.");
+      } catch (replyError) {
+        console.error("Failed to send error message:", replyError);
+      }
     }
 
     return res.sendStatus(200);
@@ -511,37 +527,61 @@ app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
 });
 
-// === UTILITY FUNCTIONS (UNCHANGED) ===
+// === UTILITY FUNCTIONS ===
 async function sendReply(chat_id, text) {
-  const accessToken = await getTenantAccessToken();
-  await axios.post(
-    "https://open.larksuite.com/open-apis/im/v1/messages",
-    {
-      receive_id: chat_id,
-      content: JSON.stringify({ text }),
-      msg_type: "text",
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "Receive-Id-Type": "chat_id",
+  try {
+    const accessToken = await getTenantAccessToken();
+    await axios.post(
+      "https://open.larksuite.com/open-apis/im/v1/messages",
+      {
+        receive_id: chat_id,
+        content: JSON.stringify({ text }),
+        msg_type: "text",
       },
-    }
-  );
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "Receive-Id-Type": "chat_id",
+        },
+      }
+    );
+  } catch (error) {
+    console.log("Failed to send reply:", error.message);
+    throw error;
+  }
+}
+
+// Tạo thư mục downloads nếu chưa có
+const downloadsDir = path.join(__dirname, "downloads");
+if (!fs.existsSync(downloadsDir)) {
+  fs.mkdirSync(downloadsDir, { recursive: true });
 }
 
 app.post("/file", async (req, res) => {
-  const { chat_id, file_url, file_name, file_type } = req.body;
+  try {
+    const { chat_id, file_url, file_name, file_type } = req.body;
 
-  const filePath = path.join(__dirname, "downloads", `${Date.now()}_${file_name}`);
-  const writer = fs.createWriteStream(filePath);
-  const response = await axios.get(file_url, { responseType: "stream" });
-  response.data.pipe(writer);
-  writer.on("finish", () => {
-    fileCache[chat_id] = { path: filePath, type: file_type };
-    res.send("Đã lưu file");
-  });
+    const filePath = path.join(__dirname, "downloads", `${Date.now()}_${file_name}`);
+    const writer = fs.createWriteStream(filePath);
+    const response = await axios.get(file_url, { responseType: "stream" });
+    
+    response.data.pipe(writer);
+    
+    writer.on("finish", () => {
+      fileCache[chat_id] = { path: filePath, type: file_type };
+      res.send("Đã lưu file");
+    });
+    
+    writer.on("error", (error) => {
+      console.error("File download error:", error);
+      res.status(500).send("Lỗi khi lưu file");
+    });
+    
+  } catch (error) {
+    console.error("File handling error:", error);
+    res.status(500).send("Lỗi xử lý file");
+  }
 });
 
 app.listen(PORT, () => {
