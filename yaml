@@ -1,0 +1,26 @@
+version: '3.8'
+services:
+  app:
+    image: node:18
+    working_dir: /app
+    environment:
+      - NODE_ENV=production
+      - PORT=8080
+      - LARK_DOMAIN=https://open.larksuite.com
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - LARK_APP_ID=${LARK_APP_ID}
+      - LARK_APP_SECRET=${LARK_APP_SECRET}
+      - LARK_VERIFICATION_TOKEN=${LARK_VERIFICATION_TOKEN}
+      - LARK_ENCRYPT_KEY=${LARK_ENCRYPT_KEY}
+      - BOT_SENDER_ID=${BOT_SENDER_ID}
+      - CHAT_ID=${CHAT_ID}
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+    command: npm start
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
