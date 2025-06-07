@@ -3,10 +3,14 @@
   "version": "1.0.0",
   "main": "index.js",
   "type": "commonjs",
+  "engines": {
+    "node": ">=14"
+  },
   "scripts": {
     "start": "NODE_ENV=production node index.js"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.6.0", // Thêm dòng này (phiên bản mới nhất, kiểm tra npmjs.com)
     "axios": "^1.6.8",
     "body-parser": "^1.20.2",
     "dotenv": "^16.3.1",
