@@ -103,149 +103,7 @@ async function extractImageContent(imageData) {
 }
 
 async function getAppAccessToken() {
-  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-    app_id: process.env.LARK_APP_ID,
-    app_secret: process.env.LARK_APP_SECRET,
-  });
-  return resp.data.app_access_token;
-}
-
-async function getAllTables(baseId, token) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
-  const resp = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return resp.data.data.items;
-}
-
-async function getAllRows(baseId, tableId, token) {
-  const rows = [];
-  let pageToken = '';
-  do {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=100&page_token=${pageToken}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    rows.push(...resp.data.data.items);
-    pageToken = resp.data.data.page_token || '';
-  } while (pageToken);
-  return rows;
-}
-
-function updateConversationMemory(chatिछ
-
-System: Dựa trên tài liệu API của Lark tại [https://open.larksuite.com/document/server-docs/im-v1/image/get](https://open.larksuite.com/document/server-docs/im-v1/image/get) và log bạn cung cấp, lỗi `code: 234008, msg: 'The app is not the resource sender.'` cho thấy bot không có quyền truy cập hình ảnh trong tins nhắn `post` do thiếu quyền `im:image` hoặc `im:resource`. Ngoài ra, mã nguồn hiện tại giả định API trả về JSON với `image_url`, nhưng thực tế API `/open-apis/im/v1/images/{image_key}` trả về dữ liệu binary của hình ảnh. Điều này gây ra lỗi khi truy cập `fileUrlResp.data.data.image_url`.
-
-Dưới đây là mã nguồn được cập nhật để xử lý dữ liệu binary trực tiếp từ API, giữ nguyên cấu trúc code của bạn và chỉ sửa phần xử lý `post`. Tôi cũng đã sửa lỗi Authorization trong phần gọi API DeepSeek (sử dụng `OPENROUTER_API_KEY` thay vì `token`).
-
-### Mã nguồn cập nhật
-<xaiArtifact artifact_id="f8c59869-a16f-41df-ae06-4bac8024fb4f" artifact_version_id="4a821305-1ea5-4a1d-b056-ea02f1035650" title="index.js" contentType="text/javascript">
-const express = require('express');
-const crypto = require('crypto');
-const axios = require('axios');
-const fs = require('fs');
-const path = require('path');
-const pdfParse = require('pdf-parse');
-const mammoth = require('mammoth');
-const xlsx = require('xlsx');
-const Tesseract = require('tesseract.js');
-require('dotenv').config();
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-const processedMessageIds = new Set();
-const conversationMemory = new Map();
-
-if (!fs.existsSync('temp_files')) {
-  fs.mkdirSync('temp_files');
-}
-
-app.use('/webhook', express.raw({ type: '*/*' }));
-
-function verifySignature(timestamp, nonce, body, signature) {
-  const encryptKey = process.env.LARK_ENCRYPT_KEY;
-  const raw = `${timestamp}${nonce}${encryptKey}${body}`;
-  const hash = crypto.createHash('sha256').update(raw).digest('hex');
-  return hash === signature;
-}
-
-function decryptMessage(encrypt) {
-  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
-  const aesKey = crypto.createHash('sha256').update(key).digest();
-  const data = Buffer.from(encrypt, 'base64');
-  const iv = data.slice(0, 16);
-  const encryptedText = data.slice(16);
-
-  const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return JSON.parse(decrypted.toString());
-}
-
-async function replyToLark(messageId, content) {
-  try {
-    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-      app_id: process.env.LARK_APP_ID,
-      app_secret: process.env.LARK_APP_SECRET,
-    });
-    const token = tokenResp.data.app_access_token;
-
-    await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
-      {
-        msg_type: 'text',
-        content: JSON.stringify({ text: content }),
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-    console.log('[Webhook] Reply sent');
-  } catch (err) {
-    console.error('[Reply Error]', err?.response?.data || err.message);
-  }
-}
-
-async function extractFileContent(fileUrl, fileType) {
-  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-  const buffer = Buffer.from(response.data);
-
-  if (fileType === 'pdf') {
-    const data = await pdfParse(buffer);
-    return data.text.trim();
-  }
-
-  if (fileType === 'docx') {
-    const result = await mammoth.extractRawText({ buffer });
-    return result.value.trim();
-  }
-
-  if (fileType === 'xlsx') {
-    const workbook = xlsx.read(buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-    return sheet.map(row => row.join(' ')).join('\n');
-  }
-
-  if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-    const result = await Tesseract.recognize(buffer, 'eng+vie');
-    return result.data.text.trim();
-  }
-
-  return '';
-}
-
-async function extractImageContent(imageData) {
-  const result = await Tesseract.recognize(imageData, 'eng+vie');
-  return result.data.text.trim();
-}
-
-async function getAppAccessToken() {
-  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth)v3/app_access_token/internal/`, {
     app_id: process.env.LARK_APP_ID,
     app_secret: process.env.LARK_APP_SECRET,
   });
@@ -292,7 +150,7 @@ app.post('/webhook', async (req, res) => {
   try {
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
-    const nonce = req.headers['x-lark-request-nonce'];
+    const nonce = req.headers['x-lark-request-nounce'];
     const bodyRaw = req.body.toString();
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
