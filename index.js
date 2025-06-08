@@ -304,60 +304,57 @@ app.post('/webhook', async (req, res) => {
           let extractedText = '';
           if (imageKey) {
             try {
-              // Sử dụng API /messages/:message_id/resources để lấy tài nguyên từ tin nhắn
-              console.log('[Post] Fetching resource with message_id:', messageId);
-              const resourceUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/resources`;
-              const resourceResp = await axios.post(
-                resourceUrl,
-                {},
-                {
-                  headers: {
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json; charset=utf-8',
-                  },
-                }
-              );
-              console.log('[Post] Resource response:', resourceResp.data);
-              if (resourceResp.data.data.file_list && resourceResp.data.data.file_list.length > 0) {
-                const fileUrl = resourceResp.data.data.file_list[0].download_url;
-                console.log('[Post] Download URL:', fileUrl);
-
-                const imageData = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-                extractedText = await extractImageContent(Buffer.from(imageData.data));
-                console.log('[Post] Extracted text from image:', extractedText);
-              } else {
-                console.log('[Post] No file resources found in response');
-              }
-            } catch (resourceError) {
-              console.error('[Post] Error fetching resource:', {
-                code: resourceError?.response?.data?.code,
-                message: resourceError?.response?.data?.msg || resourceError.message,
-                status: resourceError?.response?.status,
-                stack: resourceError.stack,
+              // Thử GET /images/ với image_key
+              console.log('[Post] Fetching image with image_key:', imageKey);
+              const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`;
+              const imageResp = await axios.get(imageUrl, {
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json; charset=utf-8',
+                },
+                responseType: 'arraybuffer',
               });
-              // Thử GET /images/ nếu POST thất bại
+              extractedText = await extractImageContent(Buffer.from(imageResp.data));
+              console.log('[Post] Extracted text from image (GET):', extractedText);
+            } catch (imageError) {
+              console.error('[Post] Error fetching image:', {
+                code: imageError?.response?.data?.code,
+                message: imageError?.response?.data?.msg || imageError.message,
+                status: imageError?.response?.status,
+                stack: imageError.stack,
+              });
+              // Nếu GET thất bại, thử POST /messages/:message_id/resources (fallback)
               try {
-                console.log('[Post] Falling back to GET /images/ with image_key:', imageKey);
-                const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`;
-                const imageResp = await axios.get(imageUrl, {
-                  headers: {
-                    Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json; charset=utf-8',
-                  },
-                  responseType: 'arraybuffer',
-                });
-                extractedText = await extractImageContent(Buffer.from(imageResp.data));
-                console.log('[Post] Extracted text from image (GET):', extractedText);
-              } catch (imageError) {
-                console.error('[Post] Error fetching image:', {
-                  code: imageError?.response?.data?.code,
-                  message: imageError?.response?.data?.msg || imageError.message,
-                  status: imageError?.response?.status,
-                  stack: imageError.stack,
+                console.log('[Post] Falling back to POST /messages/:message_id/resources with message_id:', messageId);
+                const resourceUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/resources`;
+                const resourceResp = await axios.post(
+                  resourceUrl,
+                  {},
+                  {
+                    headers: {
+                      Authorization: `Bearer ${token}`,
+                      'Content-Type': 'application/json; charset=utf-8',
+                    },
+                  }
+                );
+                console.log('[Post] Resource response:', resourceResp.data);
+                if (resourceResp.data.data.file_list && resourceResp.data.file_list.length > 0) {
+                  const fileUrl = resourceResp.data.data.file_list[0].download_url;
+                  console.log('[Post] Download URL:', fileUrl);
+                  const imageData = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+                  extractedText = await extractImageContent(Buffer.from(imageData.data));
+                  console.log('[Post] Extracted text from image (POST):', extractedText);
+                } else {
+                  console.log('[Post] No file resources found in response');
+                }
+              } catch (resourceError) {
+                console.error('[Post] Error fetching resource:', {
+                  code: resourceError?.response?.data?.code,
+                  message: resourceError?.response?.data?.msg || resourceError.message,
+                  status: resourceError?.response?.status,
+                  stack: resourceError.stack,
                 });
               }
-              await replyToLark(messageId, '❌ Lỗi khi truy xuất tài nguyên từ tin nhắn, vui lòng kiểm tra quyền.');
-              return res.send({ code: 0 });
             }
           }
 
