@@ -284,15 +284,96 @@ app.post('/webhook', async (req, res) => {
           if (imageKey) {
             // Lấy URL tải hình ảnh
             const fileUrlResp = await axios.get(
-              `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`,
+              `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}/download_url`,
               { headers: { Authorization: `Bearer ${token}` } }
             );
-            console.log('[Post] File URL response:', fileUrlResp.data);
-            const fileUrl = fileUrlResp.data.data.image_url;
+            const fileUrl = fileUrlResp.data.data.download_url;
 
             // Trích xuất văn bản từ hình ảnh
             extractedText = await extractFileContent(fileUrl, 'jpg');
           }
 
           // Kết hợp văn bản từ tin nhắn và hình ảnh
-          const combinedMessage Glock
+          const combinedMessage = textContent + (extractedText ? `\nNội dung trích xuất từ hình ảnh: ${extractedText}` : '');
+
+          if (combinedMessage.length === 0) {
+            await replyToLark(messageId, 'Không thể trích xuất nội dung từ tin nhắn hoặc hình ảnh.');
+            return res.send({ code: 0 });
+          }
+
+          // Cập nhật bộ nhớ hội thoại
+          updateConversationMemory(chatId, 'user', combinedMessage);
+
+          // Gửi đến API AI
+          const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
+          const aiResp = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+              messages,
+              stream: false,
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
+          updateConversationMemory(chatId, 'assistant', assistantMessage);
+          await replyToLark(messageId, assistantMessage);
+
+          return res.send({ code: 0 });
+        } catch (e) {
+          console.error('[Post Processing Error]', e?.response?.data || e.message);
+          await replyToLark(messageId, '❌ Lỗi khi xử lý tin nhắn post, vui lòng kiểm tra quyền truy cập hình ảnh hoặc thử lại.');
+          return res.send({ code: 0 });
+        }
+      }
+
+      if (messageType === 'text' && userMessage.trim().length > 0) {
+        updateConversationMemory(chatId, 'user', userMessage);
+
+        try {
+          const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
+          const aiResp = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+              messages,
+              stream: false,
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
+          updateConversationMemory(chatId, 'assistant', assistantMessage);
+          await replyToLark(messageId, assistantMessage);
+        } catch (e) {
+          console.error('[AI Error]', e?.response?.data || e.message);
+          await replyToLark(messageId, '❌ Lỗi khi gọi AI, vui lòng thử lại sau.');
+        }
+
+        return res.send({ code: 0 });
+      }
+
+      return res.send({ code: 0 });
+    }
+
+    return res.send({ code: 0 });
+  } catch (e) {
+    console.error('[Webhook Handler Error]', e);
+    res.status(500).send('Internal Server Error');
+  }
+});
+
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+});
