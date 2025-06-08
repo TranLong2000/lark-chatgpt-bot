@@ -1,307 +1,308 @@
-require('dotenv').config();
 const express = require('express');
-const axios = require('axios');
 const crypto = require('crypto');
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const pdfParse = require('pdf-parse');
+const mammoth = require('mammoth');
+const xlsx = require('xlsx');
+const Tesseract = require('tesseract.js');
+require('dotenv').config();
 
 const app = express();
-app.use(express.json());
+const port = process.env.PORT || 3000;
 
-// Kiểm tra biến môi trường
-const requiredEnvVars = [
-  'OPENROUTER_API_KEY',
-  'LARK_APP_ID',
-  'LARK_APP_SECRET',
-  'LARK_VERIFICATION_TOKEN',
-  'LARK_ENCRYPT_KEY',
-  'LARK_DOMAIN',
-  'BOT_SENDER_ID',
-];
-const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
-if (missingEnvVars.length > 0) {
-  console.warn(`Missing environment variables: ${missingEnvVars.join(', ')}. Application may not function correctly.`);
+const processedMessageIds = new Set();
+const conversationMemory = new Map();
+
+if (!fs.existsSync('temp_files')) {
+  fs.mkdirSync('temp_files');
 }
 
-// Kiểm tra LARK_ENCRYPT_KEY
-if (process.env.LARK_ENCRYPT_KEY) {
-  if (process.env.LARK_ENCRYPT_KEY.length !== 32) {
-    console.error('Invalid LARK_ENCRYPT_KEY: Key must be exactly 32 characters');
-  } else {
-    console.log('LARK_ENCRYPT_KEY validated: 32 characters');
-  }
+app.use('/webhook', express.raw({ type: '*/*' }));
+
+function verifySignature(timestamp, nonce, body, signature) {
+  const encryptKey = process.env.LARK_ENCRYPT_KEY;
+  const raw = `${timestamp}${nonce}${encryptKey}${body}`;
+  const hash = crypto.createHash('sha256').update(raw).digest('hex');
+  return hash === signature;
 }
 
-// Bộ nhớ chat
-const chatMemories = {};
-function cleanOldMemory() {
-  const now = Date.now();
-  for (const key in chatMemories) {
-    if (now - chatMemories[key].updatedAt > 2 * 60 * 60 * 1000) { // 2 giờ
-      delete chatMemories[key];
-    }
-  }
-}
-setInterval(cleanOldMemory, 10 * 60 * 1000); // Kiểm tra mỗi 10 phút
+function decryptMessage(encrypt) {
+  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
+  const aesKey = crypto.createHash('sha256').update(key).digest();
+  const data = Buffer.from(encrypt, 'base64');
+  const iv = data.slice(0, 16);
+  const encryptedText = data.slice(16);
 
-// Health check endpoint cho Railway
-app.get('/health', (req, res) => {
-  console.log('Health check requested');
-  res.status(200).send('OK');
-});
-
-// Hàm giải mã webhook
-function decryptWebhook(encryptedData, key) {
-  console.log(`Decrypting with key (first 8 chars): ${key.slice(0, 8)}...`);
-  console.log(`Encrypted data length (base64): ${encryptedData.length}`);
-  
-  // Thử với khóa thô (utf8)
-  try {
-    if (key.length !== 32) {
-      throw new Error('Key must be exactly 32 characters');
-    }
-    const keyBuffer = Buffer.from(key, 'utf8');
-    const encryptedBuffer = Buffer.from(encryptedData, 'base64');
-    const iv = encryptedBuffer.slice(0, 16);
-    const cipherText = encryptedBuffer.slice(16);
-    console.log(`Trying raw key, IV length: ${iv.length}, Ciphertext length: ${cipherText.length}`);
-    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, iv);
-    let decrypted = decipher.update(cipherText, 'binary', 'utf8');
-    decrypted += decipher.final('utf8');
-    return JSON.parse(decrypted);
-  } catch (error) {
-    console.error('Failed to decrypt with raw key and dynamic IV:', error.message, error.stack);
-  }
-
-  // Thử với khóa thô và IV toàn 0
-  try {
-    const keyBuffer = Buffer.from(key, 'utf8');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, Buffer.alloc(16, 0));
-    console.log('Trying raw key with zero IV');
-    let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
-    decrypted += decipher.final('utf8');
-    return JSON.parse(decrypted);
-  } catch (error) {
-    console.error('Failed to decrypt with raw key and zero IV:', error.message, error.stack);
-  }
-
-  // Thử với khóa base64
-  try {
-    const keyBuffer = Buffer.from(key, 'base64');
-    if (keyBuffer.length !== 32) {
-      throw new Error('Base64 decoded key must be 32 bytes');
-    }
-    const encryptedBuffer = Buffer.from(encryptedData, 'base64');
-    const iv = encryptedBuffer.slice(0, 16);
-    const cipherText = encryptedBuffer.slice(16);
-    console.log(`Trying base64 key, IV length: ${iv.length}, Ciphertext length: ${cipherText.length}`);
-    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, iv);
-    let decrypted = decipher.update(cipherText, 'binary', 'utf8');
-    decrypted += decipher.final('utf8');
-    return JSON.parse(decrypted);
-  } catch (error) {
-    console.error('Failed to decrypt with base64 key and dynamic IV:', error.message, error.stack);
-  }
-
-  // Thử với khóa base64 và IV toàn 0
-  try {
-    const keyBuffer = Buffer.from(key, 'base64');
-    if (keyBuffer.length !== 32) {
-      throw new Error('Base64 decoded key must be 32 bytes');
-    }
-    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, Buffer.alloc(16, 0));
-    console.log('Trying base64 key with zero IV');
-    let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
-    decrypted += decipher.final('utf8');
-    return JSON.parse(decrypted);
-  } catch (error) {
-    console.error('Failed to decrypt with base64 key and zero IV:', error.message, error.stack);
-  }
-
-  return null;
+  const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
+  let decrypted = decipher.update(encryptedText);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+  return JSON.parse(decrypted.toString());
 }
 
-// Xử lý webhook từ Lark
-app.post('/webhook', async (req, res) => {
-  let body = req.body;
-  console.log('Received webhook:', JSON.stringify(body, null, 2));
-
-  // Giải mã nếu webhook được mã hóa
-  if (body.encrypt && process.env.LARK_ENCRYPT_KEY) {
-    console.log('Decrypting webhook');
-    body = decryptWebhook(body.encrypt, process.env.LARK_ENCRYPT_KEY);
-    if (!body) {
-      console.log('Ignored: Failed to decrypt webhook');
-      return res.status(400).send('Failed to decrypt webhook');
-    }
-    console.log('Decrypted webhook:', JSON.stringify(body, null, 2));
-  } else if (body.encrypt && !process.env.LARK_ENCRYPT_KEY) {
-    console.log('Ignored: Encrypted webhook but no LARK_ENCRYPT_KEY provided');
-    return res.status(400).send('Missing LARK_ENCRYPT_KEY');
-  }
-
-  // Xác minh webhook
-  if (body.type === 'url_verification' && process.env.LARK_VERIFICATION_TOKEN && body.token === process.env.LARK_VERIFICATION_TOKEN) {
-    console.log('Webhook verification successful');
-    return res.json({ challenge: body.challenge });
-  }
-
-  // Xử lý tin nhắn
-  if (body.header && body.header.event_type === 'im.message.receive_v1' && body.event.message.content) {
-    try {
-      console.log('Processing message event');
-      const content = JSON.parse(body.event.message.content);
-      if (!content.text) {
-        console.log('Ignored: Not a text message');
-        return res.status(200).send('Ignored: Not a text message');
-      }
-
-      const chatId = body.event.message.chat_id;
-      const userId = body.event.sender.sender_id.open_id;
-      const messageId = body.event.message.message_id;
-      const question = content.text.trim();
-
-      console.log(`Message details - chatId: ${chatId}, userId: ${userId}, messageId: ${messageId}, question: ${question}`);
-
-      if (!question) {
-        console.log('Ignored: Empty message');
-        return res.status(200).send('Ignored: Empty message');
-      }
-
-      if (userId === process.env.BOT_SENDER_ID) {
-        console.log('Ignored: Message from bot');
-        return res.status(200).send('Ignored: Message from bot');
-      }
-
-      if (!process.env.OPENROUTER_API_KEY) {
-        console.log('Missing OPENROUTER_API_KEY');
-        await sendReply(chatId, '❌ Lỗi: Thiếu API key cho OpenRouter. Vui lòng liên hệ quản trị viên.');
-        return res.status(200).send('Missing OPENROUTER_API_KEY');
-      }
-
-      // Gửi thông báo đang xử lý
-      console.log('Sending processing message');
-      await sendReply(chatId, '🤖 Đang xử lý câu hỏi của bạn...');
-
-      // Gửi yêu cầu đến OpenRouter API
-      console.log('Sending request to OpenRouter API');
-      const response = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-          model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-          messages: [
-            {
-              role: 'system',
-              content: 'Bạn là một trợ lý AI thông minh, trả lời chính xác và hữu ích bằng tiếng Việt.',
-            },
-            {
-              role: 'user',
-              content: question,
-            },
-          ],
-          max_tokens: 1000,
-          temperature: 0.7,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      const reply = response.data.choices[0].message.content.trim();
-      console.log(`Received reply from OpenRouter: ${reply}`);
-
-      // Cập nhật bộ nhớ chat
-      chatMemories[chatId] = {
-        memory: (chatMemories[chatId]?.memory || '').slice(-2000) + `\nQ: ${question}\nA: ${reply}`,
-        updatedAt: Date.now(),
-      };
-
-      // Gửi phản hồi
-      console.log('Sending reply to Lark');
-      await sendReply(chatId, reply);
-
-      res.status(200).send('OK');
-    } catch (error) {
-      console.error('Error processing message:', error.message, error.stack);
-      await sendReply(chatId, '❌ Có lỗi xảy ra khi xử lý câu hỏi. Vui lòng thử lại sau.');
-      res.status(500).send('Error processing message');
-    }
-  } else {
-    console.log('Ignored: Not a valid message event');
-    res.status(200).send('Ignored: Not a valid message event');
-  }
-});
-
-// Hàm gửi phản hồi qua Lark
-async function sendReply(chatId, text) {
-  if (!process.env.LARK_APP_ID || !process.env.LARK_APP_SECRET || !process.env.LARK_DOMAIN) {
-    console.error('Cannot send reply: Missing Lark credentials');
-    return;
-  }
-
+async function replyToLark(messageId, content) {
   try {
-    console.log(`Sending reply to chatId: ${chatId}, text: ${text}`);
-    const accessToken = await getTenantAccessToken();
+    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+      app_id: process.env.LARK_APP_ID,
+      app_secret: process.env.LARK_APP_SECRET,
+    });
+    const token = tokenResp.data.app_access_token;
+
     await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
       {
-        receive_id: chatId,
-        content: JSON.stringify({ text }),
         msg_type: 'text',
+        content: JSON.stringify({ text: content }),
       },
       {
         headers: {
-          Authorization: `Bearer ${accessToken}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
-          'Receive-Id-Type': 'chat_id',
         },
       }
     );
-    console.log('Reply sent successfully');
-  } catch (error) {
-    console.error('Failed to send reply:', error.message, error.stack);
+    console.log('[Webhook] Reply sent');
+  } catch (err) {
+    console.error('[Reply Error]', err?.response?.data || err.message);
   }
 }
 
-// Hàm lấy tenant access token
-async function getTenantAccessToken() {
+async function extractFileContent(fileUrl, fileType) {
+  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+  const buffer = Buffer.from(response.data);
+
+  if (fileType === 'pdf') {
+    const data = await pdfParse(buffer);
+    return data.text.trim();
+  }
+
+  if (fileType === 'docx') {
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value.trim();
+  }
+
+  if (fileType === 'xlsx') {
+    const workbook = xlsx.read(buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+    return sheet.map(row => row.join(' ')).join('\n');
+  }
+
+  if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
+    const result = await Tesseract.recognize(buffer, 'eng+vie');
+    return result.data.text.trim();
+  }
+
+  return '';
+}
+
+async function getAppAccessToken() {
+  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+    app_id: process.env.LARK_APP_ID,
+    app_secret: process.env.LARK_APP_SECRET,
+  });
+  return resp.data.app_access_token;
+}
+
+async function getAllTables(baseId, token) {
+  const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
+  const resp = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return resp.data.data.items;
+}
+
+async function getAllRows(baseId, tableId, token) {
+  const rows = [];
+  let pageToken = '';
+  do {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=100&page_token=${pageToken}`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    rows.push(...resp.data.data.items);
+    pageToken = resp.data.data.page_token || '';
+  } while (pageToken);
+  return rows;
+}
+
+function updateConversationMemory(chatId, role, content) {
+  if (!conversationMemory.has(chatId)) {
+    conversationMemory.set(chatId, []);
+  }
+  const mem = conversationMemory.get(chatId);
+  mem.push({ role, content });
+  if (mem.length > 50) mem.shift();
+}
+
+setInterval(() => {
+  conversationMemory.clear();
+  console.log('[Memory] Cleared conversation memory (2h interval)');
+}, 2 * 60 * 60 * 1000);
+
+app.post('/webhook', async (req, res) => {
   try {
-    console.log('Requesting tenant access token');
-    const res = await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/auth/v3/tenant_access_token/internal`,
-      {
-        app_id: process.env.LARK_APP_ID,
-        app_secret: process.env.LARK_APP_SECRET,
+    const signature = req.headers['x-lark-signature'];
+    const timestamp = req.headers['x-lark-request-timestamp'];
+    const nonce = req.headers['x-lark-request-nonce'];
+    const bodyRaw = req.body.toString();
+
+    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      console.error('[Webhook] Invalid signature');
+      return res.status(401).send('Invalid signature');
+    }
+
+    const { encrypt } = JSON.parse(bodyRaw);
+    const decrypted = decryptMessage(encrypt);
+    console.log('[Webhook] Decrypted event:', JSON.stringify(decrypted, null, 2));
+
+    if (decrypted.header.event_type === 'url_verification') {
+      return res.send({ challenge: decrypted.event.challenge });
+    }
+
+    if (decrypted.header.event_type === 'im.message.receive_v1') {
+      const senderId = decrypted.event.sender.sender_id.open_id;
+      const message = decrypted.event.message;
+      const messageId = message.message_id;
+      const chatId = message.chat_id;
+      const messageType = message.message_type;
+
+      if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
+      processedMessageIds.add(messageId);
+
+      if (senderId === (process.env.BOT_SENDER_ID || '')) return res.send({ code: 0 });
+
+      let userMessage = '';
+      try {
+        const parsed = JSON.parse(message.content);
+        userMessage = parsed.text || '';
+      } catch {}
+
+      const token = await getAppAccessToken();
+
+      const baseId = process.env.LARK_BASE_ID || '';
+      const baseLinkMatch = userMessage.match(/https:\/\/[^\s]+\/base\/([a-zA-Z0-9]+)(?:\?table=([a-zA-Z0-9]+))?/);
+      const explicitTableIdMatch = userMessage.match(/tbl61rgzOwS8viB2/);
+
+      if (baseLinkMatch || explicitTableIdMatch) {
+        const baseIdFromMsg = baseLinkMatch ? baseLinkMatch[1] : baseId;
+        const tableIdFromMsg = baseLinkMatch ? baseLinkMatch[2] : 'tbl61rgzOwS8viB2';
+
+        try {
+          let tables = [];
+          if (tableIdFromMsg) {
+            tables = [
+              {
+                table_id: tableIdFromMsg,
+                name: `Bảng theo ID: ${tableIdFromMsg}`,
+                type: 'base_table',
+              },
+            ];
+          } else {
+            tables = await getAllTables(baseIdFromMsg, token);
+          }
+
+          let baseSummary = `Dữ liệu Base ID: ${baseIdFromMsg}\n`;
+
+          for (const table of tables) {
+            if (table.type === 'base_table') {
+              baseSummary += `\nBảng: ${table.name} (ID: ${table.table_id})\n`;
+              const rows = await getAllRows(baseIdFromMsg, table.table_id, token);
+              if (rows.length === 0) {
+                baseSummary += '  (Không có bản ghi)\n';
+                continue;
+              }
+
+              const sampleRows = rows.slice(0, 10);
+              for (const row of sampleRows) {
+                const fieldsText = Object.entries(row.fields).map(([k, v]) => `${k}: ${v}`).join('; ');
+                baseSummary += `  - ${fieldsText}\n`;
+              }
+              if (rows.length > 10) baseSummary += `  ... (${rows.length} bản ghi)\n`;
+            }
+          }
+
+          updateConversationMemory(chatId, 'user', userMessage);
+          updateConversationMemory(chatId, 'assistant', baseSummary);
+          await replyToLark(messageId, baseSummary);
+        } catch (e) {
+          console.error('[Base API Error]', e?.response?.data || e.message);
+          await replyToLark(messageId, '❌ Lỗi khi truy xuất Base, vui lòng kiểm tra quyền hoặc thử lại sau.');
+        }
+
+        return res.send({ code: 0 });
       }
-    );
-    console.log('Tenant access token received');
-    return res.data.tenant_access_token;
-  } catch (error) {
-    console.error('Failed to get access token:', error.message, error.stack);
-    throw error;
+
+      if (messageType === 'file' || messageType === 'image') {
+        try {
+          const fileKey = message.file_key;
+          const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
+          const ext = fileName.split('.').pop().toLowerCase();
+
+          const fileUrlResp = await axios.get(
+            `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          const fileUrl = fileUrlResp.data.data.download_url;
+
+          const extractedText = await extractFileContent(fileUrl, ext);
+
+          if (extractedText.length === 0) {
+            await replyToLark(messageId, 'Không thể trích xuất nội dung từ file này hoặc file trống.');
+          } else {
+            updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung đã trích xuất.`);
+            updateConversationMemory(chatId, 'assistant', extractedText);
+            await replyToLark(messageId, `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`);
+          }
+        } catch (e) {
+          console.error('[File Processing Error]', e?.response?.data || e.message);
+          await replyToLark(messageId, '❌ Lỗi khi xử lý file, vui lòng thử lại.');
+        }
+        return res.send({ code: 0 });
+      }
+
+      if (messageType === 'text' && userMessage.trim().length > 0) {
+        updateConversationMemory(chatId, 'user', userMessage);
+
+        try {
+          const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
+          const aiResp = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+              messages,
+              stream: false,
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
+          updateConversationMemory(chatId, 'assistant', assistantMessage);
+          await replyToLark(messageId, assistantMessage);
+        } catch (e) {
+          console.error('[AI Error]', e?.response?.data || e.message);
+          await replyToLark(messageId, '❌ Lỗi khi gọi AI, vui lòng thử lại sau.');
+        }
+
+        return res.send({ code: 0 });
+      }
+
+      return res.send({ code: 0 });
+    }
+
+    return res.send({ code: 0 });
+  } catch (e) {
+    console.error('[Webhook Handler Error]', e);
+    res.status(500).send('Internal Server Error');
   }
-}
-
-// Khởi động server
-const PORT = process.env.PORT || 8080;
-const server = app.listen(PORT, () => {
-  console.log(`🚀 Smart Lark AI Bot running at http://localhost:${PORT}`);
 });
 
-// Xử lý graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('Received SIGTERM. Performing graceful shutdown...');
-  server.close(() => {
-    console.log('Server closed. Exiting process...');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('Received SIGINT. Performing graceful shutdown...');
-  server.close(() => {
-    console.log('Server closed. Exiting process...');
-    process.exit(0);
-  });
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
 });
