@@ -304,32 +304,35 @@ app.post('/webhook', async (req, res) => {
           let extractedText = '';
           if (imageKey) {
             try {
-              // Thử endpoint /images/ trước
-              console.log('[Post] Attempting to fetch image with key:', imageKey);
-              const imageResp = await axios.get(
-                `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`,
-                { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer' }
+              // Sử dụng API /message/resources để lấy tài nguyên từ tin nhắn
+              console.log('[Post] Fetching resource with message_id:', messageId);
+              const resourceResp = await axios.post(
+                `${process.env.LARK_DOMAIN}/open-apis/im/v1/message/resources`,
+                {
+                  message_id: messageId,
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json',
+                  },
+                }
               );
-              console.log('[Post] Image response content-type:', imageResp.headers['content-type']);
-              const imageData = Buffer.from(imageResp.data);
-              extractedText = await extractImageContent(imageData);
-              console.log('[Post] Extracted text from image:', extractedText);
-            } catch (imageError) {
-              console.error('[Post] Error fetching image:', {
-                code: imageError?.response?.data?.code,
-                message: imageError?.response?.data?.msg || imageError.message,
-                status: imageError?.response?.status,
-              });
-              // Thử endpoint /files/ nếu /images/ thất bại
-              console.log('[Post] Attempting to fetch file with key:', imageKey);
-              const fileResp = await axios.get(
-                `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${imageKey}/download_url`,
-                { headers: { Authorization: `Bearer ${token}` } }
-              );
-              console.log('[Post] File response:', fileResp.data);
-              const imageData = await axios.get(fileResp.data.data.download_url, { responseType: 'arraybuffer' });
+              console.log('[Post] Resource response:', resourceResp.data);
+              const fileUrl = resourceResp.data.data.file_list[0].download_url; // Lấy URL tải xuống
+
+              const imageData = await axios.get(fileUrl, { responseType: 'arraybuffer' });
               extractedText = await extractImageContent(Buffer.from(imageData.data));
-              console.log('[Post] Extracted text from file:', extractedText);
+              console.log('[Post] Extracted text from image:', extractedText);
+            } catch (resourceError) {
+              console.error('[Post] Error fetching resource:', {
+                code: resourceError?.response?.data?.code,
+                message: resourceError?.response?.data?.msg || resourceError.message,
+                status: resourceError?.response?.status,
+                stack: resourceError.stack,
+              });
+              await replyToLark(messageId, '❌ Lỗi khi truy xuất tài nguyên từ tin nhắn, vui lòng kiểm tra quyền.');
+              return res.send({ code: 0 });
             }
           }
 
@@ -379,7 +382,7 @@ app.post('/webhook', async (req, res) => {
             status: e?.response?.status,
             stack: e.stack,
           });
-          await replyToLark(messageId, '❌ Lỗi khi xử lý tin nhắn post, vui lòng kiểm tra quyền truy cập hình ảnh hoặc thử lại.');
+          await replyToLark(messageId, '❌ Lỗi khi xử lý tin nhắn post, vui lòng kiểm tra quyền hoặc thử lại.');
           return res.send({ code: 0 });
         }
       }
