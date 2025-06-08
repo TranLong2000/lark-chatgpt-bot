@@ -284,10 +284,10 @@ app.post('/webhook', async (req, res) => {
           if (imageKey) {
             // Lấy URL tải hình ảnh
             const fileUrlResp = await axios.get(
-              `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`,
+              `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}/download_url`,
               { headers: { Authorization: `Bearer ${token}` } }
             );
-            const fileUrl = fileUrlResp.data.data.image_url;
+            const fileUrl = fileUrlResp.data.data.download_url;
 
             // Trích xuất văn bản từ hình ảnh
             extractedText = await extractFileContent(fileUrl, 'jpg');
@@ -328,7 +328,7 @@ app.post('/webhook', async (req, res) => {
           return res.send({ code: 0 });
         } catch (e) {
           console.error('[Post Processing Error]', e?.response?.data || e.message);
-          await replyToLark(messageId, '❌ Lỗi khi xử lý tin nhắn post, vui lòng thử lại.');
+          await replyToLark(messageId, '❌ Lỗi khi xử lý tin nhắn post, vui lòng kiểm tra quyền truy cập hình ảnh hoặc thử lại.');
           return res.send({ code: 0 });
         }
       }
