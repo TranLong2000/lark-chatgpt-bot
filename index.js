@@ -283,14 +283,17 @@ app.post('/webhook', async (req, res) => {
           let extractedText = '';
           if (imageKey) {
             // Lấy URL tải hình ảnh
+            console.log('[Post] Fetching image with key:', imageKey);
             const fileUrlResp = await axios.get(
-              `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}/download_url`,
+              `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`,
               { headers: { Authorization: `Bearer ${token}` } }
             );
-            const fileUrl = fileUrlResp.data.data.download_url;
+            console.log('[Post] File URL response:', fileUrlResp.data);
+            const fileUrl = fileUrlResp.data.data.image_url;
 
             // Trích xuất văn bản từ hình ảnh
             extractedText = await extractFileContent(fileUrl, 'jpg');
+            console.log('[Post] Extracted text from image:', extractedText);
           }
 
           // Kết hợp văn bản từ tin nhắn và hình ảnh
