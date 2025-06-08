@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
@@ -7,19 +8,41 @@ const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
-require('dotenv').config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+app.use(express.json()); // Xử lý JSON webhook
 
-const processedMessageIds = new Set();
-const conversationMemory = new Map();
+// Kiểm tra biến môi trường
+const requiredEnvVars = [
+  'OPENROUTER_API_KEY',
+  'LARK_APP_ID',
+  'LARK_APP_SECRET',
+  'LARK_VERIFICATION_TOKEN',
+  'LARK_ENCRYPT_KEY',
+  'LARK_DOMAIN',
+  'BOT_SENDER_ID',
+];
+const missingEnvVars = requiredEnvVars.filter((varName) => !process.env[varName]);
+if (missingEnvVars.length > 0) {
+  console.warn(`Missing environment variables: ${missingEnvVars.join(', ')}. Application may not function correctly.`);
+}
 
+// Kiểm tra LARK_ENCRYPT_KEY
+if (process.env.LARK_ENCRYPT_KEY) {
+  if (process.env.LARK_ENCRYPT_KEY.length !== 32) {
+    console.error('Invalid LARK_ENCRYPT_KEY: Key must be exactly 32 characters');
+  } else {
+    console.log('LARK_ENCRYPT_KEY validated: 32 characters');
+  }
+}
+
+// Tạo thư mục tạm
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
 }
 
-app.use('/webhook', express.raw({ type: '*/*' }));
+const processedMessageIds = new Set();
+const conversationMemory = new Map();
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -29,21 +52,26 @@ function verifySignature(timestamp, nonce, body, signature) {
 }
 
 function decryptMessage(encrypt) {
-  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
-  const aesKey = crypto.createHash('sha256').update(key).digest();
-  const data = Buffer.from(encrypt, 'base64');
-  const iv = data.slice(0, 16);
-  const encryptedText = data.slice(16);
-
-  const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return JSON.parse(decrypted.toString());
+  try {
+    const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
+    const aesKey = crypto.createHash('sha256').update(key).digest();
+    const data = Buffer.from(encrypt, 'base64');
+    const iv = data.slice(0, 16);
+    const encryptedText = data.slice(16);
+    console.log(`Decrypting with IV length: ${iv.length}, Ciphertext length: ${encryptedText.length}`);
+    const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
+    let decrypted = decipher.update(encryptedText);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    return JSON.parse(decrypted.toString());
+  } catch (error) {
+    console.error('Failed to decrypt webhook:', error.message, error.stack);
+    return null;
+  }
 }
 
 async function replyToLark(messageId, content) {
   try {
-    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
       app_id: process.env.LARK_APP_ID,
       app_secret: process.env.LARK_APP_SECRET,
     });
@@ -69,62 +97,82 @@ async function replyToLark(messageId, content) {
 }
 
 async function extractFileContent(fileUrl, fileType) {
-  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-  const buffer = Buffer.from(response.data);
+  try {
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data);
 
-  if (fileType === 'pdf') {
-    const data = await pdfParse(buffer);
-    return data.text.trim();
+    if (fileType === 'pdf') {
+      const data = await pdfParse(buffer);
+      return data.text.trim();
+    }
+
+    if (fileType === 'docx') {
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value.trim();
+    }
+
+    if (fileType === 'xlsx') {
+      const workbook = xlsx.read(buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+      return sheet.map(row => row.join(' ')).join('\n');
+    }
+
+    if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
+      const result = await Tesseract.recognize(buffer, 'eng+vie');
+      return result.data.text.trim();
+    }
+
+    return '';
+  } catch (error) {
+    console.error(`[File Extraction Error] Type: ${fileType}`, error.message);
+    return '';
   }
-
-  if (fileType === 'docx') {
-    const result = await mammoth.extractRawText({ buffer });
-    return result.value.trim();
-  }
-
-  if (fileType === 'xlsx') {
-    const workbook = xlsx.read(buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-    return sheet.map(row => row.join(' ')).join('\n');
-  }
-
-  if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-    const result = await Tesseract.recognize(buffer, 'eng+vie');
-    return result.data.text.trim();
-  }
-
-  return '';
 }
 
 async function getAppAccessToken() {
-  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
-    app_id: process.env.LARK_APP_ID,
-    app_secret: process.env.LARK_APP_SECRET,
-  });
-  return resp.data.app_access_token;
+  try {
+    const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
+      app_id: process.env.LARK_APP_ID,
+      app_secret: process.env.LARK_APP_SECRET,
+    });
+    return resp.data.app_access_token;
+  } catch (error) {
+    console.error('[Token Error]', error?.response?.data || error.message);
+    throw error;
+  }
 }
 
 async function getAllTables(baseId, token) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
-  const resp = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return resp.data.data.items;
+  try {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return resp.data.data.items;
+  } catch (error) {
+    console.error('[Base Tables Error]', error?.response?.data || error.message);
+    return [];
+  }
 }
 
 async function getAllRows(baseId, tableId, token) {
   const rows = [];
   let pageToken = '';
-  do {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=100&page_token=${pageToken}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    rows.push(...resp.data.data.items);
-    pageToken = resp.data.data.page_token || '';
-  } while (pageToken);
-  return rows;
+  try {
+    do {
+      const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=100&page_token=${pageToken}`;
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      rows.push(...resp.data.data.items);
+      pageToken = resp.data.data.page_token || '';
+    } while (pageToken);
+    return rows;
+  } catch (error) {
+    console.error('[Base Rows Error]', error?.response?.data || error.message);
+    return [];
+  }
 }
 
 function updateConversationMemory(chatId, role, content) {
@@ -141,24 +189,39 @@ setInterval(() => {
   console.log('[Memory] Cleared conversation memory (2h interval)');
 }, 2 * 60 * 60 * 1000);
 
+// Health check cho Railway
+app.get('/health', (req, res) => {
+  console.log('Health check requested');
+  res.status(200).send('OK');
+});
+
 app.post('/webhook', async (req, res) => {
   try {
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
     const nonce = req.headers['x-lark-request-nonce'];
-    const bodyRaw = req.body.toString();
+    const bodyRaw = JSON.stringify(req.body);
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
       console.error('[Webhook] Invalid signature');
       return res.status(401).send('Invalid signature');
     }
 
-    const { encrypt } = JSON.parse(bodyRaw);
+    const { encrypt } = req.body;
+    if (!encrypt) {
+      console.error('[Webhook] No encrypted data');
+      return res.status(400).send('No encrypted data');
+    }
+
     const decrypted = decryptMessage(encrypt);
+    if (!decrypted) {
+      console.error('[Webhook] Decryption failed');
+      return res.status(400).send('Decryption failed');
+    }
     console.log('[Webhook] Decrypted event:', JSON.stringify(decrypted, null, 2));
 
     if (decrypted.header.event_type === 'url_verification') {
-      return res.send({ challenge: decrypted.event.challenge });
+      return res.json({ challenge: decrypted.event.challenge });
     }
 
     if (decrypted.header.event_type === 'im.message.receive_v1') {
@@ -168,10 +231,10 @@ app.post('/webhook', async (req, res) => {
       const chatId = message.chat_id;
       const messageType = message.message_type;
 
-      if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
+      if (processedMessageIds.has(messageId)) return res.json({ code: 0 });
       processedMessageIds.add(messageId);
 
-      if (senderId === (process.env.BOT_SENDER_ID || '')) return res.send({ code: 0 });
+      if (senderId === process.env.BOT_SENDER_ID) return res.json({ code: 0 });
 
       let userMessage = '';
       try {
@@ -231,7 +294,7 @@ app.post('/webhook', async (req, res) => {
           await replyToLark(messageId, '❌ Lỗi khi truy xuất Base, vui lòng kiểm tra quyền hoặc thử lại sau.');
         }
 
-        return res.send({ code: 0 });
+        return res.json({ code: 0 });
       }
 
       if (messageType === 'file' || messageType === 'image') {
@@ -259,7 +322,7 @@ app.post('/webhook', async (req, res) => {
           console.error('[File Processing Error]', e?.response?.data || e.message);
           await replyToLark(messageId, '❌ Lỗi khi xử lý file, vui lòng thử lại.');
         }
-        return res.send({ code: 0 });
+        return res.json({ code: 0 });
       }
 
       if (messageType === 'text' && userMessage.trim().length > 0) {
@@ -267,12 +330,15 @@ app.post('/webhook', async (req, res) => {
 
         try {
           const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
+          messages.unshift({ role: 'system', content: 'Bạn là một trợ lý AI thông minh, trả lời chính xác và hữu ích bằng tiếng Việt.' });
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
               model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
               messages,
               stream: false,
+              max_tokens: 1000,
+              temperature: 0.7,
             },
             {
               headers: {
@@ -290,19 +356,37 @@ app.post('/webhook', async (req, res) => {
           await replyToLark(messageId, '❌ Lỗi khi gọi AI, vui lòng thử lại sau.');
         }
 
-        return res.send({ code: 0 });
+        return res.json({ code: 0 });
       }
 
-      return res.send({ code: 0 });
+      return res.json({ code: 0 });
     }
 
-    return res.send({ code: 0 });
+    return res.json({ code: 0 });
   } catch (e) {
     console.error('[Webhook Handler Error]', e);
     res.status(500).send('Internal Server Error');
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+const PORT = process.env.PORT || 8080;
+const server = app.listen(PORT, () => {
+  console.log(`🚀 Smart Lark AI Bot running at http://localhost:${PORT}`);
+});
+
+// Xử lý graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('Received SIGTERM. Performing graceful shutdown...');
+  server.close(() => {
+    console.log('Server closed. Exiting process...');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('Received SIGINT. Performing graceful shutdown...');
+  server.close(() => {
+    console.log('Server closed. Exiting process...');
+    process.exit(0);
+  });
 });
