@@ -10,7 +10,7 @@ const Tesseract = require('tesseract.js');
 require('dotenv').config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 8080;
 
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
@@ -23,8 +23,15 @@ app.use('/webhook', express.raw({ type: '*/*' }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
+  if (!encryptKey) {
+    console.error('[VerifySignature] LARK_ENCRYPT_KEY is not set');
+    return false;
+  }
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
-  const hash = crypto.createHash('sha256').update(raw).digest('hex');
+  console.log('[VerifySignature] Input:', { timestamp, nonce, bodyLength: body.length, signature });
+  console.log('[VerifySignature] Raw string:', raw);
+  const hash = crypto.createHash('sha256').update(raw, 'utf8').digest('hex');
+  console.log('[VerifySignature] Generated hash:', hash);
   return hash === signature;
 }
 
@@ -103,7 +110,7 @@ async function extractImageContent(imageData) {
 }
 
 async function getAppAccessToken() {
-  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth)v3/app_access_token/internal/`, {
+  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
     app_id: process.env.LARK_APP_ID,
     app_secret: process.env.LARK_APP_SECRET,
   });
@@ -150,8 +157,8 @@ app.post('/webhook', async (req, res) => {
   try {
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
-    const nonce = req.headers['x-lark-request-nounce'];
-    const bodyRaw = req.body.toString();
+    const nonce = req.headers['x-lark-request-nonce'];
+    const bodyRaw = req.body.toString('utf8');
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
       console.error('[Webhook] Invalid signature');
@@ -163,7 +170,7 @@ app.post('/webhook', async (req, res) => {
     console.log('[Webhook] Decrypted event:', JSON.stringify(decrypted, null, 2));
 
     if (decrypted.header.event_type === 'url_verification') {
-      return res.send({ challenge: decrypted.event.challenge });
+      return res.json({ challenge: decrypted.event.challenge });
     }
 
     if (decrypted.header.event_type === 'im.message.receive_v1') {
