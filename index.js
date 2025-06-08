@@ -23,13 +23,8 @@ if (missingEnvVars.length > 0) {
 
 // Kiểm tra LARK_ENCRYPT_KEY
 if (process.env.LARK_ENCRYPT_KEY) {
-  try {
-    const keyBuffer = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'base64');
-    if (keyBuffer.length !== 32) {
-      console.error('Invalid LARK_ENCRYPT_KEY: Key length must be 32 bytes after base64 decoding');
-    }
-  } catch (error) {
-    console.error('Invalid LARK_ENCRYPT_KEY: Not a valid base64 string', error.message);
+  if (process.env.LARK_ENCRYPT_KEY.length !== 32) {
+    console.error('Invalid LARK_ENCRYPT_KEY: Key must be exactly 32 characters');
   }
 }
 
@@ -54,14 +49,14 @@ app.get('/health', (req, res) => {
 // Hàm giải mã webhook
 function decryptWebhook(encryptedData, key) {
   try {
-    const keyBuffer = Buffer.from(key, 'base64');
-    if (keyBuffer.length !== 32) {
-      throw new Error('Key length must be 32 bytes');
+    if (key.length !== 32) {
+      throw new Error('Key must be exactly 32 characters');
     }
+    const keyBuffer = Buffer.from(key, 'utf8'); // Sử dụng chuỗi thô thay vì base64
     const decipher = crypto.createDecipheriv(
       'aes-256-cbc',
       keyBuffer,
-      Buffer.alloc(16, 0)
+      Buffer.alloc(16, 0) // IV mặc định là 16 byte 0
     );
     let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
     decrypted += decipher.final('utf8');
