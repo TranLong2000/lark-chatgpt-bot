@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const crypto = require('crypto');
 
 const app = express();
 app.use(express.json());
@@ -38,10 +39,38 @@ app.get('/health', (req, res) => {
   res.status(200).send('OK');
 });
 
+// Hàm giải mã webhook
+function decryptWebhook(encryptedData, key) {
+  try {
+    const decipher = crypto.createDecipheriv(
+      'aes-256-cbc',
+      Buffer.from(key, 'base64'),
+      Buffer.alloc(16, 0)
+    );
+    let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+    return JSON.parse(decrypted);
+  } catch (error) {
+    console.error('Failed to decrypt webhook:', error.message, error.stack);
+    return null;
+  }
+}
+
 // Xử lý webhook từ Lark
 app.post('/webhook', async (req, res) => {
-  const body = req.body;
+  let body = req.body;
   console.log('Received webhook:', JSON.stringify(body, null, 2));
+
+  // Giải mã nếu webhook được mã hóa
+  if (body.encrypt && process.env.LARK_ENCRYPT_KEY) {
+    console.log('Decrypting webhook');
+    body = decryptWebhook(body.encrypt, process.env.LARK_ENCRYPT_KEY);
+    if (!body) {
+      console.log('Ignored: Failed to decrypt webhook');
+      return res.status(400).send('Failed to decrypt webhook');
+    }
+    console.log('Decrypted webhook:', JSON.stringify(body, null, 2));
+  }
 
   // Xác minh webhook
   if (body.type === 'url_verification' && process.env.LARK_VERIFICATION_TOKEN && body.token === process.env.LARK_VERIFICATION_TOKEN) {
