@@ -50,33 +50,73 @@ app.get('/health', (req, res) => {
 
 // Hàm giải mã webhook
 function decryptWebhook(encryptedData, key) {
+  console.log(`Decrypting with key (first 8 chars): ${key.slice(0, 8)}...`);
+  console.log(`Encrypted data length (base64): ${encryptedData.length}`);
+  
+  // Thử với khóa thô (utf8)
   try {
     if (key.length !== 32) {
       throw new Error('Key must be exactly 32 characters');
     }
     const keyBuffer = Buffer.from(key, 'utf8');
-    // Thử IV từ 16 byte đầu của dữ liệu mã hóa (nếu Lark sử dụng cách này)
     const encryptedBuffer = Buffer.from(encryptedData, 'base64');
     const iv = encryptedBuffer.slice(0, 16);
     const cipherText = encryptedBuffer.slice(16);
+    console.log(`Trying raw key, IV length: ${iv.length}, Ciphertext length: ${cipherText.length}`);
     const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, iv);
     let decrypted = decipher.update(cipherText, 'binary', 'utf8');
     decrypted += decipher.final('utf8');
     return JSON.parse(decrypted);
   } catch (error) {
-    console.error('Failed to decrypt webhook with dynamic IV:', error.message, error.stack);
-    // Thử lại với IV toàn 0 (fallback)
-    try {
-      const keyBuffer = Buffer.from(key, 'utf8');
-      const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, Buffer.alloc(16, 0));
-      let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
-      decrypted += decipher.final('utf8');
-      return JSON.parse(decrypted);
-    } catch (fallbackError) {
-      console.error('Failed to decrypt webhook with zero IV:', fallbackError.message, fallbackError.stack);
-      return null;
-    }
+    console.error('Failed to decrypt with raw key and dynamic IV:', error.message, error.stack);
   }
+
+  // Thử với khóa thô và IV toàn 0
+  try {
+    const keyBuffer = Buffer.from(key, 'utf8');
+    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, Buffer.alloc(16, 0));
+    console.log('Trying raw key with zero IV');
+    let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+    return JSON.parse(decrypted);
+  } catch (error) {
+    console.error('Failed to decrypt with raw key and zero IV:', error.message, error.stack);
+  }
+
+  // Thử với khóa base64
+  try {
+    const keyBuffer = Buffer.from(key, 'base64');
+    if (keyBuffer.length !== 32) {
+      throw new Error('Base64 decoded key must be 32 bytes');
+    }
+    const encryptedBuffer = Buffer.from(encryptedData, 'base64');
+    const iv = encryptedBuffer.slice(0, 16);
+    const cipherText = encryptedBuffer.slice(16);
+    console.log(`Trying base64 key, IV length: ${iv.length}, Ciphertext length: ${cipherText.length}`);
+    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, iv);
+    let decrypted = decipher.update(cipherText, 'binary', 'utf8');
+    decrypted += decipher.final('utf8');
+    return JSON.parse(decrypted);
+  } catch (error) {
+    console.error('Failed to decrypt with base64 key and dynamic IV:', error.message, error.stack);
+  }
+
+  // Thử với khóa base64 và IV toàn 0
+  try {
+    const keyBuffer = Buffer.from(key, 'base64');
+    if (keyBuffer.length !== 32) {
+      throw new Error('Base64 decoded key must be 32 bytes');
+    }
+    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, Buffer.alloc(16, 0));
+    console.log('Trying base64 key with zero IV');
+    let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
+    decrypted += decipher.final('utf8');
+    return JSON.parse(decrypted);
+  } catch (error) {
+    console.error('Failed to decrypt with base64 key and zero IV:', error.message, error.stack);
+  }
+
+  return null;
 }
 
 // Xử lý webhook từ Lark
