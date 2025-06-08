@@ -318,7 +318,7 @@ app.post('/webhook', async (req, res) => {
             },
             {
               headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
               },
             }
