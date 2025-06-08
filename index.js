@@ -25,6 +25,8 @@ if (missingEnvVars.length > 0) {
 if (process.env.LARK_ENCRYPT_KEY) {
   if (process.env.LARK_ENCRYPT_KEY.length !== 32) {
     console.error('Invalid LARK_ENCRYPT_KEY: Key must be exactly 32 characters');
+  } else {
+    console.log('LARK_ENCRYPT_KEY validated: 32 characters');
   }
 }
 
@@ -52,18 +54,28 @@ function decryptWebhook(encryptedData, key) {
     if (key.length !== 32) {
       throw new Error('Key must be exactly 32 characters');
     }
-    const keyBuffer = Buffer.from(key, 'utf8'); // Sử dụng chuỗi thô thay vì base64
-    const decipher = crypto.createDecipheriv(
-      'aes-256-cbc',
-      keyBuffer,
-      Buffer.alloc(16, 0) // IV mặc định là 16 byte 0
-    );
-    let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
+    const keyBuffer = Buffer.from(key, 'utf8');
+    // Thử IV từ 16 byte đầu của dữ liệu mã hóa (nếu Lark sử dụng cách này)
+    const encryptedBuffer = Buffer.from(encryptedData, 'base64');
+    const iv = encryptedBuffer.slice(0, 16);
+    const cipherText = encryptedBuffer.slice(16);
+    const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, iv);
+    let decrypted = decipher.update(cipherText, 'binary', 'utf8');
     decrypted += decipher.final('utf8');
     return JSON.parse(decrypted);
   } catch (error) {
-    console.error('Failed to decrypt webhook:', error.message, error.stack);
-    return null;
+    console.error('Failed to decrypt webhook with dynamic IV:', error.message, error.stack);
+    // Thử lại với IV toàn 0 (fallback)
+    try {
+      const keyBuffer = Buffer.from(key, 'utf8');
+      const decipher = crypto.createDecipheriv('aes-256-cbc', keyBuffer, Buffer.alloc(16, 0));
+      let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
+      decrypted += decipher.final('utf8');
+      return JSON.parse(decrypted);
+    } catch (fallbackError) {
+      console.error('Failed to decrypt webhook with zero IV:', fallbackError.message, fallbackError.stack);
+      return null;
+    }
   }
 }
 
@@ -81,6 +93,9 @@ app.post('/webhook', async (req, res) => {
       return res.status(400).send('Failed to decrypt webhook');
     }
     console.log('Decrypted webhook:', JSON.stringify(body, null, 2));
+  } else if (body.encrypt && !process.env.LARK_ENCRYPT_KEY) {
+    console.log('Ignored: Encrypted webhook but no LARK_ENCRYPT_KEY provided');
+    return res.status(400).send('Missing LARK_ENCRYPT_KEY');
   }
 
   // Xác minh webhook
