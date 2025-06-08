@@ -304,13 +304,12 @@ app.post('/webhook', async (req, res) => {
           let extractedText = '';
           if (imageKey) {
             try {
-              // Sử dụng API /message/resources để lấy tài nguyên từ tin nhắn
+              // Sử dụng API /messages/:message_id/resources để lấy tài nguyên từ tin nhắn
               console.log('[Post] Fetching resource with message_id:', messageId);
+              const resourceUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/resources`;
               const resourceResp = await axios.post(
-                `${process.env.LARK_DOMAIN}/open-apis/im/v1/message/resources`,
-                {
-                  message_id: messageId,
-                },
+                resourceUrl,
+                {},
                 {
                   headers: {
                     Authorization: `Bearer ${token}`,
@@ -320,7 +319,7 @@ app.post('/webhook', async (req, res) => {
               );
               console.log('[Post] Resource response:', resourceResp.data);
               if (resourceResp.data.data.file_list && resourceResp.data.data.file_list.length > 0) {
-                const fileUrl = resourceResp.data.data.file_list[0].download_url; // Lấy URL tải xuống
+                const fileUrl = resourceResp.data.data.file_list[0].download_url;
                 console.log('[Post] Download URL:', fileUrl);
 
                 const imageData = await axios.get(fileUrl, { responseType: 'arraybuffer' });
