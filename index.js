@@ -314,16 +314,21 @@ app.post('/webhook', async (req, res) => {
                 {
                   headers: {
                     Authorization: `Bearer ${token}`,
-                    'Content-Type': 'application/json',
+                    'Content-Type': 'application/json; charset=utf-8',
                   },
                 }
               );
               console.log('[Post] Resource response:', resourceResp.data);
-              const fileUrl = resourceResp.data.data.file_list[0].download_url; // Lấy URL tải xuống
+              if (resourceResp.data.data.file_list && resourceResp.data.data.file_list.length > 0) {
+                const fileUrl = resourceResp.data.data.file_list[0].download_url; // Lấy URL tải xuống
+                console.log('[Post] Download URL:', fileUrl);
 
-              const imageData = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-              extractedText = await extractImageContent(Buffer.from(imageData.data));
-              console.log('[Post] Extracted text from image:', extractedText);
+                const imageData = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+                extractedText = await extractImageContent(Buffer.from(imageData.data));
+                console.log('[Post] Extracted text from image:', extractedText);
+              } else {
+                console.log('[Post] No file resources found in response');
+              }
             } catch (resourceError) {
               console.error('[Post] Error fetching resource:', {
                 code: resourceError?.response?.data?.code,
