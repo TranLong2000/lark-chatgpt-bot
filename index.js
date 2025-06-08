@@ -21,6 +21,18 @@ if (missingEnvVars.length > 0) {
   console.warn(`Missing environment variables: ${missingEnvVars.join(', ')}. Application may not function correctly.`);
 }
 
+// Kiểm tra LARK_ENCRYPT_KEY
+if (process.env.LARK_ENCRYPT_KEY) {
+  try {
+    const keyBuffer = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'base64');
+    if (keyBuffer.length !== 32) {
+      console.error('Invalid LARK_ENCRYPT_KEY: Key length must be 32 bytes after base64 decoding');
+    }
+  } catch (error) {
+    console.error('Invalid LARK_ENCRYPT_KEY: Not a valid base64 string', error.message);
+  }
+}
+
 // Bộ nhớ chat
 const chatMemories = {};
 function cleanOldMemory() {
@@ -42,9 +54,13 @@ app.get('/health', (req, res) => {
 // Hàm giải mã webhook
 function decryptWebhook(encryptedData, key) {
   try {
+    const keyBuffer = Buffer.from(key, 'base64');
+    if (keyBuffer.length !== 32) {
+      throw new Error('Key length must be 32 bytes');
+    }
     const decipher = crypto.createDecipheriv(
       'aes-256-cbc',
-      Buffer.from(key, 'base64'),
+      keyBuffer,
       Buffer.alloc(16, 0)
     );
     let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
