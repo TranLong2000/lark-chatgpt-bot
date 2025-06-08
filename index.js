@@ -222,7 +222,7 @@ app.post('/webhook', async (req, res) => {
               baseSummary += `\nBảng: ${table.name} (ID: ${table.table_id})\n`;
               const rows = await getAllRows(baseIdFromMsg, table.table_id, token);
               if (rows.length === 0) {
-                baseSummary += '  (Không có bản ghi)\n`;
+                baseSummary += '  (Không có bản ghi)\n';
                 continue;
               }
 
