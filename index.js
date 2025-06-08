@@ -335,6 +335,27 @@ app.post('/webhook', async (req, res) => {
                 status: resourceError?.response?.status,
                 stack: resourceError.stack,
               });
+              // Thử GET /images/ nếu POST thất bại
+              try {
+                console.log('[Post] Falling back to GET /images/ with image_key:', imageKey);
+                const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`;
+                const imageResp = await axios.get(imageUrl, {
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json; charset=utf-8',
+                  },
+                  responseType: 'arraybuffer',
+                });
+                extractedText = await extractImageContent(Buffer.from(imageResp.data));
+                console.log('[Post] Extracted text from image (GET):', extractedText);
+              } catch (imageError) {
+                console.error('[Post] Error fetching image:', {
+                  code: imageError?.response?.data?.code,
+                  message: imageError?.response?.data?.msg || imageError.message,
+                  status: imageError?.response?.status,
+                  stack: imageError.stack,
+                });
+              }
               await replyToLark(messageId, '❌ Lỗi khi truy xuất tài nguyên từ tin nhắn, vui lòng kiểm tra quyền.');
               return res.send({ code: 0 });
             }
