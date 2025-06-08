@@ -93,11 +93,11 @@ async function extractFileContent(fileUrl, fileType) {
     const workbook = xlsx.read(buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-    return sheet.map(row => row.join(' ')).join('\n');
+    return sheet.map(row => row.join(', ')).join('; ');
   }
 
-  if (['jpg', 'jpeg', 'png', 'bmp'].includes(fileType)) {
-    const result = await Tesseract.recognize(buffer, 'eng+vie');
+  if (['jpg', 'jpeg', 'png'].includes(fileType)) {
+    const result = await Tesseract.recognize(buffer, 'eng');
     return result.data.text.trim();
   }
 
@@ -105,7 +105,7 @@ async function extractFileContent(fileUrl, fileType) {
 }
 
 async function extractImageContent(imageData) {
-  const result = await Tesseract.recognize(imageData, 'eng+vie');
+  const result = await Tesseract.recognize(imageData, 'eng');
   return result.data.text.trim();
 }
 
@@ -248,6 +248,7 @@ app.post('/webhook', async (req, res) => {
 
       if (messageType === 'file' || messageType === 'image') {
         try {
+          console.log('[File/Image] Processing file with key:', message.file_key);
           const fileKey = message.file_key;
           const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
           const ext = fileName.split('.').pop().toLowerCase();
@@ -256,6 +257,7 @@ app.post('/webhook', async (req, res) => {
             `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
             { headers: { Authorization: `Bearer ${token}` } }
           );
+          console.log('[File/Image] Download URL:', fileUrlResp.data.data.download_url);
           const fileUrl = fileUrlResp.data.data.download_url;
 
           const extractedText = await extractFileContent(fileUrl, ext);
@@ -268,7 +270,11 @@ app.post('/webhook', async (req, res) => {
             await replyToLark(messageId, `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`);
           }
         } catch (e) {
-          console.error('[File Processing Error]', e?.response?.data || e.message);
+          console.error('[File Processing Error]', {
+            code: e?.response?.data?.code,
+            message: e?.response?.data?.msg || e.message,
+            status: e?.response?.status,
+          });
           await replyToLark(messageId, '❌ Lỗi khi xử lý file, vui lòng thử lại.');
         }
         return res.send({ code: 0 });
@@ -276,11 +282,13 @@ app.post('/webhook', async (req, res) => {
 
       if (messageType === 'post') {
         try {
+          console.log('[Post] Starting post message processing');
           const parsedContent = JSON.parse(message.content);
           let textContent = '';
           let imageKey = '';
 
           // Trích xuất văn bản và image_key từ content
+          console.log('[Post] Parsing content');
           for (const block of parsedContent.content) {
             for (const item of block) {
               if (item.tag === 'text') {
@@ -291,6 +299,7 @@ app.post('/webhook', async (req, res) => {
             }
           }
           textContent = textContent.trim();
+          console.log('[Post] Extracted text:', textContent, 'Image key:', imageKey);
 
           let extractedText = '';
           if (imageKey) {
@@ -310,16 +319,20 @@ app.post('/webhook', async (req, res) => {
 
           // Kết hợp văn bản từ tin nhắn và hình ảnh
           const combinedMessage = textContent + (extractedText ? `\nNội dung trích xuất từ hình ảnh: ${extractedText}` : '');
+          console.log('[Post] Combined message:', combinedMessage);
 
           if (combinedMessage.length === 0) {
+            console.log('[Post] No content extracted');
             await replyToLark(messageId, 'Không thể trích xuất nội dung từ tin nhắn hoặc hình ảnh.');
             return res.send({ code: 0 });
           }
 
           // Cập nhật bộ nhớ hội thoại
+          console.log('[Post] Updating conversation memory');
           updateConversationMemory(chatId, 'user', combinedMessage);
 
           // Gửi đến API AI
+          console.log('[Post] Sending to AI API');
           const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
@@ -330,22 +343,25 @@ app.post('/webhook', async (req, res) => {
             },
             {
               headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
               },
             }
           );
 
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
+          console.log('[Post] AI response:', assistantMessage);
           updateConversationMemory(chatId, 'assistant', assistantMessage);
           await replyToLark(messageId, assistantMessage);
 
+          console.log('[Post] Processing completed');
           return res.send({ code: 0 });
         } catch (e) {
           console.error('[Post Processing Error]', {
             code: e?.response?.data?.code,
             message: e?.response?.data?.msg || e.message,
             status: e?.response?.status,
+            stack: e.stack,
           });
           await replyToLark(messageId, '❌ Lỗi khi xử lý tin nhắn post, vui lòng kiểm tra quyền truy cập hình ảnh hoặc thử lại.');
           return res.send({ code: 0 });
@@ -353,9 +369,10 @@ app.post('/webhook', async (req, res) => {
       }
 
       if (messageType === 'text' && userMessage.trim().length > 0) {
-        updateConversationMemory(chatId, 'user', userMessage);
-
         try {
+          console.log('[Text] Processing text message:', userMessage);
+          updateConversationMemory(chatId, 'user', userMessage);
+
           const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
@@ -366,20 +383,24 @@ app.post('/webhook', async (req, res) => {
             },
             {
               headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                Authorization: `Bearer ${token}`,
                 'Content-Type': 'application/json',
               },
             }
           );
 
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
+          console.log('[Text] AI response:', assistantMessage);
           updateConversationMemory(chatId, 'assistant', assistantMessage);
           await replyToLark(messageId, assistantMessage);
         } catch (e) {
-          console.error('[AI Error]', e?.response?.data || e.message);
+          console.error('[AI Error]', {
+            code: e?.response?.data?.code,
+            message: e?.response?.data?.msg || e.message,
+            status: e?.response?.status,
+          });
           await replyToLark(messageId, '❌ Lỗi khi gọi AI, vui lòng thử lại sau.');
         }
-
         return res.send({ code: 0 });
       }
 
@@ -388,7 +409,10 @@ app.post('/webhook', async (req, res) => {
 
     return res.send({ code: 0 });
   } catch (e) {
-    console.error('[Webhook Handler Error]', e);
+    console.error('[Webhook Handler Error]', {
+      message: e.message,
+      stack: e.stack,
+    });
     res.status(500).send('Internal Server Error');
   }
 });
