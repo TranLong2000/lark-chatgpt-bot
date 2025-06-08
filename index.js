@@ -50,7 +50,7 @@ function decryptMessage(encrypt) {
 
 async function replyToLark(messageId, content) {
   try {
-    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
       app_id: process.env.LARK_APP_ID,
       app_secret: process.env.LARK_APP_SECRET,
     });
@@ -110,7 +110,7 @@ async function extractImageContent(imageData) {
 }
 
 async function getAppAccessToken() {
-  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal/`, {
+  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
     app_id: process.env.LARK_APP_ID,
     app_secret: process.env.LARK_APP_SECRET,
   });
@@ -222,7 +222,7 @@ app.post('/webhook', async (req, res) => {
               baseSummary += `\nBảng: ${table.name} (ID: ${table.table_id})\n`;
               const rows = await getAllRows(baseIdFromMsg, table.table_id, token);
               if (rows.length === 0) {
-                baseSummary += '  (Không có bản ghi)\n';
+                baseSummary += '  (Không có bản ghi)\n`;
                 continue;
               }
 
@@ -342,7 +342,11 @@ app.post('/webhook', async (req, res) => {
 
           return res.send({ code: 0 });
         } catch (e) {
-          console.error('[Post Processing Error]', e?.response?.data || e.message);
+          console.error('[Post Processing Error]', {
+            code: e?.response?.data?.code,
+            message: e?.response?.data?.msg || e.message,
+            status: e?.response?.status,
+          });
           await replyToLark(messageId, '❌ Lỗi khi xử lý tin nhắn post, vui lòng kiểm tra quyền truy cập hình ảnh hoặc thử lại.');
           return res.send({ code: 0 });
         }
