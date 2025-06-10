@@ -317,8 +317,6 @@ app.post('/webhook', async (req, res) => {
       if (baseId && tableName && fieldName && userQuestion) {
         pendingTasks.set(messageId, { chatId, userMessage });
         processBaseData(messageId, baseId, tableName, fieldName, userQuestion, token).catch(err => console.error('[Task Error]', err.message));
-      } else {
-        await replyToLark(messageId, 'Vui lòng sử dụng cú pháp: "Base, Table, Field, Câu hỏi" (ví dụ: "pro, received, số PO, số PO P10873 có nhà cung cấp là gì").');
       } else if (messageType === 'file' || messageType === 'image') {
         try {
           const fileKey = message.file_key;
