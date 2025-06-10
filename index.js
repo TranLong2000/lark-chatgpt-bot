@@ -235,9 +235,29 @@ app.post('/webhook', async (req, res) => {
             }
           }
 
+          // Gửi cả baseSummary và userMessage đến API AI để xử lý
+          const aiResp = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+              messages: [
+                ...conversationMemory.get(chatId).map(({ role, content }) => ({ role, content })),
+                { role: 'user', content: `Dữ liệu Base: ${baseSummary}\nCâu hỏi: ${userMessage}` }
+              ],
+              stream: false,
+            },
+            {
+              headers: {
+                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                'Content-Type': 'application/json',
+              },
+            }
+          );
+
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
           updateConversationMemory(chatId, 'user', userMessage);
-          updateConversationMemory(chatId, 'assistant', baseSummary);
-          await replyToLark(messageId, baseSummary);
+          updateConversationMemory(chatId, 'assistant', assistantMessage);
+          await replyToLark(messageId, assistantMessage);
         } catch (e) {
           console.error('[Base API Error]', e?.response?.data || e.message);
           await replyToLark(messageId, '❌ Lỗi khi truy xuất Base, vui lòng kiểm tra quyền hoặc thử lại sau.');
