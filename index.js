@@ -18,6 +18,9 @@ const BASE_MAPPINGS = {
   'FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr'
 };
 
+// Mặc định model AI, có thể thay đổi qua biến môi trường AI_MODEL
+const AI_MODEL = process.env.AI_MODEL || 'deepseek/deepseek-r1-0528-qwen3-8b:free';
+
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
 const pendingTasks = new Map();
@@ -166,7 +169,7 @@ function updateConversationMemory(chatId, role, content) {
   if (mem.length > 10) mem.shift();
 }
 
-async function processBaseData(messageId, baseId, userMessage, token) {
+async function processBaseData(messageId, baseId, tableName, fieldName, userQuestion, token) {
   try {
     let allRows = [];
     const tables = await getAllTables(baseId, token);
@@ -175,39 +178,14 @@ async function processBaseData(messageId, baseId, userMessage, token) {
       return;
     }
 
-    // Gửi danh sách table và câu hỏi đến AI để chọn table
-    const chatId = pendingTasks.get(messageId)?.chatId;
-    const memory = conversationMemory.get(chatId) || [];
-    const aiResp = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-        messages: [
-          ...memory.map(({ role, content }) => ({ role, content })),
-          {
-            role: 'user',
-            content: `Danh sách table trong Base ${baseId}:\n${JSON.stringify(tables, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích câu hỏi bằng ngôn ngữ tự nhiên và chọn table phù hợp nhất để trả lời (ví dụ: nếu hỏi về PO, chọn table có tên liên quan như 'Purchase Orders'). Trả về table_id của table được chọn.`
-          }
-        ],
-        stream: false,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 5000,
-      }
-    );
-
-    const selectedTableId = aiResp.data.choices?.[0]?.message?.content.trim();
-    const table = tables.find(t => t.tableId === selectedTableId);
-    if (!table) {
-      await replyToLark(messageId, 'Không thể xác định table phù hợp.');
+    // Tìm table dựa trên tableName (tên table được cung cấp)
+    const selectedTable = tables.find(t => t.name.toLowerCase().includes(tableName.toLowerCase()));
+    if (!selectedTable) {
+      await replyToLark(messageId, `Không tìm thấy table có tên liên quan đến '${tableName}'.`);
       return;
     }
 
-    const rows = await getAllRows(baseId, table.tableId, token);
+    const rows = await getAllRows(baseId, selectedTable.tableId, token);
     allRows = allRows.concat(rows.map(row => row.fields || {}));
 
     if (!allRows || allRows.length === 0) {
@@ -225,15 +203,17 @@ async function processBaseData(messageId, baseId, userMessage, token) {
     const columns = Object.keys(firstRow || {});
     const tableData = { columns, rows: validRows };
 
-    const aiResp2 = await axios.post(
+    const chatId = pendingTasks.get(messageId)?.chatId;
+    const memory = conversationMemory.get(chatId) || [];
+    const aiResp = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+        model: AI_MODEL,
         messages: [
           ...memory.map(({ role, content }) => ({ role, content })),
           {
             role: 'user',
-            content: `Dữ liệu bảng từ Base ${baseId}, Table ${table.name} (${table.tableId}):\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu, tự động chọn cột phù hợp nhất để trả lời câu hỏi (ví dụ: nếu hỏi về nhà cung cấp, chọn cột có tên liên quan như 'Supplier', nếu hỏi số lượng PO, chọn cột 'PO'). Trả lời chính xác dựa trên cột được chọn, không thêm định dạng như dấu * hoặc markdown.`
+            content: `Dữ liệu bảng từ Base ${baseId}, Table ${selectedTable.name} (${selectedTable.tableId}):\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userQuestion}\nĐã cung cấp field quan tâm: ${fieldName}\nHãy phân tích dữ liệu, ưu tiên chọn cột có tên liên quan đến '${fieldName}' để trả lời câu hỏi. Nếu không tìm thấy cột phù hợp, tự động chọn cột khác phù hợp nhất. Trả lời chính xác dựa trên cột được chọn, không thêm định dạng như dấu * hoặc markdown.`
           }
         ],
         stream: false,
@@ -247,9 +227,9 @@ async function processBaseData(messageId, baseId, userMessage, token) {
       }
     );
 
-    const assistantMessage = aiResp2.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
+    const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
     const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-    updateConversationMemory(chatId, 'user', userMessage);
+    updateConversationMemory(chatId, 'user', userQuestion);
     updateConversationMemory(chatId, 'assistant', cleanMessage);
     await replyToLark(messageId, cleanMessage);
   } catch (e) {
@@ -313,24 +293,32 @@ app.post('/webhook', async (req, res) => {
       const token = await getAppAccessToken();
 
       let baseId = '';
+      let tableName = '';
+      let fieldName = '';
+      let userQuestion = '';
 
-      // Trích xuất Base từ cú pháp "Base [tên]"
-      const baseMatch = userMessage.match(/Base (\w+)/i);
-      if (baseMatch) {
-        const baseName = baseMatch[1].toUpperCase();
+      // Trích xuất Base, Table, Field từ cú pháp "base, table, field, câu hỏi"
+      const match = userMessage.match(/(\w+),\s*(\w+),\s*(\w+),\s*(.+)/i);
+      if (match) {
+        const baseName = match[1].toUpperCase();
         const baseUrl = BASE_MAPPINGS[baseName];
         if (baseUrl) {
           const urlMatch = baseUrl.match(/base\/([a-zA-Z0-9]+)/);
           baseId = urlMatch ? urlMatch[1] : '';
+          tableName = match[2];
+          fieldName = match[3];
+          userQuestion = match[4].trim();
         } else {
           await replyToLark(messageId, 'Base không được hỗ trợ. Vui lòng dùng Base PRO hoặc Base FIN.');
           return;
         }
       }
 
-      if (baseId) {
+      if (baseId && tableName && fieldName && userQuestion) {
         pendingTasks.set(messageId, { chatId, userMessage });
-        processBaseData(messageId, baseId, userMessage, token).catch(err => console.error('[Task Error]', err.message));
+        processBaseData(messageId, baseId, tableName, fieldName, userQuestion, token).catch(err => console.error('[Task Error]', err.message));
+      } else {
+        await replyToLark(messageId, 'Vui lòng sử dụng cú pháp: "Base, Table, Field, Câu hỏi" (ví dụ: "pro, received, số PO, số PO P10873 có nhà cung cấp là gì").');
       } else if (messageType === 'file' || messageType === 'image') {
         try {
           const fileKey = message.file_key;
@@ -407,7 +395,7 @@ app.post('/webhook', async (req, res) => {
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
-              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+              model: AI_MODEL,
               messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: combinedMessage }],
               stream: false,
             },
@@ -434,7 +422,7 @@ app.post('/webhook', async (req, res) => {
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
-              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+              model: AI_MODEL,
               messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: userMessage }],
               stream: false,
             },
@@ -454,8 +442,6 @@ app.post('/webhook', async (req, res) => {
           console.error('[AI Error]', e?.response?.data?.msg || e.message);
           await replyToLark(messageId, '❌ Lỗi khi gọi AI.');
         }
-      } else {
-        await replyToLark(messageId, 'Vui lòng sử dụng cú pháp Base PRO hoặc Base FIN kèm theo câu hỏi.');
       }
     }
   } catch (e) {
