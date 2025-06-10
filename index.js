@@ -215,34 +215,31 @@ app.post('/webhook', async (req, res) => {
             tables = await getAllTables(baseIdFromMsg, token);
           }
 
-          let baseSummary = `Dữ liệu Base ID: ${baseIdFromMsg}\n`;
-
+          let allRows = [];
           for (const table of tables) {
             if (table.type === 'base_table') {
-              baseSummary += `\nBảng: ${table.name} (ID: ${table.table_id})\n`;
               const rows = await getAllRows(baseIdFromMsg, table.table_id, token);
-              if (rows.length === 0) {
-                baseSummary += '  (Không có bản ghi)\n';
-                continue;
-              }
-
-              const sampleRows = rows.slice(0, 10);
-              for (const row of sampleRows) {
-                const fieldsText = Object.entries(row.fields).map(([k, v]) => `${k}: ${v}`).join('; ');
-                baseSummary += `  - ${fieldsText}\n`;
-              }
-              if (rows.length > 10) baseSummary += `  ... (${rows.length} bản ghi)\n`;
+              allRows = allRows.concat(rows.map(row => row.fields));
             }
           }
 
-          // Gửi cả baseSummary và userMessage đến API AI để xử lý
+          // Chuyển đổi dữ liệu thành JSON có cấu trúc rõ ràng
+          const tableData = {
+            columns: Object.keys(allRows.length > 0 ? allRows[0] : {}),
+            rows: allRows,
+          };
+
+          // Gửi dữ liệu bảng và câu hỏi đến AI
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
               model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
               messages: [
                 ...conversationMemory.get(chatId).map(({ role, content }) => ({ role, content })),
-                { role: 'user', content: `Dữ liệu Base: ${baseSummary}\nCâu hỏi: ${userMessage}` }
+                {
+                  role: 'user',
+                  content: `Dữ liệu bảng từ Base:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu bảng và trả lời câu hỏi một cách chính xác, ví dụ: đếm số lượng, tính tổng, hoặc lọc theo điều kiện nếu được yêu cầu.`
+                }
               ],
               stream: false,
             },
