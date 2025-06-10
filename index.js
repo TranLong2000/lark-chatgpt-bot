@@ -12,6 +12,12 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
+// Khai báo sẵn ID của các cột quan trọng
+const FIELD_MAPPINGS = {
+  'fldmbj2zdn': 'Manufactory', // ID của cột Manufactory
+  'fldbQlvMg0': 'PO'          // ID của cột PO
+};
+
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
 
@@ -241,9 +247,13 @@ app.post('/webhook', async (req, res) => {
             return res.send({ code: 0 });
           }
 
+          // Lấy danh sách cột từ dữ liệu thực tế và ánh xạ với FIELD_MAPPINGS
+          const columns = Object.keys(allRows[0] || {});
+          const mappedColumns = columns.map(colId => FIELD_MAPPINGS[colId] || colId);
+
           // Chuyển đổi dữ liệu thành JSON có cấu trúc rõ ràng
           const tableData = {
-            columns: Object.keys(allRows[0] || {}),
+            columns: mappedColumns,
             rows: allRows,
           };
 
@@ -256,7 +266,7 @@ app.post('/webhook', async (req, res) => {
                 ...conversationMemory.get(chatId).map(({ role, content }) => ({ role, content })),
                 {
                   role: 'user',
-                  content: `Dữ liệu bảng từ Base:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu bảng và trả lời câu hỏi một cách chính xác, ví dụ: đếm số lượng, tính tổng, hoặc lọc theo điều kiện nếu được yêu cầu.`
+                  content: `Dữ liệu bảng từ Base:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu bảng và trả lời câu hỏi một cách chính xác, ví dụ: đếm số lượng, tính tổng, hoặc lọc theo điều kiện nếu được yêu cầu. Sử dụng các cột đã được ánh xạ (nếu có) hoặc suy ra từ dữ liệu.`
                 }
               ],
               stream: false,
