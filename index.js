@@ -178,7 +178,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
           ...memory.map(({ role, content }) => ({ role, content })),
           {
             role: 'user',
-            content: `Dữ liệu bảng từ Base:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu, tự động chọn cột phù hợp nhất để trả lời câu hỏi (ví dụ: nếu hỏi về nhà cung cấp, chọn cột có tên liên quan như 'Supplier', nếu hỏi số lượng PO, chọn cột 'PO'). Trả lời chính xác dựa trên cột được chọn.`
+            content: `Dữ liệu bảng từ Base:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu, tự động chọn cột phù hợp nhất để trả lời câu hỏi (ví dụ: nếu hỏi về nhà cung cấp, chọn cột có tên liên quan như 'Supplier', nếu hỏi số lượng PO, chọn cột 'PO'). Trả lời chính xác dựa trên cột được chọn, không thêm định dạng như dấu * hoặc markdown.`
           }
         ],
         stream: false,
@@ -193,9 +193,11 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     );
 
     const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
+    // Loại bỏ dấu * và các định dạng markdown
+    const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
     updateConversationMemory(chatId, 'user', userMessage);
-    updateConversationMemory(chatId, 'assistant', assistantMessage);
-    await replyToLark(messageId, assistantMessage);
+    updateConversationMemory(chatId, 'assistant', cleanMessage);
+    await replyToLark(messageId, cleanMessage);
   } catch (e) {
     console.error('[Base API Error]', e?.response?.data || e.message);
     await replyToLark(messageId, '❌ Lỗi khi xử lý, thử lại sau.');
@@ -354,8 +356,9 @@ app.post('/webhook', async (req, res) => {
           );
 
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
-          updateConversationMemory(chatId, 'assistant', assistantMessage);
-          await replyToLark(messageId, assistantMessage);
+          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+          updateConversationMemory(chatId, 'assistant', cleanMessage);
+          await replyToLark(messageId, cleanMessage);
         } catch (e) {
           console.error('[Post Processing Error]', e?.response?.data?.msg || e.message);
           await replyToLark(messageId, '❌ Lỗi khi xử lý post.');
@@ -380,8 +383,9 @@ app.post('/webhook', async (req, res) => {
           );
 
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
-          updateConversationMemory(chatId, 'assistant', assistantMessage);
-          await replyToLark(messageId, assistantMessage);
+          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+          updateConversationMemory(chatId, 'assistant', cleanMessage);
+          await replyToLark(messageId, cleanMessage);
         } catch (e) {
           console.error('[AI Error]', e?.response?.data?.msg || e.message);
           await replyToLark(messageId, '❌ Lỗi khi gọi AI.');
