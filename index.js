@@ -119,10 +119,16 @@ async function getAppAccessToken() {
 
 async function getAllTables(baseId, token) {
   const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
-  const resp = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  return resp.data.data.items;
+  try {
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    console.log('[getAllTables] Success:', resp.data.data.items);
+    return resp.data.data.items;
+  } catch (e) {
+    console.error('[getAllTables] Error:', e.response?.data || e.message);
+    return [];
+  }
 }
 
 async function getAllRows(baseId, tableId, token) {
@@ -130,11 +136,17 @@ async function getAllRows(baseId, tableId, token) {
   let pageToken = '';
   do {
     const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=100&page_token=${pageToken}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    rows.push(...resp.data.data.items);
-    pageToken = resp.data.data.page_token || '';
+    try {
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      rows.push(...(resp.data.data.items || []));
+      pageToken = resp.data.data.page_token || '';
+      console.log('[getAllRows] Fetched rows:', rows.length);
+    } catch (e) {
+      console.error('[getAllRows] Error:', e.response?.data || e.message);
+      break;
+    }
   } while (pageToken);
   return rows;
 }
@@ -219,13 +231,19 @@ app.post('/webhook', async (req, res) => {
           for (const table of tables) {
             if (table.type === 'base_table') {
               const rows = await getAllRows(baseIdFromMsg, table.table_id, token);
-              allRows = allRows.concat(rows.map(row => row.fields));
+              allRows = allRows.concat(rows.map(row => row.fields || {}));
             }
+          }
+
+          // Kiểm tra và xử lý nếu allRows rỗng
+          if (!allRows || allRows.length === 0) {
+            await replyToLark(messageId, 'Không có dữ liệu từ Base để xử lý.');
+            return res.send({ code: 0 });
           }
 
           // Chuyển đổi dữ liệu thành JSON có cấu trúc rõ ràng
           const tableData = {
-            columns: Object.keys(allRows.length > 0 ? allRows[0] : {}),
+            columns: Object.keys(allRows[0] || {}),
             rows: allRows,
           };
 
