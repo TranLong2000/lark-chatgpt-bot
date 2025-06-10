@@ -133,15 +133,16 @@ async function getAllTables(baseId, token) {
   }
 }
 
-async function getAllRows(baseId, tableId, token, maxRows = 50) { // Giảm xuống 50 hàng
+async function getAllRows(baseId, tableId, token, maxRows = 20) { // Giảm xuống 20 hàng
   const rows = [];
   let pageToken = '';
   do {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=50&page_token=${pageToken}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`; // Giảm page_size
     try {
+      console.log('[getAllRows] Fetching page, rows so far:', rows.length); // Debug
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
-        timeout: 3000, // Timeout 3 giây
+        timeout: 10000, // Tăng timeout lên 10 giây
       });
       rows.push(...(resp.data.data.items || []));
       pageToken = resp.data.data.page_token || '';
@@ -151,6 +152,7 @@ async function getAllRows(baseId, tableId, token, maxRows = 50) { // Giảm xu�
       break;
     }
   } while (pageToken && rows.length < maxRows);
+  console.log('[getAllRows] Total rows fetched:', rows.length); // Debug
   return rows;
 }
 
@@ -160,12 +162,13 @@ function updateConversationMemory(chatId, role, content) {
   }
   const mem = conversationMemory.get(chatId);
   mem.push({ role, content });
-  if (mem.length > 10) mem.shift(); // Giảm xuống 10 để tiết kiệm RAM
+  if (mem.length > 10) mem.shift(); // Giữ 10 lịch sử
 }
 
 async function processBaseData(messageId, baseId, tableId, userMessage, token) {
   try {
     let allRows = [];
+    console.log('[processBaseData] Starting data fetch for baseId:', baseId, 'tableId:', tableId); // Debug
     const rows = await getAllRows(baseId, tableId, token);
     allRows = allRows.concat(rows.map(row => row.fields || {}));
 
@@ -205,7 +208,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 5000, // Timeout 5 giây
+        timeout: 5000, // Giữ timeout 5 giây cho API AI
       }
     );
 
