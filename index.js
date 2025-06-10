@@ -12,15 +12,9 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Khai báo sẵn ID của các cột quan trọng
-const FIELD_MAPPINGS = {
-  'fldmbj2zdn': 'Manufactory', // ID của cột Manufactory
-  'fldbQlvMg0': 'PO'          // ID của cột PO
-};
-
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
-const pendingTasks = new Map(); // Lưu các task xử lý bất đồng bộ
+const pendingTasks = new Map();
 
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
@@ -120,29 +114,16 @@ async function getAppAccessToken() {
   return resp.data.app_access_token;
 }
 
-async function getAllTables(baseId, token) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
-  try {
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    return resp.data.data.items;
-  } catch (e) {
-    console.error('[getAllTables] Error:', e.response?.data || e.message);
-    return [];
-  }
-}
-
-async function getAllRows(baseId, tableId, token, maxRows = 20) { // Giảm xuống 20 hàng
+async function getAllRows(baseId, tableId, token, maxRows = 20) {
   const rows = [];
   let pageToken = '';
   do {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`; // Giảm page_size
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
     try {
-      console.log('[getAllRows] Fetching page, rows so far:', rows.length); // Debug
+      console.log('[getAllRows] Fetching page, rows so far:', rows.length);
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
-        timeout: 10000, // Tăng timeout lên 10 giây
+        timeout: 10000,
       });
       rows.push(...(resp.data.data.items || []));
       pageToken = resp.data.data.page_token || '';
@@ -152,7 +133,7 @@ async function getAllRows(baseId, tableId, token, maxRows = 20) { // Giảm xu�
       break;
     }
   } while (pageToken && rows.length < maxRows);
-  console.log('[getAllRows] Total rows fetched:', rows.length); // Debug
+  console.log('[getAllRows] Total rows fetched:', rows.length);
   return rows;
 }
 
@@ -162,13 +143,13 @@ function updateConversationMemory(chatId, role, content) {
   }
   const mem = conversationMemory.get(chatId);
   mem.push({ role, content });
-  if (mem.length > 10) mem.shift(); // Giữ 10 lịch sử
+  if (mem.length > 10) mem.shift();
 }
 
 async function processBaseData(messageId, baseId, tableId, userMessage, token) {
   try {
     let allRows = [];
-    console.log('[processBaseData] Starting data fetch for baseId:', baseId, 'tableId:', tableId); // Debug
+    console.log('[processBaseData] Starting data fetch for baseId:', baseId, 'tableId:', tableId);
     const rows = await getAllRows(baseId, tableId, token);
     allRows = allRows.concat(rows.map(row => row.fields || {}));
 
@@ -185,8 +166,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 
     const firstRow = validRows[0];
     const columns = Object.keys(firstRow || {});
-    const mappedColumns = columns.map(colId => FIELD_MAPPINGS[colId] || colId);
-    const tableData = { columns: mappedColumns, rows: validRows };
+    const tableData = { columns, rows: validRows };
 
     const chatId = pendingTasks.get(messageId)?.chatId;
     const memory = conversationMemory.get(chatId) || [];
@@ -198,7 +178,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
           ...memory.map(({ role, content }) => ({ role, content })),
           {
             role: 'user',
-            content: `Dữ liệu bảng từ Base:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy trả lời câu hỏi một cách chính xác (ví dụ: đếm số lượng PO của AJINOMOTO).`
+            content: `Dữ liệu bảng từ Base:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu, tự động chọn cột phù hợp nhất để trả lời câu hỏi (ví dụ: nếu hỏi về nhà cung cấp, chọn cột có tên liên quan như 'Supplier', nếu hỏi số lượng PO, chọn cột 'PO'). Trả lời chính xác dựa trên cột được chọn.`
           }
         ],
         stream: false,
@@ -208,7 +188,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 5000, // Giữ timeout 5 giây cho API AI
+        timeout: 5000,
       }
     );
 
@@ -272,7 +252,7 @@ app.post('/webhook', async (req, res) => {
         userMessage = parsed.text || '';
       } catch {}
 
-      res.send({ code: 0 }); // Phản hồi ngay lập tức
+      res.send({ code: 0 });
 
       const token = await getAppAccessToken();
 
