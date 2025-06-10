@@ -28,7 +28,10 @@ function verifySignature(timestamp, nonce, body, signature) {
     return false;
   }
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
+  console.log('[VerifySignature] Input:', { timestamp, nonce, bodyLength: body.length, signature });
+  console.log('[VerifySignature] Raw string:', raw);
   const hash = crypto.createHash('sha256').update(raw, 'utf8').digest('hex');
+  console.log('[VerifySignature] Generated hash:', hash);
   return hash === signature;
 }
 
@@ -47,9 +50,6 @@ function decryptMessage(encrypt) {
 
 async function replyToLark(messageId, content) {
   try {
-    const maxLength = parseInt(process.env.MAX_RESPONSE_LENGTH) || 200;
-    const shortContent = content.length > maxLength ? content.slice(0, maxLength - 3) + '...' : content;
-
     const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
       app_id: process.env.LARK_APP_ID,
       app_secret: process.env.LARK_APP_SECRET,
@@ -60,7 +60,7 @@ async function replyToLark(messageId, content) {
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
       {
         msg_type: 'text',
-        content: JSON.stringify({ text: shortContent }),
+        content: JSON.stringify({ text: content }),
       },
       {
         headers: {
@@ -81,25 +81,24 @@ async function extractFileContent(fileUrl, fileType) {
 
   if (fileType === 'pdf') {
     const data = await pdfParse(buffer);
-    return data.text.trim().slice(0, 100) + (data.text.length > 100 ? '...' : '');
+    return data.text.trim();
   }
 
   if (fileType === 'docx') {
     const result = await mammoth.extractRawText({ buffer });
-    return result.value.trim().slice(0, 100) + (result.value.length > 100 ? '...' : '');
+    return result.value.trim();
   }
 
   if (fileType === 'xlsx') {
     const workbook = xlsx.read(buffer, { type: 'buffer' });
     const sheetName = workbook.SheetNames[0];
     const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-    const text = sheet.map(row => row.join(', ')).join('; ');
-    return text.slice(0, 100) + (text.length > 100 ? '...' : '');
+    return sheet.map(row => row.join(', ')).join('; ');
   }
 
   if (['jpg', 'jpeg', 'png'].includes(fileType)) {
     const result = await Tesseract.recognize(buffer, 'eng');
-    return result.data.text.trim().slice(0, 100) + (result.data.text.length > 100 ? '...' : '');
+    return result.data.text.trim();
   }
 
   return '';
@@ -107,7 +106,7 @@ async function extractFileContent(fileUrl, fileType) {
 
 async function extractImageContent(imageData) {
   const result = await Tesseract.recognize(imageData, 'eng');
-  return result.data.text.trim().slice(0, 100) + (result.data.text.length > 100 ? '...' : '');
+  return result.data.text.trim();
 }
 
 async function getAppAccessToken() {
@@ -145,9 +144,8 @@ function updateConversationMemory(chatId, role, content) {
     conversationMemory.set(chatId, []);
   }
   const mem = conversationMemory.get(chatId);
-  const shortContent = content.length > 100 ? content.slice(0, 97) + '...' : content;
-  mem.push({ role, content: shortContent });
-  if (mem.length > 10) mem.shift();
+  mem.push({ role, content });
+  if (mem.length > 50) mem.shift();
 }
 
 setInterval(() => {
@@ -169,6 +167,7 @@ app.post('/webhook', async (req, res) => {
 
     const { encrypt } = JSON.parse(bodyRaw);
     const decrypted = decryptMessage(encrypt);
+    console.log('[Webhook] Decrypted event:', JSON.stringify(decrypted, null, 2));
 
     if (decrypted.header.event_type === 'url_verification') {
       return res.json({ challenge: decrypted.event.challenge });
@@ -205,15 +204,34 @@ app.post('/webhook', async (req, res) => {
         try {
           let tables = [];
           if (tableIdFromMsg) {
-            tables = [{ table_id: tableIdFromMsg, name: `Bảng: ${tableIdFromMsg}`, type: 'base_table' }];
+            tables = [
+              {
+                table_id: tableIdFromMsg,
+                name: `Bảng theo ID: ${tableIdFromMsg}`,
+                type: 'base_table',
+              },
+            ];
           } else {
             tables = await getAllTables(baseIdFromMsg, token);
           }
 
-          let baseSummary = `Base ${baseIdFromMsg}: `;
+          let baseSummary = `Dữ liệu Base ID: ${baseIdFromMsg}\n`;
+
           for (const table of tables) {
             if (table.type === 'base_table') {
-              baseSummary += `${table.name} (${(await getAllRows(baseIdFromMsg, table.table_id, token)).length} bản ghi); `;
+              baseSummary += `\nBảng: ${table.name} (ID: ${table.table_id})\n`;
+              const rows = await getAllRows(baseIdFromMsg, table.table_id, token);
+              if (rows.length === 0) {
+                baseSummary += '  (Không có bản ghi)\n';
+                continue;
+              }
+
+              const sampleRows = rows.slice(0, 10);
+              for (const row of sampleRows) {
+                const fieldsText = Object.entries(row.fields).map(([k, v]) => `${k}: ${v}`).join('; ');
+                baseSummary += `  - ${fieldsText}\n`;
+              }
+              if (rows.length > 10) baseSummary += `  ... (${rows.length} bản ghi)\n`;
             }
           }
 
@@ -222,13 +240,15 @@ app.post('/webhook', async (req, res) => {
           await replyToLark(messageId, baseSummary);
         } catch (e) {
           console.error('[Base API Error]', e?.response?.data || e.message);
-          await replyToLark(messageId, '❌ Lỗi truy xuất Base.');
+          await replyToLark(messageId, '❌ Lỗi khi truy xuất Base, vui lòng kiểm tra quyền hoặc thử lại sau.');
         }
+
         return res.send({ code: 0 });
       }
 
       if (messageType === 'file' || messageType === 'image') {
         try {
+          console.log('[File/Image] Processing file with key:', message.file_key);
           const fileKey = message.file_key;
           const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
           const ext = fileName.split('.').pop().toLowerCase();
@@ -237,56 +257,123 @@ app.post('/webhook', async (req, res) => {
             `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
             { headers: { Authorization: `Bearer ${token}` } }
           );
+          console.log('[File/Image] Download URL:', fileUrlResp.data.data.download_url);
           const fileUrl = fileUrlResp.data.data.download_url;
 
           const extractedText = await extractFileContent(fileUrl, ext);
-          const replyText = extractedText ? `File ${fileName}: ${extractedText}` : `File ${fileName}: Không có nội dung.`;
 
-          updateConversationMemory(chatId, 'user', `File ${fileName}`);
-          updateConversationMemory(chatId, 'assistant', replyText);
-          await replyToLark(messageId, replyText);
+          if (extractedText.length === 0) {
+            await replyToLark(messageId, 'Không thể trích xuất nội dung từ file này hoặc file trống.');
+          } else {
+            updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung đã trích xuất.`);
+            updateConversationMemory(chatId, 'assistant', extractedText);
+            await replyToLark(messageId, `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`);
+          }
         } catch (e) {
-          console.error('[File Processing Error]', e?.response?.data || e.message);
-          await replyToLark(messageId, '❌ Lỗi xử lý file.');
+          console.error('[File Processing Error]', {
+            code: e?.response?.data?.code,
+            message: e?.response?.data?.msg || e.message,
+            status: e?.response?.status,
+          });
+          await replyToLark(messageId, '❌ Lỗi khi xử lý file, vui lòng thử lại.');
         }
         return res.send({ code: 0 });
       }
 
       if (messageType === 'post') {
         try {
+          console.log('[Post] Starting post message processing');
           const parsedContent = JSON.parse(message.content);
           let textContent = '';
           let imageKey = '';
 
+          // Trích xuất văn bản và image_key từ content
+          console.log('[Post] Parsing content');
           for (const block of parsedContent.content) {
             for (const item of block) {
-              if (item.tag === 'text') textContent += item.text + ' ';
-              else if (item.tag === 'img') imageKey = item.image_key;
+              if (item.tag === 'text') {
+                textContent += item.text + ' ';
+              } else if (item.tag === 'img') {
+                imageKey = item.image_key;
+              }
             }
           }
-          textContent = textContent.trim().slice(0, 50) + (textContent.length > 50 ? '...' : '');
+          textContent = textContent.trim();
+          console.log('[Post] Extracted text:', textContent, 'Image key:', imageKey);
 
           let extractedText = '';
           if (imageKey) {
             try {
+              // Thử GET /images/ với image_key
+              console.log('[Post] Fetching image with image_key:', imageKey);
               const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`;
               const imageResp = await axios.get(imageUrl, {
-                headers: { Authorization: `Bearer ${token}` },
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json; charset=utf-8',
+                },
                 responseType: 'arraybuffer',
               });
               extractedText = await extractImageContent(Buffer.from(imageResp.data));
+              console.log('[Post] Extracted text from image (GET):', extractedText);
             } catch (imageError) {
-              console.error('[Post] Error fetching image:', imageError?.response?.data || imageError.message);
+              console.error('[Post] Error fetching image:', {
+                code: imageError?.response?.data?.code,
+                message: imageError?.response?.data?.msg || imageError.message,
+                status: imageError?.response?.status,
+                stack: imageError.stack,
+              });
+              // Nếu GET thất bại, thử POST /messages/:message_id/resources (fallback)
+              try {
+                console.log('[Post] Falling back to POST /messages/:message_id/resources with message_id:', messageId);
+                const resourceUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/resources`;
+                const resourceResp = await axios.post(
+                  resourceUrl,
+                  {},
+                  {
+                    headers: {
+                      Authorization: `Bearer ${token}`,
+                      'Content-Type': 'application/json; charset=utf-8',
+                    },
+                  }
+                );
+                console.log('[Post] Resource response:', resourceResp.data);
+                if (resourceResp.data.data.file_list && resourceResp.data.file_list.length > 0) {
+                  const fileUrl = resourceResp.data.data.file_list[0].download_url;
+                  console.log('[Post] Download URL:', fileUrl);
+                  const imageData = await axios.get(fileUrl, { responseType: 'arraybuffer' });
+                  extractedText = await extractImageContent(Buffer.from(imageData.data));
+                  console.log('[Post] Extracted text from image (POST):', extractedText);
+                } else {
+                  console.log('[Post] No file resources found in response');
+                }
+              } catch (resourceError) {
+                console.error('[Post] Error fetching resource:', {
+                  code: resourceError?.response?.data?.code,
+                  message: resourceError?.response?.data?.msg || resourceError.message,
+                  status: resourceError?.response?.status,
+                  stack: resourceError.stack,
+                });
+              }
             }
           }
 
-          const combinedMessage = textContent + (extractedText ? ` (Hình: ${extractedText})` : '');
-          if (!combinedMessage) {
-            await replyToLark(messageId, 'Không có nội dung.');
+          // Kết hợp văn bản từ tin nhắn và hình ảnh
+          const combinedMessage = textContent + (extractedText ? `\nNội dung trích xuất từ hình ảnh: ${extractedText}` : '');
+          console.log('[Post] Combined message:', combinedMessage);
+
+          if (combinedMessage.length === 0) {
+            console.log('[Post] No content extracted');
+            await replyToLark(messageId, 'Không thể trích xuất nội dung từ tin nhắn hoặc hình ảnh.');
             return res.send({ code: 0 });
           }
 
+          // Cập nhật bộ nhớ hội thoại
+          console.log('[Post] Updating conversation memory');
           updateConversationMemory(chatId, 'user', combinedMessage);
+
+          // Gửi đến API AI
+          console.log('[Post] Sending to AI API');
           const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
@@ -294,7 +381,6 @@ app.post('/webhook', async (req, res) => {
               model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
               messages,
               stream: false,
-              max_tokens: 100,
             },
             {
               headers: {
@@ -304,19 +390,30 @@ app.post('/webhook', async (req, res) => {
             }
           );
 
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không hiểu yêu cầu.';
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
+          console.log('[Post] AI response:', assistantMessage);
           updateConversationMemory(chatId, 'assistant', assistantMessage);
           await replyToLark(messageId, assistantMessage);
+
+          console.log('[Post] Processing completed');
+          return res.send({ code: 0 });
         } catch (e) {
-          console.error('[Post Processing Error]', e?.response?.data || e.message);
-          await replyToLark(messageId, '❌ Lỗi xử lý tin nhắn.');
+          console.error('[Post Processing Error]', {
+            code: e?.response?.data?.code,
+            message: e?.response?.data?.msg || e.message,
+            status: e?.response?.status,
+            stack: e.stack,
+          });
+          await replyToLark(messageId, '❌ Lỗi khi xử lý tin nhắn post, vui lòng kiểm tra quyền hoặc thử lại.');
+          return res.send({ code: 0 });
         }
-        return res.send({ code: 0 });
       }
 
       if (messageType === 'text' && userMessage.trim().length > 0) {
         try {
+          console.log('[Text] Processing text message:', userMessage);
           updateConversationMemory(chatId, 'user', userMessage);
+
           const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
@@ -324,7 +421,6 @@ app.post('/webhook', async (req, res) => {
               model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
               messages,
               stream: false,
-              max_tokens: 100,
             },
             {
               headers: {
@@ -334,24 +430,34 @@ app.post('/webhook', async (req, res) => {
             }
           );
 
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không hiểu yêu cầu.';
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi không có câu trả lời.';
+          console.log('[Text] AI response:', assistantMessage);
           updateConversationMemory(chatId, 'assistant', assistantMessage);
           await replyToLark(messageId, assistantMessage);
         } catch (e) {
-          console.error('[AI Error]', e?.response?.data || e.message);
-          await replyToLark(messageId, '❌ Lỗi xử lý.');
+          console.error('[AI Error]', {
+            code: e?.response?.data?.code,
+            message: e?.response?.data?.msg || e.message,
+            status: e?.response?.status,
+          });
+          await replyToLark(messageId, '❌ Lỗi khi gọi AI, vui lòng thử lại sau.');
         }
         return res.send({ code: 0 });
       }
 
-      return res.send('');
+      return res.send({ code: 0 });
     }
 
     return res.send({ code: 0 });
   } catch (e) {
-    console.error('[ERROR]', e.message);
-    res.status(500).send('');
+    console.error('[Webhook Handler Error]', {
+      message: e.message,
+      stack: e.stack,
+    });
+    res.status(500).send('Internal Server Error');
   }
 });
 
-app.listen(port, () => {});
+app.listen(port, () => {
+  console.log(`Server listening on port ${port}`);
+});
