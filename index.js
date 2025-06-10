@@ -304,7 +304,7 @@ app.post('/webhook', async (req, res) => {
             }
           );
 
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có câu trả lời.';
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không hiểu yêu cầu.';
           updateConversationMemory(chatId, 'assistant', assistantMessage);
           await replyToLark(messageId, assistantMessage);
         } catch (e) {
@@ -334,7 +334,7 @@ app.post('/webhook', async (req, res) => {
             }
           );
 
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có câu trả lời.';
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không hiểu yêu cầu.';
           updateConversationMemory(chatId, 'assistant', assistantMessage);
           await replyToLark(messageId, assistantMessage);
         } catch (e) {
@@ -344,16 +344,14 @@ app.post('/webhook', async (req, res) => {
         return res.send({ code: 0 });
       }
 
-      return res.send({ code: 0 });
+      return res.send('');
     }
 
     return res.send({ code: 0 });
   } catch (e) {
-    console.error('[Webhook Handler Error]', e.message);
-    res.status(500).send('Internal Server Error');
+    console.error('[ERROR]', e.message);
+    res.status(500).send('');
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+app.listen(port, () => {});
