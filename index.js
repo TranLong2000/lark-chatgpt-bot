@@ -247,23 +247,33 @@ app.post('/webhook', async (req, res) => {
             return res.send({ code: 0 });
           }
 
-          // Lấy danh sách cột từ dữ liệu thực tế và ánh xạ với FIELD_MAPPINGS
-          const columns = Object.keys(allRows[0] || {});
+          // Lọc và kiểm tra các hàng hợp lệ
+          const validRows = allRows.filter(row => row && typeof row === 'object');
+          if (validRows.length === 0) {
+            await replyToLark(messageId, 'Không có hàng dữ liệu hợp lệ từ Base.');
+            return res.send({ code: 0 });
+          }
+
+          // Lấy danh sách cột từ hàng đầu tiên hợp lệ
+          const firstRow = validRows[0];
+          const columns = Object.keys(firstRow || {});
+          console.log('[Debug] Columns extracted:', columns);
           const mappedColumns = columns.map(colId => FIELD_MAPPINGS[colId] || colId);
 
           // Chuyển đổi dữ liệu thành JSON có cấu trúc rõ ràng
           const tableData = {
             columns: mappedColumns,
-            rows: allRows,
+            rows: validRows,
           };
 
-          // Gửi dữ liệu bảng và câu hỏi đến AI
+          // Lấy lịch sử hội thoại với kiểm tra an toàn
+          const memory = conversationMemory.get(chatId) || [];
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
               model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
               messages: [
-                ...conversationMemory.get(chatId).map(({ role, content }) => ({ role, content })),
+                ...memory.map(({ role, content }) => ({ role, content })),
                 {
                   role: 'user',
                   content: `Dữ liệu bảng từ Base:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu bảng và trả lời câu hỏi một cách chính xác, ví dụ: đếm số lượng, tính tổng, hoặc lọc theo điều kiện nếu được yêu cầu. Sử dụng các cột đã được ánh xạ (nếu có) hoặc suy ra từ dữ liệu.`
@@ -284,7 +294,7 @@ app.post('/webhook', async (req, res) => {
           updateConversationMemory(chatId, 'assistant', assistantMessage);
           await replyToLark(messageId, assistantMessage);
         } catch (e) {
-          console.error('[Base API Error]', e?.response?.data || e.message);
+          console.error('[Base API Error]', e?.response?.data || e.message, e.stack);
           await replyToLark(messageId, '❌ Lỗi khi truy xuất Base, vui lòng kiểm tra quyền hoặc thử lại sau.');
         }
 
@@ -417,14 +427,16 @@ app.post('/webhook', async (req, res) => {
           console.log('[Post] Updating conversation memory');
           updateConversationMemory(chatId, 'user', combinedMessage);
 
-          // Gửi đến API AI
-          console.log('[Post] Sending to AI API');
-          const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
+          // Lấy lịch sử hội thoại với kiểm tra an toàn
+          const memory = conversationMemory.get(chatId) || [];
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
               model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-              messages,
+              messages: [
+                ...memory.map(({ role, content }) => ({ role, content })),
+                { role: 'user', content: combinedMessage }
+              ],
               stream: false,
             },
             {
@@ -459,12 +471,16 @@ app.post('/webhook', async (req, res) => {
           console.log('[Text] Processing text message:', userMessage);
           updateConversationMemory(chatId, 'user', userMessage);
 
-          const messages = conversationMemory.get(chatId).map(({ role, content }) => ({ role, content }));
+          // Lấy lịch sử hội thoại với kiểm tra an toàn
+          const memory = conversationMemory.get(chatId) || [];
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
               model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-              messages,
+              messages: [
+                ...memory.map(({ role, content }) => ({ role, content })),
+                { role: 'user', content: userMessage }
+              ],
               stream: false,
             },
             {
