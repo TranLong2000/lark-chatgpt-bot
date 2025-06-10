@@ -12,6 +12,12 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
+// Khai báo ánh xạ Base
+const BASE_MAPPINGS = {
+  'PRO': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
+  'FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr'
+};
+
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
 const pendingTasks = new Map();
@@ -114,13 +120,27 @@ async function getAppAccessToken() {
   return resp.data.app_access_token;
 }
 
+async function getAllTables(baseId, token) {
+  try {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 10000,
+    });
+    return resp.data.data.items.map(item => ({ tableId: item.table_id, name: item.name }));
+  } catch (e) {
+    console.error('[getAllTables] Error:', e.response?.data || e.message);
+    return [];
+  }
+}
+
 async function getAllRows(baseId, tableId, token, maxRows = 20) {
   const rows = [];
   let pageToken = '';
   do {
     const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
     try {
-      console.log('[getAllRows] Fetching page, rows so far:', rows.length);
+      console.log('[getAllRows] Fetching page, rows so far:', rows.length, 'for baseId:', baseId, 'tableId:', tableId);
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 10000,
@@ -146,28 +166,16 @@ function updateConversationMemory(chatId, role, content) {
   if (mem.length > 10) mem.shift();
 }
 
-async function processBaseData(messageId, baseId, tableId, userMessage, token) {
+async function processBaseData(messageId, baseId, userMessage, token) {
   try {
     let allRows = [];
-    console.log('[processBaseData] Starting data fetch for baseId:', baseId, 'tableId:', tableId);
-    const rows = await getAllRows(baseId, tableId, token);
-    allRows = allRows.concat(rows.map(row => row.fields || {}));
-
-    if (!allRows || allRows.length === 0) {
-      await replyToLark(messageId, 'Không có dữ liệu từ Base.');
+    const tables = await getAllTables(baseId, token);
+    if (tables.length === 0) {
+      await replyToLark(messageId, 'Không tìm thấy table nào trong Base.');
       return;
     }
 
-    const validRows = allRows.filter(row => row && typeof row === 'object');
-    if (validRows.length === 0) {
-      await replyToLark(messageId, 'Không có hàng dữ liệu hợp lệ.');
-      return;
-    }
-
-    const firstRow = validRows[0];
-    const columns = Object.keys(firstRow || {});
-    const tableData = { columns, rows: validRows };
-
+    // Gửi danh sách table và câu hỏi đến AI để chọn table
     const chatId = pendingTasks.get(messageId)?.chatId;
     const memory = conversationMemory.get(chatId) || [];
     const aiResp = await axios.post(
@@ -178,7 +186,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
           ...memory.map(({ role, content }) => ({ role, content })),
           {
             role: 'user',
-            content: `Dữ liệu bảng từ Base:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu, tự động chọn cột phù hợp nhất để trả lời câu hỏi (ví dụ: nếu hỏi về nhà cung cấp, chọn cột có tên liên quan như 'Supplier', nếu hỏi số lượng PO, chọn cột 'PO'). Trả lời chính xác dựa trên cột được chọn, không thêm định dạng như dấu * hoặc markdown.`
+            content: `Danh sách table trong Base ${baseId}:\n${JSON.stringify(tables, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích câu hỏi bằng ngôn ngữ tự nhiên và chọn table phù hợp nhất để trả lời (ví dụ: nếu hỏi về PO, chọn table có tên liên quan như 'Purchase Orders'). Trả về table_id của table được chọn.`
           }
         ],
         stream: false,
@@ -192,8 +200,54 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
       }
     );
 
-    const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
-    // Loại bỏ dấu * và các định dạng markdown
+    const selectedTableId = aiResp.data.choices?.[0]?.message?.content.trim();
+    const table = tables.find(t => t.tableId === selectedTableId);
+    if (!table) {
+      await replyToLark(messageId, 'Không thể xác định table phù hợp.');
+      return;
+    }
+
+    const rows = await getAllRows(baseId, table.tableId, token);
+    allRows = allRows.concat(rows.map(row => row.fields || {}));
+
+    if (!allRows || allRows.length === 0) {
+      await replyToLark(messageId, 'Không có dữ liệu từ table.');
+      return;
+    }
+
+    const validRows = allRows.filter(row => row && typeof row === 'object');
+    if (validRows.length === 0) {
+      await replyToLark(messageId, 'Không có hàng dữ liệu hợp lệ.');
+      return;
+    }
+
+    const firstRow = validRows[0];
+    const columns = Object.keys(firstRow || {});
+    const tableData = { columns, rows: validRows };
+
+    const aiResp2 = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+        messages: [
+          ...memory.map(({ role, content }) => ({ role, content })),
+          {
+            role: 'user',
+            content: `Dữ liệu bảng từ Base ${baseId}, Table ${table.name} (${table.tableId}):\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu, tự động chọn cột phù hợp nhất để trả lời câu hỏi (ví dụ: nếu hỏi về nhà cung cấp, chọn cột có tên liên quan như 'Supplier', nếu hỏi số lượng PO, chọn cột 'PO'). Trả lời chính xác dựa trên cột được chọn, không thêm định dạng như dấu * hoặc markdown.`
+          }
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 5000,
+      }
+    );
+
+    const assistantMessage = aiResp2.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
     const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
     updateConversationMemory(chatId, 'user', userMessage);
     updateConversationMemory(chatId, 'assistant', cleanMessage);
@@ -258,15 +312,25 @@ app.post('/webhook', async (req, res) => {
 
       const token = await getAppAccessToken();
 
-      const baseId = process.env.LARK_BASE_ID || '';
-      const baseLinkMatch = userMessage.match(/https:\/\/[^\s]+\/base\/([a-zA-Z0-9]+)(?:\?table=([a-zA-Z0-9]+))?/);
-      const explicitTableIdMatch = userMessage.match(/tbl61rgzOwS8viB2/);
+      let baseId = '';
 
-      if (baseLinkMatch || explicitTableIdMatch) {
-        const baseIdFromMsg = baseLinkMatch ? baseLinkMatch[1] : baseId;
-        const tableIdFromMsg = baseLinkMatch ? baseLinkMatch[2] : 'tbl61rgzOwS8viB2';
+      // Trích xuất Base từ cú pháp "Base [tên]"
+      const baseMatch = userMessage.match(/Base (\w+)/i);
+      if (baseMatch) {
+        const baseName = baseMatch[1].toUpperCase();
+        const baseUrl = BASE_MAPPINGS[baseName];
+        if (baseUrl) {
+          const urlMatch = baseUrl.match(/base\/([a-zA-Z0-9]+)/);
+          baseId = urlMatch ? urlMatch[1] : '';
+        } else {
+          await replyToLark(messageId, 'Base không được hỗ trợ. Vui lòng dùng Base PRO hoặc Base FIN.');
+          return;
+        }
+      }
+
+      if (baseId) {
         pendingTasks.set(messageId, { chatId, userMessage });
-        processBaseData(messageId, baseIdFromMsg, tableIdFromMsg, userMessage, token).catch(err => console.error('[Task Error]', err.message));
+        processBaseData(messageId, baseId, userMessage, token).catch(err => console.error('[Task Error]', err.message));
       } else if (messageType === 'file' || messageType === 'image') {
         try {
           const fileKey = message.file_key;
@@ -390,6 +454,8 @@ app.post('/webhook', async (req, res) => {
           console.error('[AI Error]', e?.response?.data?.msg || e.message);
           await replyToLark(messageId, '❌ Lỗi khi gọi AI.');
         }
+      } else {
+        await replyToLark(messageId, 'Vui lòng sử dụng cú pháp Base PRO hoặc Base FIN kèm theo câu hỏi.');
       }
     }
   } catch (e) {
