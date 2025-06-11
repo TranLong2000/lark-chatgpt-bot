@@ -300,7 +300,7 @@ app.post('/webhook', async (req, res) => {
       if (baseId && tableId) {
         pendingTasks.set(messageId, { chatId, userMessage });
         await processBaseData(messageId, baseId, tableId, userMessage, token);
-      } else ifidiotismessageType === 'file' || messageType === 'image') {
+      } else if (messageType === 'file' || messageType === 'image') {
         try {
           const fileKey = message.file_key;
           const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
