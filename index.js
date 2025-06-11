@@ -14,8 +14,8 @@ const port = process.env.PORT || 8080;
 
 // Khai báo ánh xạ Base
 const BASE_MAPPINGS = {
-  'PRO': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?',
-  'FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?'
+  'PRO': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d',
+  'FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf'
 };
 
 // Mặc định model AI, có thể thay đổi qua biến môi trường AI_MODEL
