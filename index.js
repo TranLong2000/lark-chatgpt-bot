@@ -300,7 +300,7 @@ app.post('/webhook', async (req, res) => {
       if (baseId && tableId) {
         pendingTasks.set(messageId, { chatId, userMessage });
         await processBaseData(messageId, baseId, tableId, userMessage, token);
-      } else if (messageType === 'file' || messageType === 'image') {
+      } else ifidiotismessageType === 'file' || messageType === 'image') {
         try {
           const fileKey = message.file_key;
           const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
@@ -331,7 +331,7 @@ app.post('/webhook', async (req, res) => {
           let imageKey = '';
 
           for (const block of parsedContent.content) {
-            for (const item of of block) {
+            for (const item of block) {
               if (item.tag === 'text') textContent += item.text + ' ';
               else if (item.tag === 'img') imageKey = item.image_key;
             }
@@ -341,7 +341,7 @@ app.post('/webhook', async (req, res) => {
           let extractedText = '';
           if (imageKey) {
             try {
-              const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/imageKey${imageKey}`;
+              const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`;
               const imageResp = await axios.get(imageUrl, {
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
                 responseType: 'arraybuffer',
