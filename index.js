@@ -181,7 +181,7 @@ async function processBaseData(messageId, baseId, userMessage, token) {
     const aiResp = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+        model: 'deepseek/deepseek-r1-0528:free',
         messages: [
           ...memory.map(({ role, content }) => ({ role, content })),
           {
@@ -228,7 +228,7 @@ async function processBaseData(messageId, baseId, userMessage, token) {
     const aiResp2 = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
-        model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+        model: 'deepseek/deepseek-r1-0528:free',
         messages: [
           ...memory.map(({ role, content }) => ({ role, content })),
           {
@@ -349,12 +349,11 @@ app.post('/webhook', async (req, res) => {
             await replyToLark(messageId, 'Không thể trích xuất nội dung từ file.');
           } else {
             updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung trích xuất.`);
-            updateConversationMemory(chatId, 'assistant', extractedText);
             await replyToLark(messageId, `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`);
           }
         } catch (e) {
           console.error('[File Processing Error]', e?.response?.data?.msg || e.message);
-          await replyToLark(messageId, '❌ Lỗi khi xử lý file.');
+          await replyToLark(messageId, 'Lỗi khi xử lý file.');
         }
       } else if (messageType === 'post') {
         try {
@@ -385,7 +384,7 @@ app.post('/webhook', async (req, res) => {
                 const resourceResp = await axios.post(resourceUrl, {}, {
                   headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
                 });
-                if (resourceResp.data.data.file_list && resourceResp.data.file_list.length > 0) {
+                if (resourceResp.data.data.file_list && resourceResp.data.data.file_list.length > 0) {
                   const fileUrl = resourceResp.data.data.file_list[0].download_url;
                   const imageData = await axios.get(fileUrl, { responseType: 'arraybuffer' });
                   extractedText = await extractImageContent(Buffer.from(imageData.data));
@@ -407,7 +406,7 @@ app.post('/webhook', async (req, res) => {
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
-              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
+              model: 'deepseek/deepseek-r1-0528:free',
               messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: combinedMessage }],
               stream: false,
             },
@@ -428,42 +427,42 @@ app.post('/webhook', async (req, res) => {
           await replyToLark(messageId, '❌ Lỗi khi xử lý post.');
         }
       } else if (messageType === 'text' && userMessage.trim().length > 0) {
-        try {
-          updateConversationMemory(chatId, 'user', userMessage);
-          const memory = conversationMemory.get(chatId) || [];
-          const aiResp = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528-qwen3-8b:free',
-              messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: userMessage }],
-              stream: false,
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-            }
-          );
+            try {
+              updateConversationMemory(chatId, 'user', userMessage);
+              const memory = conversationMemory.get(chatId) || [];
+              const aiResp = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                  model: 'deepseek/deepseek-r1-0528:free',
+                  messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: userMessage }],
+                  stream: false,
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                    'Content-Type': 'application/json',
+                  },
+                }
+              );
 
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
-          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-          updateConversationMemory(chatId, 'assistant', cleanMessage);
-          await replyToLark(messageId, cleanMessage);
-        } catch (e) {
-          console.error('[AI Error]', e?.response?.data?.msg || e.message);
-          await replyToLark(messageId, '❌ Lỗi khi gọi AI.');
+              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
+              const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+              updateConversationMemory(chatId, 'assistant', cleanMessage);
+              await replyToLark(messageId, cleanMessage);
+            } catch (e) {
+              console.error('[AI Error]', e?.response?.data?.msg || e.message);
+              await replyToLark(messageId, '❌ Lỗi khi gọi AI.');
+            }
+          } else {
+            await replyToLark(messageId, 'Vui lòng sử dụng cú pháp Base PRO hoặc Base FIN kèm theo câu hỏi.');
+          }
         }
-      } else {
-        await replyToLark(messageId, 'Vui lòng sử dụng cú pháp Base PRO hoặc Base FIN kèm theo câu hỏi.');
+      } catch (e) {
+        console.error('[Webhook Handler Error]', e.message);
+        res.status(500).send('Internal Server Error');
       }
-    }
-  } catch (e) {
-    console.error('[Webhook Handler Error]', e.message);
-    res.status(500).send('Internal Server Error');
-  }
-});
+    });
 
 app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
-});
+      console.log(`Server listening on port ${port}`);
+    });
