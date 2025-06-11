@@ -137,11 +137,11 @@ async function getAllTables(baseId, token) {
   }
 }
 
-async function getAllRows(baseId, tableId, token, maxRows = 20) {
+async function getAllRows(baseId, tableId, token, maxRows = 20000) {
   const rows = [];
   let pageToken = '';
   do {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20000&page_token=${pageToken}`;
     try {
       console.log('[getAllRows] Fetching page, rows so far:', rows.length, 'for baseId:', baseId, 'tableId:', tableId);
       const resp = await axios.get(url, {
