@@ -12,8 +12,10 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Updated Base Mappings to include Report commands
+// Cập nhật ánh xạ Base và Report
 const BASE_MAPPINGS = {
+  'PRO': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
+  'FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr',
   'REPORT_PRO': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
   'REPORT_SALE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
   'REPORT_FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr'
@@ -32,7 +34,7 @@ app.use('/webhook', express.raw({ type: '*/*' }));
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
   if (!encryptKey) {
-    console.error('[VerifySignature] LARK_ENCRYPT_KEY is not set');
+    console.error('[VerifySignature] LARK_ENCRYPT_KEY chưa được thiết lập');
     return false;
   }
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
@@ -121,27 +123,13 @@ async function getAppAccessToken() {
   return resp.data.app_access_token;
 }
 
-async function getAllTables(baseId, token) {
-  try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 10000,
-    });
-    return resp.data.data.items.map(item => ({ tableId: item.table_id, name: item.name }));
-  } catch (e) {
-    console.error('[getAllTables] Error:', e.response?.data || e.message);
-    return [];
-  }
-}
-
 async function getAllRows(baseId, tableId, token, maxRows = 20) {
   const rows = [];
   let pageToken = '';
   do {
     const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
     try {
-      console.log('[getAllRows] Fetching page, rows so far:', rows.length, 'for baseId:', baseId, 'tableId:', tableId);
+      console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId);
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 10000,
@@ -150,11 +138,11 @@ async function getAllRows(baseId, tableId, token, maxRows = 20) {
       pageToken = resp.data.data.page_token || '';
       if (rows.length >= maxRows) break;
     } catch (e) {
-      console.error('[getAllRows] Error:', e.response?.data || e.message);
+      console.error('[getAllRows] Lỗi:', e.response?.data || e.message);
       break;
     }
   } while (pageToken && rows.length < maxRows);
-  console.log('[getAllRows] Total rows fetched:', rows.length);
+  console.log('[getAllRows] Tổng số dòng lấy được:', rows.length);
   return rows;
 }
 
@@ -173,13 +161,13 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
-      await replyToLark(messageId, 'Không có dữ liệu từ table.');
+      await replyToLark(messageId, 'Không có dữ liệu từ bảng.');
       return;
     }
 
     const validRows = allRows.filter(row => row && typeof row === 'object');
     if (validRows.length === 0) {
-      await replyToLark(messageId, 'Không có hàng dữ liệu hợp lệ.');
+      await replyToLark(messageId, 'Không có dòng dữ liệu hợp lệ.');
       return;
     }
 
@@ -218,22 +206,22 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     await replyToLark(messageId, cleanMessage);
   } catch (e) {
     console.error('[Base API Error]', e?.response?.data || e.message);
-    await replyToLark(messageId, '❌ Lỗi khi xử lý, thử lại sau.');
+    await replyToLark(messageId, '❌ Lỗi khi xử lý, vui lòng thử lại sau.');
   } finally {
     pendingTasks.delete(messageId);
   }
 }
 
-// Handle SIGTERM
+// Xử lý tín hiệu dừng
 process.on('SIGTERM', () => {
-  console.log('[Server] SIGTERM received, shutting down...');
+  console.log('[Server] Nhận tín hiệu SIGTERM, đang tắt...');
   pendingTasks.forEach((task, messageId) => replyToLark(messageId, 'Xử lý bị gián đoạn.'));
   process.exit(0);
 });
 
 setInterval(() => {
   conversationMemory.clear();
-  console.log('[Memory] Cleared');
+  console.log('[Memory] Đã xóa bộ nhớ');
 }, 2 * 60 * 60 * 1000);
 
 app.post('/webhook', async (req, res) => {
@@ -244,7 +232,7 @@ app.post('/webhook', async (req, res) => {
     const bodyRaw = req.body.toString('utf8');
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
-      return res.status(401).send('Invalid signature');
+      return res.status(401).send('Chữ ký không hợp lệ');
     }
 
     const { encrypt } = JSON.parse(bodyRaw);
@@ -264,15 +252,15 @@ app.post('/webhook', async (req, res) => {
       if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
       processedMessageIds.add(messageId);
 
-      if (senderId === (process.env.BOT_SENDER_ID || '')) return res.send({ code: 0 });
+      if (senderId === (process.env.BOT_SENDER_ID || '')) return res.json({ code: 0 });
 
       let userMessage = '';
       try {
         const parsed = JSON.parse(message.content);
         userMessage = parsed.text || '';
-      } catch {}
+      } catch (err) {}
 
-      res.send({ code: 0 });
+      res.json({ code: 0 });
 
       const token = await getAppAccessToken();
 
@@ -280,18 +268,20 @@ app.post('/webhook', async (req, res) => {
       let tableId = '';
       let commandType = '';
 
-      // Extract Base or Report from commands
+      // Xử lý lệnh Base hoặc Report
       const baseMatch = userMessage.match(/Base (\w+)/i);
       const reportMatch = userMessage.match(/Report (\w+)/i);
-      
+
       if (baseMatch) {
         commandType = 'BASE';
         const baseName = baseMatch[1].toUpperCase();
         const baseUrl = BASE_MAPPINGS[baseName];
         if (baseUrl) {
-          const urlMatch = baseUrl.match(/base\/([a-zA-Z0-9]+)\?table=([a-zA-Z0-9]+)/);
-          baseId = urlMatch ? urlMatch[1] : '';
-          tableId = urlMatch ? urlMatch[2] : '';
+          const urlMatch = baseUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
+          if (urlMatch) {
+            baseId = urlMatch[1];
+            tableId = urlMatch[2];
+          }
         }
       } else if (reportMatch) {
         commandType = 'REPORT';
@@ -299,20 +289,22 @@ app.post('/webhook', async (req, res) => {
         const reportKey = `REPORT_${reportName}`;
         const reportUrl = BASE_MAPPINGS[reportKey];
         if (reportUrl) {
-          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?table=([a-zA-Z0-9]+)/);
-          baseId = urlMatch ? urlMatch[1] : '';
-          tableId = urlMatch ? urlMatch[2] : '';
+          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
+          if (urlMatch) {
+            baseId = urlMatch[1];
+            tableId = urlMatch[2];
+          }
         }
       }
 
       if (baseId && tableId) {
         pendingTasks.set(messageId, { chatId, userMessage });
-        processBaseData(messageId, baseId, tableId, userMessage, token).catch(err => console.error('[Task Error]', err.message));
+        await processBaseData(messageId, baseId, tableId, userMessage, token);
       } else if (messageType === 'file' || messageType === 'image') {
         try {
           const fileKey = message.file_key;
           const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
-          const ext = fileName.split('.').pop().toLowerCase();
+          const ext = path.extname(fileName).slice(1).toLowerCase();
 
           const fileUrlResp = await axios.get(
             `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
@@ -322,14 +314,14 @@ app.post('/webhook', async (req, res) => {
 
           const extractedText = await extractFileContent(fileUrl, ext);
 
-          if (extractedText.length === 0) {
+          if (!extractedText) {
             await replyToLark(messageId, 'Không thể trích xuất nội dung từ file.');
           } else {
-            updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung trích xuất.`);
+            updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung trích xuất`);
             await replyToLark(messageId, `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`);
           }
-        } catch (e) {
-          console.error('[File Processing Error]', e?.response?.data?.msg || e.message);
+        } catch (err) {
+          console.error('[File Processing Error]', err?.response?.data || err.message);
           await replyToLark(messageId, 'Lỗi khi xử lý file.');
         }
       } else if (messageType === 'post') {
@@ -339,7 +331,7 @@ app.post('/webhook', async (req, res) => {
           let imageKey = '';
 
           for (const block of parsedContent.content) {
-            for (const item of block) {
+            for (const item of of block) {
               if (item.tag === 'text') textContent += item.text + ' ';
               else if (item.tag === 'img') imageKey = item.image_key;
             }
@@ -349,7 +341,7 @@ app.post('/webhook', async (req, res) => {
           let extractedText = '';
           if (imageKey) {
             try {
-              const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`;
+              const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/imageKey${imageKey}`;
               const imageResp = await axios.get(imageUrl, {
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
                 responseType: 'arraybuffer',
@@ -367,13 +359,13 @@ app.post('/webhook', async (req, res) => {
                   extractedText = await extractImageContent(Buffer.from(imageData.data));
                 }
               } catch (resourceError) {
-                console.error('[Post] Error fetching resource:', resourceError?.response?.data?.msg || resourceError.message);
+                console.error('[Post] Lỗi khi lấy tài nguyên:', resourceError?.response?.data?.msg || resourceError.message);
               }
             }
           }
 
           const combinedMessage = textContent + (extractedText ? `\nNội dung từ hình ảnh: ${extractedText}` : '');
-          if (combinedMessage.length === 0) {
+          if (!combinedMessage) {
             await replyToLark(messageId, 'Không trích xuất được nội dung.');
             return;
           }
@@ -403,7 +395,7 @@ app.post('/webhook', async (req, res) => {
           console.error('[Post Processing Error]', e?.response?.data?.msg || e.message);
           await replyToLark(messageId, '❌ Lỗi khi xử lý post.');
         }
-      } else if (messageType === 'text' && userMessage.trim().length > 0) {
+      } else if (messageType === 'text' && userMessage.trim()) {
         try {
           updateConversationMemory(chatId, 'user', userMessage);
           const memory = conversationMemory.get(chatId) || [];
@@ -431,15 +423,15 @@ app.post('/webhook', async (req, res) => {
           await replyToLark(messageId, '❌ Lỗi khi gọi AI.');
         }
       } else {
-        await replyToLark(messageId, 'Vui lòng sử dụng cú pháp Base PRO, Base FIN, Report PRO, Report SALE hoặc Report FIN kèm theo câu hỏi.');
+        await replyToLark(messageId, 'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report FIN kèm câu hỏi.');
       }
     }
   } catch (e) {
     console.error('[Webhook Handler Error]', e.message);
-    res.status(500).send('Internal Server Error');
+    res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
 
 app.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+  console.log(`Máy chủ đang chạy trên cổng ${port}`);
 });
