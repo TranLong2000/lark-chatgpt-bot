@@ -132,7 +132,7 @@ async function getAllRows(baseId, tableId, token, maxRows = 20) {
       console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId);
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
-        timeout: 10000,
+        timeout: 15000,
       });
       rows.push(...(resp.data.data.items || []));
       pageToken = resp.data.data.page_token || '';
@@ -195,7 +195,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 5000,
+        timeout: 15000, // Tăng thời gian chờ lên 10 giây
       }
     );
 
@@ -206,7 +206,11 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     await replyToLark(messageId, cleanMessage);
   } catch (e) {
     console.error('[Base API Error]', e?.response?.data || e.message);
-    await replyToLark(messageId, '❌ Lỗi khi xử lý, vui lòng thử lại sau.');
+    let errorMessage = '❌ Lỗi khi xử lý, vui lòng thử lại sau.';
+    if (e.code === 'ECONNABORTED') {
+      errorMessage = '❌ Hết thời gian chờ khi gọi API, vui lòng thử lại sau hoặc kiểm tra kết nối mạng.';
+    }
+    await replyToLark(messageId, errorMessage);
   } finally {
     pendingTasks.delete(messageId);
   }
@@ -384,6 +388,7 @@ app.post('/webhook', async (req, res) => {
                 Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
                 'Content-Type': 'application/json',
               },
+              timeout: 15000, // Tăng thời gian chờ lên 10 giây
             }
           );
 
@@ -411,6 +416,7 @@ app.post('/webhook', async (req, res) => {
                 Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
                 'Content-Type': 'application/json',
               },
+              timeout: 15000, // Tăng thời gian chờ lên 10 giây
             }
           );
 
@@ -420,7 +426,11 @@ app.post('/webhook', async (req, res) => {
           await replyToLark(messageId, cleanMessage);
         } catch (e) {
           console.error('[AI Error]', e?.response?.data?.msg || e.message);
-          await replyToLark(messageId, '❌ Lỗi khi gọi AI.');
+          let errorMessage = '❌ Lỗi khi gọi AI, vui lòng thử lại sau.';
+          if (e.code === 'ECONNABORTED') {
+            errorMessage = '❌ Hết thời gian chờ khi gọi API AI, vui lòng thử lại sau hoặc kiểm tra kết nối mạng.';
+          }
+          await replyToLark(messageId, errorMessage);
         }
       } else {
         await replyToLark(messageId, 'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report FIN kèm câu hỏi.');
