@@ -354,9 +354,7 @@ app.post('/webhook', async (req, res) => {
       // Lấy thông tin người gửi
       let mentionUserId = senderId; // Luôn ưu tiên tag người gửi
       let mentionUserName = await getUserInfo(senderId, token);
-      if (mentionUserName.startsWith('User_')) {
-        console.warn('[UserInfo Warning] Fallback name used for senderId:', senderId);
-      }
+      // Loại bỏ cảnh báo fallback
       console.log('[Sender Debug] senderId:', senderId, 'senderName:', mentionUserName);
 
       // Nếu có mentions khác bot, ưu tiên lấy từ mentions
