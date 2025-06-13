@@ -24,6 +24,7 @@ const BASE_MAPPINGS = {
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
 const pendingTasks = new Map();
+const pendingFiles = new Map(); // Lưu trữ file tạm thời theo chat_id
 
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
@@ -334,6 +335,7 @@ app.post('/webhook', async (req, res) => {
       const messageId = message.message_id;
       const chatId = message.chat_id;
       const messageType = message.message_type;
+      const parentId = message.parent_id; // Thêm để theo dõi reply
       const mentions = message.mentions || [];
 
       if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
@@ -353,6 +355,7 @@ app.post('/webhook', async (req, res) => {
       }
 
       console.log('[Mentions Debug]', JSON.stringify(mentions, null, 2));
+      console.log('[Message Debug] chatId:', chatId, 'messageId:', messageId, 'parentId:', parentId, 'messageType:', messageType);
 
       const hasAllMention = mentions.some(mention => mention.key === '@_all');
       if (hasAllMention && !isBotMentioned) {
@@ -423,7 +426,7 @@ app.post('/webhook', async (req, res) => {
             console.error('[File/Image Debug] Nguyên nhân: Không tìm thấy file_key trong message');
             await replyToLark(
               messageId,
-              'Không tìm thấy file_key. Vui lòng gửi lại file.',
+              'Không tìm thấy file_key. Vui lòng kiểm tra lại file.',
               mentionUserId,
               mentionUserName
             );
@@ -434,32 +437,15 @@ app.post('/webhook', async (req, res) => {
           const ext = path.extname(fileName).slice(1).toLowerCase();
           console.log('[File/Image Debug] File key:', fileKey, 'File name:', fileName, 'Extension:', ext);
 
-          const fileUrlResp = await axios.get(
-            `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
-            { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
+          // Lưu thông tin file tạm thời
+          pendingFiles.set(chatId, { fileKey, fileName, ext, messageId });
+
+          await replyToLark(
+            messageId,
+            'File đã nhận. Vui lòng reply tin nhắn này với câu hỏi hoặc yêu cầu (tag @L-GPT nếu cần).',
+            mentionUserId,
+            mentionUserName
           );
-          const fileUrl = fileUrlResp.data.data.download_url;
-          console.log('[File/Image Debug] Download URL:', fileUrl);
-
-          const extractedText = await extractFileContent(fileUrl, ext);
-          console.log('[File/Image Debug] Extracted text:', extractedText);
-
-          if (extractedText.startsWith('Lỗi') || !extractedText) {
-            await replyToLark(
-              messageId,
-              `Không thể trích xuất nội dung từ file ${fileName}. Nguyên nhân: ${extractedText}`,
-              mentionUserId,
-              mentionUserName
-            );
-          } else {
-            updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung trích xuất`);
-            await replyToLark(
-              messageId,
-              `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`,
-              mentionUserId,
-              mentionUserName
-            );
-          }
         } catch (err) {
           console.error('[File Processing Error] Nguyên nhân:', err?.response?.data || err.message);
           await replyToLark(
@@ -469,93 +455,74 @@ app.post('/webhook', async (req, res) => {
             mentionUserName
           );
         }
-      } else if (messageType === 'post') {
-        try {
-          console.log('[Post Debug] Processing post message');
-          const parsedContent = JSON.parse(message.content);
-          let textContent = '';
-          let imageKey = '';
-          let fileKey = message.file_key;
+      } else if (messageType === 'post' && parentId) {
+        // Xử lý reply với file trước đó
+        const pendingFile = pendingFiles.get(chatId);
+        if (pendingFile && pendingFile.messageId === parentId) {
+          try {
+            console.log('[Post Debug] Processing reply with file, parentId:', parentId);
+            const { fileKey, fileName, ext } = pendingFile;
 
-          for (const block of parsedContent.content) {
-            for (const item of block) {
-              if (item.tag === 'text') textContent += item.text + ' ';
-              else if (item.tag === 'img') imageKey = item.image_key;
-            }
-          }
-          textContent = textContent.trim();
-          console.log('[Post Debug] Text content:', textContent, 'Image key:', imageKey, 'File key:', fileKey);
-
-          let extractedText = '';
-          if (imageKey && !fileKey) {
-            console.log('[Post Debug] Attempting to fetch image with key:', imageKey);
-            try {
-              const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`;
-              const imageResp = await axios.get(imageUrl, {
-                headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
-                responseType: 'arraybuffer',
-                timeout: 10000,
-              });
-              extractedText = await extractImageContent(Buffer.from(imageResp.data));
-              console.log('[Post Debug] Extracted text from image:', extractedText);
-            } catch (imageError) {
-              console.error('[Post Debug] Nguyên nhân lỗi khi lấy hình ảnh:', imageError?.response?.data?.msg || imageError.message);
-              await replyToLark(
-                messageId,
-                'Hình ảnh trong tin nhắn không thể tải. Vui lòng gửi hình ảnh trực tiếp (tải file) thay vì nhúng trong tin nhắn.',
-                mentionUserId,
-                mentionUserName
-              );
-              return;
-            }
-          } else if (fileKey) {
-            console.log('[Post Debug] Using file_key:', fileKey);
             const fileUrlResp = await axios.get(
               `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
               { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
             );
             const fileUrl = fileUrlResp.data.data.download_url;
-            extractedText = await extractFileContent(fileUrl, 'jpg');
-            console.log('[Post Debug] Extracted text from file:', extractedText);
-          }
+            console.log('[Post Debug] Download URL:', fileUrl);
 
-          const combinedMessage = textContent + (extractedText ? `\nNội dung từ hình ảnh: ${extractedText}` : '');
-          if (!combinedMessage.trim()) {
-            console.log('[Post Debug] No content extracted from post.');
+            const extractedText = await extractFileContent(fileUrl, ext);
+            console.log('[Post Debug] Extracted text:', extractedText);
+
+            if (extractedText.startsWith('Lỗi') || !extractedText) {
+              await replyToLark(
+                messageId,
+                `Không thể trích xuất nội dung từ file ${fileName}. Nguyên nhân: ${extractedText}`,
+                mentionUserId,
+                mentionUserName
+              );
+            } else {
+              const combinedMessage = userMessage + (extractedText ? `\nNội dung từ file: ${extractedText}` : '');
+              updateConversationMemory(chatId, 'user', combinedMessage);
+              const memory = conversationMemory.get(chatId) || [];
+              const aiResp = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                  model: 'deepseek/deepseek-r1-0528:free',
+                  messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: combinedMessage }],
+                  stream: false,
+                },
+                {
+                  headers: {
+                    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                    'Content-Type': 'application/json',
+                  },
+                  timeout: 15000,
+                }
+              );
+
+              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
+              const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+              updateConversationMemory(chatId, 'assistant', cleanMessage);
+              await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+            }
+            pendingFiles.delete(chatId); // Xóa file sau khi xử lý
+          } catch (err) {
+            console.error('[Post Processing Error] Nguyên nhân:', err?.response?.data || err.message);
             await replyToLark(
               messageId,
-              'Không trích xuất được nội dung. Vui lòng gửi hình ảnh trực tiếp hoặc dán URL.',
+              `Lỗi khi xử lý file ${pendingFile.fileName}. Nguyên nhân: ${err.message}`,
               mentionUserId,
               mentionUserName
             );
-            return;
+            pendingFiles.delete(chatId);
           }
-
-          updateConversationMemory(chatId, 'user', combinedMessage);
-          const memory = conversationMemory.get(chatId) || [];
-          const aiResp = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528:free',
-              messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: combinedMessage }],
-              stream: false,
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              timeout: 15000,
-            }
+        } else {
+          await replyToLark(
+            messageId,
+            'Vui lòng reply trực tiếp tin nhắn chứa file để mình xử lý. Nếu chưa gửi file, vui lòng gửi file trước.',
+            mentionUserId,
+            mentionUserName
           );
-
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
-          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-          updateConversationMemory(chatId, 'assistant', cleanMessage);
-          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-        } catch (e) {
-          console.error('[Post Processing Error] Nguyên nhân:', e?.response?.data?.msg || e.message);
-          await replyToLark(messageId, '❌ Lỗi khi xử lý post.', mentionUserId, mentionUserName);
         }
       } else if (messageType === 'text' && userMessage.trim()) {
         try {
