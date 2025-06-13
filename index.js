@@ -80,28 +80,20 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
     const token = tokenResp.data.app_access_token;
 
     let messageContent;
+    let msgType = 'text';
     if (mentionUserId && mentionUserName) {
       console.log('[Reply Debug] Tagging user:', mentionUserId, mentionUserName);
       messageContent = {
-        post: {
-          zh_cn: {
-            content: [
-              [
-                { tag: 'text', text: content + ' ' },
-                { tag: 'at', user_id: mentionUserId, user_name: mentionUserName },
-              ],
-            ],
-          },
-        },
+        text: `${content} <at user_id="${mentionUserId}">${mentionUserName}</at>`,
       };
     } else {
       messageContent = { text: content };
     }
 
-    await axios.post(
+    const response = await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
       {
-        msg_type: mentionUserId ? 'post' : 'text',
+        msg_type: msgType,
         content: JSON.stringify(messageContent),
       },
       {
@@ -111,6 +103,7 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
         },
       }
     );
+    console.log('[Reply Success] Response:', response.data);
   } catch (err) {
     console.error('[Reply Error]', err?.response?.data || err.message);
   }
@@ -361,6 +354,9 @@ app.post('/webhook', async (req, res) => {
       // Lấy thông tin người gửi
       let mentionUserId = senderId;
       let mentionUserName = await getUserInfo(senderId, token);
+      if (mentionUserName.startsWith('User_')) {
+        console.warn('[UserInfo Warning] Fallback name used for senderId:', senderId);
+      }
       console.log('[Sender Debug] senderId:', senderId, 'senderName:', mentionUserName);
 
       // Nếu có mentions khác bot, ưu tiên lấy từ mentions
