@@ -388,9 +388,7 @@ app.post('/webhook', async (req, res) => {
       let tableId = '';
       let commandType = '';
 
-      const baseMatch = userMessage.match(/Base (\w+)/i);
-      const reportMatch = userMessage.match(/Report (\w+)/i);
-
+      const baseMatch = userMessage.match(/^(\w+)/i); // Chỉ lấy từ đầu tiên
       if (baseMatch) {
         commandType = 'BASE';
         const baseName = baseMatch[1].toUpperCase();
@@ -402,21 +400,10 @@ app.post('/webhook', async (req, res) => {
             tableId = urlMatch[2];
           }
         }
-      } else if (reportMatch) {
-        commandType = 'REPORT';
-        const reportName = reportMatch[1].toUpperCase();
-        const reportKey = `REPORT_${reportName}`;
-        const reportUrl = BASE_MAPPINGS[reportKey];
-        if (reportUrl) {
-          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
-          if (urlMatch) {
-            baseId = urlMatch[1];
-            tableId = urlMatch[2];
-          }
-        }
       }
 
       if (baseId && tableId) {
+        userMessage = userMessage.replace(/^(\w+)\s*/, ''); // Loại bỏ lệnh khỏi message
         pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
         await processBaseData(messageId, baseId, tableId, userMessage, token);
       } else if (messageType === 'file' || messageType === 'image') {
@@ -561,7 +548,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await replyToLark(
           messageId,
-          'Vui lòng sử dụng lệnh Base PUR, Base SALE, Base FIN kèm câu hỏi, hoặc gửi file/hình ảnh.',
+          'Vui lòng sử dụng lệnh PUR, SALE, FIN kèm câu hỏi, hoặc gửi file/hình ảnh.',
           mentionUserId,
           mentionUserName
         );
