@@ -437,12 +437,12 @@ app.post('/webhook', async (req, res) => {
           const ext = path.extname(fileName).slice(1).toLowerCase();
           console.log('[File/Image Debug] File key:', fileKey, 'File name:', fileName, 'Extension:', ext);
 
-          // Lưu thông tin file tạm thời
+          // Lưu thông tin file tạm thời với timestamp
           pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
 
           await replyToLark(
             messageId,
-            'File đã nhận. Vui lòng reply tin nhắn này với câu hỏi hoặc yêu cầu (tag @L-GPT nếu cần).',
+            'File đã nhận. Vui lòng reply tin nhắn này với câu hỏi hoặc yêu cầu (tag @L-GPT nếu cần). File sẽ được xóa khỏi bộ nhớ sau 5 phút nếu không có reply.',
             mentionUserId,
             mentionUserName
           );
@@ -517,9 +517,10 @@ app.post('/webhook', async (req, res) => {
             pendingFiles.delete(chatId);
           }
         } else {
+          console.log('[Post Debug] No matching file found for parentId:', parentId, 'pendingFiles:', JSON.stringify(pendingFiles));
           await replyToLark(
             messageId,
-            'Vui lòng reply trực tiếp tin nhắn chứa file để mình xử lý. Nếu chưa gửi file, vui lòng gửi file trước.',
+            'Vui lòng reply trực tiếp tin nhắn chứa file để mình xử lý. Nếu đã gửi file, hãy kiểm tra lại quy trình.',
             mentionUserId,
             mentionUserName
           );
@@ -577,3 +578,14 @@ logBotOpenId().then(() => {
     console.log(`Máy chủ đang chạy trên cổng ${port}`);
   });
 });
+
+// Xóa file trong pendingFiles sau 5 phút nếu không có reply
+setInterval(() => {
+  const now = Date.now();
+  for (const [chatId, file] of pendingFiles) {
+    if (now - file.timestamp > 5 * 60 * 1000) {
+      console.log('[Cleanup] Xóa file từ pendingFiles do hết thời gian:', chatId, file.fileName);
+      pendingFiles.delete(chatId);
+    }
+  }
+}, 60 * 1000);
