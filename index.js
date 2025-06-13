@@ -55,6 +55,22 @@ function decryptMessage(encrypt) {
   return JSON.parse(decrypted.toString());
 }
 
+async function getUserInfo(openId, token) {
+  try {
+    const response = await axios.get(`${process.env.LARK_DOMAIN}/open-apis/contact/v3/users/${openId}?user_id_type=open_id`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    const user = response.data.data.user;
+    return user.name || `User_${openId.slice(-4)}`;
+  } catch (err) {
+    console.error('[GetUserInfo Error]', err?.response?.data || err.message);
+    return `User_${openId.slice(-4)}`;
+  }
+}
+
 async function replyToLark(messageId, content, mentionUserId = null, mentionUserName = null) {
   try {
     const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
@@ -63,21 +79,22 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
     });
     const token = tokenResp.data.app_access_token;
 
-    let messageContent = { text: content };
+    let messageContent;
     if (mentionUserId && mentionUserName) {
       messageContent = {
-        elements: [
-          {
-            tag: 'text',
-            text: content,
+        post: {
+          zh_cn: {
+            content: [
+              [
+                { tag: 'text', text: content + ' ' },
+                { tag: 'at', user_id: mentionUserId, user_name: mentionUserName },
+              ],
+            ],
           },
-          {
-            tag: 'at',
-            user_id: mentionUserId,
-            user_name: mentionUserName,
-          },
-        ],
+        },
       };
+    } else {
+      messageContent = { text: content };
     }
 
     await axios.post(
@@ -196,13 +213,23 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
-      await replyToLark(messageId, 'Không có dữ liệu từ bảng.');
+      await replyToLark(
+        messageId,
+        'Không có dữ liệu từ bảng.',
+        pendingTasks.get(messageId)?.mentionUserId,
+        pendingTasks.get(messageId)?.mentionUserName
+      );
       return;
     }
 
     const validRows = allRows.filter(row => row && typeof row === 'object');
     if (validRows.length === 0) {
-      await replyToLark(messageId, 'Không có dòng dữ liệu hợp lệ.');
+      await replyToLark(
+        messageId,
+        'Không có dòng dữ liệu hợp lệ.',
+        pendingTasks.get(messageId)?.mentionUserId,
+        pendingTasks.get(messageId)?.mentionUserName
+      );
       return;
     }
 
@@ -238,18 +265,24 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
     updateConversationMemory(chatId, 'user', userMessage);
     updateConversationMemory(chatId, 'assistant', cleanMessage);
-    const mentionUserId = pendingTasks.get(messageId)?.mentionUserId;
-    const mentionUserName = pendingTasks.get(messageId)?.mentionUserName;
-    await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+    await replyToLark(
+      messageId,
+      cleanMessage,
+      pendingTasks.get(messageId)?.mentionUserId,
+      pendingTasks.get(messageId)?.mentionUserName
+    );
   } catch (e) {
     console.error('[Base API Error]', e?.response?.data || e.message);
     let errorMessage = '❌ Lỗi khi xử lý, vui lòng thử lại sau.';
     if (e.code === 'ECONNABORTED') {
       errorMessage = '❌ Hết thời gian chờ khi gọi API, vui lòng thử lại sau hoặc kiểm tra kết nối mạng.';
     }
-    const mentionUserId = pendingTasks.get(messageId)?.mentionUserId;
-    const mentionUserName = pendingTasks.get(messageId)?.mentionUserName;
-    await replyToLark(messageId, errorMessage, mentionUserId, mentionUserName);
+    await replyToLark(
+      messageId,
+      errorMessage,
+      pendingTasks.get(messageId)?.mentionUserId,
+      pendingTasks.get(messageId)?.mentionUserName
+    );
   } finally {
     pendingTasks.delete(messageId);
   }
@@ -258,7 +291,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 // Xử lý tín hiệu dừng
 process.on('SIGTERM', () => {
   console.log('[Server] Nhận tín hiệu SIGTERM, đang tắt...');
-  pendingTasks.forEach((task, messageId) => replyToLark(messageId, 'Xử lý bị gián đoạn.'));
+  pendingTasks.forEach((task, messageId) => replyToLark(messageId, 'Xử lý bị gián đoạn.', task.mentionUserId, task.mentionUserName));
   process.exit(0);
 });
 
@@ -309,13 +342,13 @@ app.post('/webhook', async (req, res) => {
         userMessage = parsed.text || '';
       } catch (err) {}
 
-      // Kiểm tra nếu có @all và không tag bot
+      console.log('[Mentions Debug]', JSON.stringify(mentions, null, 2));
+
       const hasAllMention = mentions.some(mention => mention.key === '@_all');
       if (hasAllMention && !isBotMentioned) {
         return res.json({ code: 0 });
       }
 
-      // Chỉ xử lý nếu bot được tag
       if (!isBotMentioned) {
         return res.json({ code: 0 });
       }
@@ -324,14 +357,15 @@ app.post('/webhook', async (req, res) => {
 
       const token = await getAppAccessToken();
 
-      // Lấy thông tin người dùng từ mentions để tag lại
+      // Lấy thông tin người dùng từ mentions
       let mentionUserId = null;
       let mentionUserName = null;
       if (mentions.length > 0) {
         const userMention = mentions.find(mention => mention.id.open_id !== botOpenId);
         if (userMention) {
           mentionUserId = userMention.id.open_id;
-          mentionUserName = userMention.name || `User_${userMention.id.open_id.slice(-4)}`;
+          mentionUserName = await getUserInfo(mentionUserId, token);
+          console.log('[User Debug] mentionUserId:', mentionUserId, 'mentionUserName:', mentionUserName);
         }
       }
 
