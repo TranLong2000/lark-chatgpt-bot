@@ -475,7 +475,7 @@ app.post('/webhook', async (req, res) => {
           const parsedContent = JSON.parse(message.content);
           let textContent = '';
           let imageKey = '';
-          let fileKey = message.file_key; // Thêm kiểm tra file_key trong post
+          let fileKey = message.file_key;
 
           for (const block of parsedContent.content) {
             for (const item of block) {
@@ -487,7 +487,7 @@ app.post('/webhook', async (req, res) => {
           console.log('[Post Debug] Text content:', textContent, 'Image key:', imageKey, 'File key:', fileKey);
 
           let extractedText = '';
-          if (imageKey) {
+          if (imageKey && !fileKey) {
             console.log('[Post Debug] Attempting to fetch image with key:', imageKey);
             try {
               const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`;
@@ -500,20 +500,16 @@ app.post('/webhook', async (req, res) => {
               console.log('[Post Debug] Extracted text from image:', extractedText);
             } catch (imageError) {
               console.error('[Post Debug] Nguyên nhân lỗi khi lấy hình ảnh:', imageError?.response?.data?.msg || imageError.message);
-              // Fallback to file_key if image_key fails
-              if (fileKey) {
-                console.log('[Post Debug] Falling back to file_key:', fileKey);
-                const fileUrlResp = await axios.get(
-                  `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
-                  { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
-                );
-                const fileUrl = fileUrlResp.data.data.download_url;
-                extractedText = await extractFileContent(fileUrl, 'jpg');
-                console.log('[Post Debug] Extracted text from file fallback:', extractedText);
-              }
+              await replyToLark(
+                messageId,
+                'Hình ảnh trong tin nhắn không thể tải. Vui lòng gửi hình ảnh trực tiếp (tải file) thay vì nhúng trong tin nhắn.',
+                mentionUserId,
+                mentionUserName
+              );
+              return;
             }
           } else if (fileKey) {
-            console.log('[Post Debug] No image key, using file_key:', fileKey);
+            console.log('[Post Debug] Using file_key:', fileKey);
             const fileUrlResp = await axios.get(
               `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
               { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
