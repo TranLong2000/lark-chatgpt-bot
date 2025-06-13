@@ -326,6 +326,8 @@ app.post('/webhook', async (req, res) => {
     const { encrypt } = JSON.parse(bodyRaw);
     const decrypted = decryptMessage(encrypt);
 
+    console.log('[Webhook Debug] Received event_type:', decrypted.header.event_type, 'Full Decrypted:', JSON.stringify(decrypted));
+
     if (decrypted.header.event_type === 'url_verification') {
       return res.json({ challenge: decrypted.event.challenge });
     }
