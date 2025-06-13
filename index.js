@@ -66,7 +66,6 @@ async function getUserInfo(openId, token) {
     const user = response.data.data.user;
     return user.name || `User_${openId.slice(-4)}`;
   } catch (err) {
-    // Không in lỗi ra console, chỉ sử dụng fallback name
     return `User_${openId.slice(-4)}`;
   }
 }
@@ -342,11 +341,9 @@ app.post('/webhook', async (req, res) => {
 
       if (senderId === (process.env.BOT_SENDER_ID || '')) return res.json({ code: 0 });
 
-      // Kiểm tra xem bot có được tag hay không
       const botOpenId = process.env.BOT_OPEN_ID;
       const isBotMentioned = mentions.some(mention => mention.id.open_id === botOpenId);
 
-      // Nếu không tag bot hoặc chỉ có @all, bỏ qua
       let userMessage = '';
       try {
         const parsed = JSON.parse(message.content);
@@ -370,12 +367,10 @@ app.post('/webhook', async (req, res) => {
 
       const token = await getAppAccessToken();
 
-      // Lấy thông tin người gửi
       let mentionUserId = senderId;
       let mentionUserName = await getUserInfo(senderId, token);
       console.log('[Sender Debug] senderId:', senderId, 'senderName:', mentionUserName);
 
-      // Nếu có mentions khác bot, ưu tiên lấy từ mentions
       if (mentions.length > 0) {
         const userMention = mentions.find(mention => mention.id.open_id !== botOpenId && mention.id.open_id !== senderId);
         if (userMention) {
@@ -389,7 +384,6 @@ app.post('/webhook', async (req, res) => {
       let tableId = '';
       let commandType = '';
 
-      // Xử lý lệnh Base hoặc Report
       const baseMatch = userMessage.match(/Base (\w+)/i);
       const reportMatch = userMessage.match(/Report (\w+)/i);
 
@@ -481,6 +475,7 @@ app.post('/webhook', async (req, res) => {
           const parsedContent = JSON.parse(message.content);
           let textContent = '';
           let imageKey = '';
+          let fileKey = message.file_key; // Thêm kiểm tra file_key trong post
 
           for (const block of parsedContent.content) {
             for (const item of block) {
@@ -489,7 +484,7 @@ app.post('/webhook', async (req, res) => {
             }
           }
           textContent = textContent.trim();
-          console.log('[Post Debug] Text content:', textContent, 'Image key:', imageKey);
+          console.log('[Post Debug] Text content:', textContent, 'Image key:', imageKey, 'File key:', fileKey);
 
           let extractedText = '';
           if (imageKey) {
@@ -505,16 +500,27 @@ app.post('/webhook', async (req, res) => {
               console.log('[Post Debug] Extracted text from image:', extractedText);
             } catch (imageError) {
               console.error('[Post Debug] Nguyên nhân lỗi khi lấy hình ảnh:', imageError?.response?.data?.msg || imageError.message);
-              await replyToLark(
-                messageId,
-                'Lỗi khi tải hình ảnh. Vui lòng gửi hình ảnh trực tiếp hoặc dán URL.',
-                mentionUserId,
-                mentionUserName
-              );
-              return;
+              // Fallback to file_key if image_key fails
+              if (fileKey) {
+                console.log('[Post Debug] Falling back to file_key:', fileKey);
+                const fileUrlResp = await axios.get(
+                  `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
+                  { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
+                );
+                const fileUrl = fileUrlResp.data.data.download_url;
+                extractedText = await extractFileContent(fileUrl, 'jpg');
+                console.log('[Post Debug] Extracted text from file fallback:', extractedText);
+              }
             }
-          } else {
-            console.log('[Post Debug] No image key found in content.');
+          } else if (fileKey) {
+            console.log('[Post Debug] No image key, using file_key:', fileKey);
+            const fileUrlResp = await axios.get(
+              `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
+              { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
+            );
+            const fileUrl = fileUrlResp.data.data.download_url;
+            extractedText = await extractFileContent(fileUrl, 'jpg');
+            console.log('[Post Debug] Extracted text from file:', extractedText);
           }
 
           const combinedMessage = textContent + (extractedText ? `\nNội dung từ hình ảnh: ${extractedText}` : '');
