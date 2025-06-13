@@ -81,6 +81,7 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
 
     let messageContent;
     if (mentionUserId && mentionUserName) {
+      console.log('[Reply Debug] Tagging user:', mentionUserId, mentionUserName);
       messageContent = {
         post: {
           zh_cn: {
@@ -357,11 +358,14 @@ app.post('/webhook', async (req, res) => {
 
       const token = await getAppAccessToken();
 
-      // Lấy thông tin người dùng từ mentions
-      let mentionUserId = null;
-      let mentionUserName = null;
+      // Lấy thông tin người gửi
+      let mentionUserId = senderId;
+      let mentionUserName = await getUserInfo(senderId, token);
+      console.log('[Sender Debug] senderId:', senderId, 'senderName:', mentionUserName);
+
+      // Nếu có mentions khác bot, ưu tiên lấy từ mentions
       if (mentions.length > 0) {
-        const userMention = mentions.find(mention => mention.id.open_id !== botOpenId);
+        const userMention = mentions.find(mention => mention.id.open_id !== botOpenId && mention.id.open_id !== senderId);
         if (userMention) {
           mentionUserId = userMention.id.open_id;
           mentionUserName = await getUserInfo(mentionUserId, token);
