@@ -195,7 +195,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 15000, // Tăng thời gian chờ lên 10 giây
+        timeout: 15000,
       }
     );
 
@@ -252,17 +252,34 @@ app.post('/webhook', async (req, res) => {
       const messageId = message.message_id;
       const chatId = message.chat_id;
       const messageType = message.message_type;
+      const mentions = message.mentions || [];
 
       if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
       processedMessageIds.add(messageId);
 
       if (senderId === (process.env.BOT_SENDER_ID || '')) return res.json({ code: 0 });
 
+      // Kiểm tra xem bot có được tag hay không
+      const botOpenId = process.env.BOT_OPEN_ID; // Yêu cầu BOT_OPEN_ID trong .env
+      const isBotMentioned = mentions.some(mention => mention.id.open_id === botOpenId);
+
+      // Nếu không tag bot hoặc chỉ có @all, bỏ qua
       let userMessage = '';
       try {
         const parsed = JSON.parse(message.content);
         userMessage = parsed.text || '';
       } catch (err) {}
+
+      // Kiểm tra nếu có @all và không tag bot
+      const hasAllMention = mentions.some(mention => mention.key === '@_all');
+      if (hasAllMention && !isBotMentioned) {
+        return res.json({ code: 0 }); // Bỏ qua tin nhắn @all nếu không tag bot
+      }
+
+      // Chỉ xử lý nếu bot được tag
+      if (!isBotMentioned) {
+        return res.json({ code: 0 }); // Bỏ qua nếu không tag bot
+      }
 
       res.json({ code: 0 });
 
@@ -388,7 +405,7 @@ app.post('/webhook', async (req, res) => {
                 Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
                 'Content-Type': 'application/json',
               },
-              timeout: 15000, // Tăng thời gian chờ lên 10 giây
+              timeout: 15000,
             }
           );
 
@@ -416,7 +433,7 @@ app.post('/webhook', async (req, res) => {
                 Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
                 'Content-Type': 'application/json',
               },
-              timeout: 15000, // Tăng thời gian chờ lên 10 giây
+              timeout: 15000,
             }
           );
 
