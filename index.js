@@ -184,7 +184,7 @@ async function logBotOpenId() {
   }
 }
 
-async function getAllRows(baseId, tableId, token, maxRows = 20) {
+async function getAllRows(baseId, tableId, token, maxRows = 1000) {
   const rows = [];
   let pageToken = '';
   do {
