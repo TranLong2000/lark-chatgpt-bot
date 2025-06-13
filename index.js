@@ -561,7 +561,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await replyToLark(
           messageId,
-          'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report FIN kèm câu hỏi, hoặc gửi file/hình ảnh.',
+          'Vui lòng sử dụng lệnh Base PUR, Base SALE, Base FIN kèm câu hỏi, hoặc gửi file/hình ảnh.',
           mentionUserId,
           mentionUserName
         );
