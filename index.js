@@ -66,7 +66,7 @@ async function getUserInfo(openId, token) {
     const user = response.data.data.user;
     return user.name || `User_${openId.slice(-4)}`;
   } catch (err) {
-    console.error('[GetUserInfo Error]', err?.response?.data || err.message);
+    // Không in lỗi ra console, chỉ sử dụng fallback name
     return `User_${openId.slice(-4)}`;
   }
 }
@@ -81,7 +81,7 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
 
     let messageContent;
     let msgType = 'text';
-    if (mentionUserId && mentionUserName) {
+    if (mentionUserId && mentionUserName && mentionUserId !== process.env.BOT_OPEN_ID) { // Không tag bot
       console.log('[Reply Debug] Tagging user:', mentionUserId, mentionUserName);
       messageContent = {
         text: `${content} <at user_id="${mentionUserId}">${mentionUserName}</at>`,
@@ -352,7 +352,7 @@ app.post('/webhook', async (req, res) => {
       const token = await getAppAccessToken();
 
       // Lấy thông tin người gửi
-      let mentionUserId = senderId;
+      let mentionUserId = senderId; // Luôn ưu tiên tag người gửi
       let mentionUserName = await getUserInfo(senderId, token);
       if (mentionUserName.startsWith('User_')) {
         console.warn('[UserInfo Warning] Fallback name used for senderId:', senderId);
