@@ -319,6 +319,7 @@ app.post('/webhook', async (req, res) => {
     const bodyRaw = req.body.toString('utf8');
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      console.error('[Webhook] Chữ ký không hợp lệ, kiểm tra LARK_ENCRYPT_KEY');
       return res.status(401).send('Chữ ký không hợp lệ');
     }
 
@@ -351,11 +352,11 @@ app.post('/webhook', async (req, res) => {
         const parsed = JSON.parse(message.content);
         userMessage = parsed.text || '';
       } catch (err) {
-        console.error('[Parse Content Error] Nguyên nhân:', err.message);
+        console.error('[Parse Content Error] Nguyên nhân:', err.message, 'Content:', message.content);
       }
 
-      console.log('[Message Debug] chatId:', chatId, 'messageId:', messageId, 'parentId:', parentId, 'messageType:', messageType);
-      console.log('[Mentions Debug]', JSON.stringify(mentions, null, 2));
+      console.log('[Message Debug] chatId:', chatId, 'messageId:', messageId, 'parentId:', parentId, 'messageType:', messageType, 'Full Message:', JSON.stringify(message));
+      console.log('[Mentions Debug] Mentions:', JSON.stringify(mentions, null, 2));
 
       const hasAllMention = mentions.some(mention => mention.key === '@_all');
       if (hasAllMention && !isBotMentioned) {
@@ -420,13 +421,13 @@ app.post('/webhook', async (req, res) => {
         await processBaseData(messageId, baseId, tableId, userMessage, token);
       } else if (messageType === 'file' || messageType === 'image') {
         try {
-          console.log('[File/Image Debug] Processing message type:', messageType);
+          console.log('[File/Image Debug] Processing message type:', messageType, 'Full Message:', JSON.stringify(message));
           const fileKey = message.file_key;
           if (!fileKey) {
-            console.error('[File/Image Debug] Nguyên nhân: Không tìm thấy file_key trong message');
+            console.error('[File/Image Debug] Nguyên nhân: Không tìm thấy file_key trong message', 'Message:', JSON.stringify(message));
             await replyToLark(
               messageId,
-              'Không tìm thấy file_key. Vui lòng kiểm tra lại file.',
+              'Không tìm thấy file_key. Vui lòng kiểm tra lại file hoặc gửi lại.',
               mentionUserId,
               mentionUserName
             );
@@ -442,12 +443,12 @@ app.post('/webhook', async (req, res) => {
 
           await replyToLark(
             messageId,
-            'File đã nhận. Vui lòng reply tin nhắn này với câu hỏi hoặc yêu cầu (tag @L-GPT nếu cần). File sẽ được xóa khỏi bộ nhớ sau 5 phút nếu không có reply.',
+            'File đã nhận. Vui lòng reply tin nhắn này với câu hỏi hoặc yêu cầu (tag @L-GPT nếu cần). File sẽ bị xóa khỏi bộ nhớ sau 5 phút nếu không có reply.',
             mentionUserId,
             mentionUserName
           );
         } catch (err) {
-          console.error('[File Processing Error] Nguyên nhân:', err?.response?.data || err.message);
+          console.error('[File Processing Error] Nguyên nhân:', err?.response?.data || err.message, 'Message:', JSON.stringify(message));
           await replyToLark(
             messageId,
             `Lỗi khi xử lý file ${message.file_name || 'không xác định'}. Nguyên nhân: ${err.message}`,
@@ -460,7 +461,7 @@ app.post('/webhook', async (req, res) => {
         const pendingFile = pendingFiles.get(chatId);
         if (pendingFile && pendingFile.messageId === parentId) {
           try {
-            console.log('[Post Debug] Processing reply with file, parentId:', parentId);
+            console.log('[Post Debug] Processing reply with file, parentId:', parentId, 'pendingFile:', JSON.stringify(pendingFile));
             const { fileKey, fileName, ext } = pendingFile;
 
             const fileUrlResp = await axios.get(
@@ -520,7 +521,7 @@ app.post('/webhook', async (req, res) => {
           console.log('[Post Debug] No matching file found for parentId:', parentId, 'pendingFiles:', JSON.stringify(pendingFiles));
           await replyToLark(
             messageId,
-            'Vui lòng reply trực tiếp tin nhắn chứa file để mình xử lý. Nếu đã gửi file, hãy kiểm tra lại quy trình.',
+            'Vui lòng reply trực tiếp tin nhắn chứa file để mình xử lý. Nếu đã gửi file, hãy kiểm tra lại quy trình hoặc gửi lại file.',
             mentionUserId,
             mentionUserName
           );
@@ -567,7 +568,7 @@ app.post('/webhook', async (req, res) => {
       }
     }
   } catch (e) {
-    console.error('[Webhook Handler Error] Nguyên nhân:', e.message);
+    console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', bodyRaw);
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
