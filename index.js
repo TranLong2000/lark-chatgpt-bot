@@ -81,7 +81,7 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
 
     let messageContent;
     let msgType = 'text';
-    if (mentionUserId && mentionUserName && mentionUserId !== process.env.BOT_OPEN_ID) { // Không tag bot
+    if (mentionUserId && mentionUserName && mentionUserId !== process.env.BOT_OPEN_ID) {
       console.log('[Reply Debug] Tagging user:', mentionUserId, mentionUserName);
       messageContent = {
         text: `${content} <at user_id="${mentionUserId}">${mentionUserName}</at>`,
@@ -110,37 +110,54 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
 }
 
 async function extractFileContent(fileUrl, fileType) {
-  const response = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-  const buffer = Buffer.from(response.data);
+  try {
+    console.log('[ExtractFileContent] Đang tải file:', fileUrl, 'với type:', fileType);
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 10000 });
+    const buffer = Buffer.from(response.data);
 
-  if (fileType === 'pdf') {
-    const data = await pdfParse(buffer);
-    return data.text.trim();
+    if (fileType === 'pdf') {
+      console.log('[ExtractFileContent] Đang xử lý PDF...');
+      const data = await pdfParse(buffer);
+      return data.text.trim();
+    }
+
+    if (fileType === 'docx') {
+      console.log('[ExtractFileContent] Đang xử lý DOCX...');
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value.trim();
+    }
+
+    if (fileType === 'xlsx') {
+      console.log('[ExtractFileContent] Đang xử lý XLSX...');
+      const workbook = xlsx.read(buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+      return sheet.map(row => row.join(', ')).join('; ');
+    }
+
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileType)) {
+      console.log('[ExtractFileContent] Đang thực hiện OCR cho hình ảnh...');
+      const result = await Tesseract.recognize(buffer, 'eng+vie', { logger: m => console.log('[Tesseract]', m) });
+      return result.data.text.trim();
+    }
+
+    console.log('[ExtractFileContent] Không hỗ trợ loại file:', fileType);
+    return 'Không hỗ trợ loại file này.';
+  } catch (err) {
+    console.error('[ExtractFileContent Error] Nguyên nhân:', err.message, 'URL:', fileUrl, 'Type:', fileType);
+    return `Lỗi khi trích xuất nội dung file: ${err.message}`;
   }
-
-  if (fileType === 'docx') {
-    const result = await mammoth.extractRawText({ buffer });
-    return result.value.trim();
-  }
-
-  if (fileType === 'xlsx') {
-    const workbook = xlsx.read(buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-    return sheet.map(row => row.join(', ')).join('; ');
-  }
-
-  if (['jpg', 'jpeg', 'png'].includes(fileType)) {
-    const result = await Tesseract.recognize(buffer, 'eng');
-    return result.data.text.trim();
-  }
-
-  return '';
 }
 
 async function extractImageContent(imageData) {
-  const result = await Tesseract.recognize(imageData, 'eng');
-  return result.data.text.trim();
+  try {
+    console.log('[ExtractImageContent] Đang thực hiện OCR...');
+    const result = await Tesseract.recognize(imageData, 'eng+vie', { logger: m => console.log('[Tesseract]', m) });
+    return result.data.text.trim();
+  } catch (err) {
+    console.error('[ExtractImageContent Error] Nguyên nhân:', err.message);
+    return `Lỗi khi trích xuất nội dung hình ảnh: ${err.message}`;
+  }
 }
 
 async function getAppAccessToken() {
@@ -334,7 +351,9 @@ app.post('/webhook', async (req, res) => {
       try {
         const parsed = JSON.parse(message.content);
         userMessage = parsed.text || '';
-      } catch (err) {}
+      } catch (err) {
+        console.error('[Parse Content Error] Nguyên nhân:', err.message);
+      }
 
       console.log('[Mentions Debug]', JSON.stringify(mentions, null, 2));
 
@@ -352,9 +371,8 @@ app.post('/webhook', async (req, res) => {
       const token = await getAppAccessToken();
 
       // Lấy thông tin người gửi
-      let mentionUserId = senderId; // Luôn ưu tiên tag người gửi
+      let mentionUserId = senderId;
       let mentionUserName = await getUserInfo(senderId, token);
-      // Loại bỏ cảnh báo fallback
       console.log('[Sender Debug] senderId:', senderId, 'senderName:', mentionUserName);
 
       // Nếu có mentions khác bot, ưu tiên lấy từ mentions
@@ -405,20 +423,40 @@ app.post('/webhook', async (req, res) => {
         await processBaseData(messageId, baseId, tableId, userMessage, token);
       } else if (messageType === 'file' || messageType === 'image') {
         try {
+          console.log('[File/Image Debug] Processing message type:', messageType);
           const fileKey = message.file_key;
+          if (!fileKey) {
+            console.error('[File/Image Debug] Nguyên nhân: Không tìm thấy file_key trong message');
+            await replyToLark(
+              messageId,
+              'Không tìm thấy file_key. Vui lòng gửi lại file.',
+              mentionUserId,
+              mentionUserName
+            );
+            return;
+          }
+
           const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
           const ext = path.extname(fileName).slice(1).toLowerCase();
+          console.log('[File/Image Debug] File key:', fileKey, 'File name:', fileName, 'Extension:', ext);
 
           const fileUrlResp = await axios.get(
             `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
-            { headers: { Authorization: `Bearer ${token}` } }
+            { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
           );
           const fileUrl = fileUrlResp.data.data.download_url;
+          console.log('[File/Image Debug] Download URL:', fileUrl);
 
           const extractedText = await extractFileContent(fileUrl, ext);
+          console.log('[File/Image Debug] Extracted text:', extractedText);
 
-          if (!extractedText) {
-            await replyToLark(messageId, 'Không thể trích xuất nội dung từ file.', mentionUserId, mentionUserName);
+          if (extractedText.startsWith('Lỗi') || !extractedText) {
+            await replyToLark(
+              messageId,
+              `Không thể trích xuất nội dung từ file ${fileName}. Nguyên nhân: ${extractedText}`,
+              mentionUserId,
+              mentionUserName
+            );
           } else {
             updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung trích xuất`);
             await replyToLark(
@@ -429,11 +467,17 @@ app.post('/webhook', async (req, res) => {
             );
           }
         } catch (err) {
-          console.error('[File Processing Error]', err?.response?.data || err.message);
-          await replyToLark(messageId, 'Lỗi khi xử lý file.', mentionUserId, mentionUserName);
+          console.error('[File Processing Error] Nguyên nhân:', err?.response?.data || err.message);
+          await replyToLark(
+            messageId,
+            `Lỗi khi xử lý file ${message.file_name || 'không xác định'}. Nguyên nhân: ${err.message}`,
+            mentionUserId,
+            mentionUserName
+          );
         }
       } else if (messageType === 'post') {
         try {
+          console.log('[Post Debug] Processing post message');
           const parsedContent = JSON.parse(message.content);
           let textContent = '';
           let imageKey = '';
@@ -445,36 +489,43 @@ app.post('/webhook', async (req, res) => {
             }
           }
           textContent = textContent.trim();
+          console.log('[Post Debug] Text content:', textContent, 'Image key:', imageKey);
 
           let extractedText = '';
           if (imageKey) {
+            console.log('[Post Debug] Attempting to fetch image with key:', imageKey);
             try {
               const imageUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/images/${imageKey}`;
               const imageResp = await axios.get(imageUrl, {
                 headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
                 responseType: 'arraybuffer',
+                timeout: 10000,
               });
               extractedText = await extractImageContent(Buffer.from(imageResp.data));
+              console.log('[Post Debug] Extracted text from image:', extractedText);
             } catch (imageError) {
-              try {
-                const resourceUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/resources`;
-                const resourceResp = await axios.post(resourceUrl, {}, {
-                  headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
-                });
-                if (resourceResp.data.data.file_list && resourceResp.data.data.file_list.length > 0) {
-                  const fileUrl = resourceResp.data.data.file_list[0].download_url;
-                  const imageData = await axios.get(fileUrl, { responseType: 'arraybuffer' });
-                  extractedText = await extractImageContent(Buffer.from(imageData.data));
-                }
-              } catch (resourceError) {
-                console.error('[Post] Lỗi khi lấy tài nguyên:', resourceError?.response?.data?.msg || resourceError.message);
-              }
+              console.error('[Post Debug] Nguyên nhân lỗi khi lấy hình ảnh:', imageError?.response?.data?.msg || imageError.message);
+              await replyToLark(
+                messageId,
+                'Lỗi khi tải hình ảnh. Vui lòng gửi hình ảnh trực tiếp hoặc dán URL.',
+                mentionUserId,
+                mentionUserName
+              );
+              return;
             }
+          } else {
+            console.log('[Post Debug] No image key found in content.');
           }
 
           const combinedMessage = textContent + (extractedText ? `\nNội dung từ hình ảnh: ${extractedText}` : '');
-          if (!combinedMessage) {
-            await replyToLark(messageId, 'Không trích xuất được nội dung.', mentionUserId, mentionUserName);
+          if (!combinedMessage.trim()) {
+            console.log('[Post Debug] No content extracted from post.');
+            await replyToLark(
+              messageId,
+              'Không trích xuất được nội dung. Vui lòng gửi hình ảnh trực tiếp hoặc dán URL.',
+              mentionUserId,
+              mentionUserName
+            );
             return;
           }
 
@@ -501,7 +552,7 @@ app.post('/webhook', async (req, res) => {
           updateConversationMemory(chatId, 'assistant', cleanMessage);
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
         } catch (e) {
-          console.error('[Post Processing Error]', e?.response?.data?.msg || e.message);
+          console.error('[Post Processing Error] Nguyên nhân:', e?.response?.data?.msg || e.message);
           await replyToLark(messageId, '❌ Lỗi khi xử lý post.', mentionUserId, mentionUserName);
         }
       } else if (messageType === 'text' && userMessage.trim()) {
@@ -529,7 +580,7 @@ app.post('/webhook', async (req, res) => {
           updateConversationMemory(chatId, 'assistant', cleanMessage);
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
         } catch (e) {
-          console.error('[AI Error]', e?.response?.data?.msg || e.message);
+          console.error('[AI Error] Nguyên nhân:', e?.response?.data?.msg || e.message);
           let errorMessage = '❌ Lỗi khi gọi AI, vui lòng thử lại sau.';
           if (e.code === 'ECONNABORTED') {
             errorMessage = '❌ Hết thời gian chờ khi gọi API AI, vui lòng thử lại sau hoặc kiểm tra kết nối mạng.';
@@ -539,14 +590,14 @@ app.post('/webhook', async (req, res) => {
       } else {
         await replyToLark(
           messageId,
-          'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report FIN kèm câu hỏi.',
+          'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report FIN kèm câu hỏi, hoặc gửi file/hình ảnh.',
           mentionUserId,
           mentionUserName
         );
       }
     }
   } catch (e) {
-    console.error('[Webhook Handler Error]', e.message);
+    console.error('[Webhook Handler Error] Nguyên nhân:', e.message);
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
