@@ -55,7 +55,7 @@ function decryptMessage(encrypt) {
   return JSON.parse(decrypted.toString());
 }
 
-async function replyToLark(messageId, content) {
+async function replyToLark(messageId, content, mentionUserId = null, mentionUserName = null) {
   try {
     const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
       app_id: process.env.LARK_APP_ID,
@@ -63,11 +63,28 @@ async function replyToLark(messageId, content) {
     });
     const token = tokenResp.data.app_access_token;
 
+    let messageContent = { text: content };
+    if (mentionUserId && mentionUserName) {
+      messageContent = {
+        elements: [
+          {
+            tag: 'text',
+            text: content,
+          },
+          {
+            tag: 'at',
+            user_id: mentionUserId,
+            user_name: mentionUserName,
+          },
+        ],
+      };
+    }
+
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
       {
-        msg_type: 'text',
-        content: JSON.stringify({ text: content }),
+        msg_type: mentionUserId ? 'post' : 'text',
+        content: JSON.stringify(messageContent),
       },
       {
         headers: {
@@ -221,14 +238,18 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
     updateConversationMemory(chatId, 'user', userMessage);
     updateConversationMemory(chatId, 'assistant', cleanMessage);
-    await replyToLark(messageId, cleanMessage);
+    const mentionUserId = pendingTasks.get(messageId)?.mentionUserId;
+    const mentionUserName = pendingTasks.get(messageId)?.mentionUserName;
+    await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
   } catch (e) {
     console.error('[Base API Error]', e?.response?.data || e.message);
     let errorMessage = '❌ Lỗi khi xử lý, vui lòng thử lại sau.';
     if (e.code === 'ECONNABORTED') {
       errorMessage = '❌ Hết thời gian chờ khi gọi API, vui lòng thử lại sau hoặc kiểm tra kết nối mạng.';
     }
-    await replyToLark(messageId, errorMessage);
+    const mentionUserId = pendingTasks.get(messageId)?.mentionUserId;
+    const mentionUserName = pendingTasks.get(messageId)?.mentionUserName;
+    await replyToLark(messageId, errorMessage, mentionUserId, mentionUserName);
   } finally {
     pendingTasks.delete(messageId);
   }
@@ -278,7 +299,7 @@ app.post('/webhook', async (req, res) => {
       if (senderId === (process.env.BOT_SENDER_ID || '')) return res.json({ code: 0 });
 
       // Kiểm tra xem bot có được tag hay không
-      const botOpenId = process.env.BOT_OPEN_ID; // Yêu cầu BOT_OPEN_ID trong .env
+      const botOpenId = process.env.BOT_OPEN_ID;
       const isBotMentioned = mentions.some(mention => mention.id.open_id === botOpenId);
 
       // Nếu không tag bot hoặc chỉ có @all, bỏ qua
@@ -291,17 +312,28 @@ app.post('/webhook', async (req, res) => {
       // Kiểm tra nếu có @all và không tag bot
       const hasAllMention = mentions.some(mention => mention.key === '@_all');
       if (hasAllMention && !isBotMentioned) {
-        return res.json({ code: 0 }); // Bỏ qua tin nhắn @all nếu không tag bot
+        return res.json({ code: 0 });
       }
 
       // Chỉ xử lý nếu bot được tag
       if (!isBotMentioned) {
-        return res.json({ code: 0 }); // Bỏ qua nếu không tag bot
+        return res.json({ code: 0 });
       }
 
       res.json({ code: 0 });
 
       const token = await getAppAccessToken();
+
+      // Lấy thông tin người dùng từ mentions để tag lại
+      let mentionUserId = null;
+      let mentionUserName = null;
+      if (mentions.length > 0) {
+        const userMention = mentions.find(mention => mention.id.open_id !== botOpenId);
+        if (userMention) {
+          mentionUserId = userMention.id.open_id;
+          mentionUserName = userMention.name || `User_${userMention.id.open_id.slice(-4)}`;
+        }
+      }
 
       let baseId = '';
       let tableId = '';
@@ -337,7 +369,7 @@ app.post('/webhook', async (req, res) => {
       }
 
       if (baseId && tableId) {
-        pendingTasks.set(messageId, { chatId, userMessage });
+        pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
         await processBaseData(messageId, baseId, tableId, userMessage, token);
       } else if (messageType === 'file' || messageType === 'image') {
         try {
@@ -354,14 +386,19 @@ app.post('/webhook', async (req, res) => {
           const extractedText = await extractFileContent(fileUrl, ext);
 
           if (!extractedText) {
-            await replyToLark(messageId, 'Không thể trích xuất nội dung từ file.');
+            await replyToLark(messageId, 'Không thể trích xuất nội dung từ file.', mentionUserId, mentionUserName);
           } else {
             updateConversationMemory(chatId, 'user', `File ${fileName}: nội dung trích xuất`);
-            await replyToLark(messageId, `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`);
+            await replyToLark(
+              messageId,
+              `Nội dung file ${fileName}:\n${extractedText.slice(0, 1000)}${extractedText.length > 1000 ? '...' : ''}`,
+              mentionUserId,
+              mentionUserName
+            );
           }
         } catch (err) {
           console.error('[File Processing Error]', err?.response?.data || err.message);
-          await replyToLark(messageId, 'Lỗi khi xử lý file.');
+          await replyToLark(messageId, 'Lỗi khi xử lý file.', mentionUserId, mentionUserName);
         }
       } else if (messageType === 'post') {
         try {
@@ -405,7 +442,7 @@ app.post('/webhook', async (req, res) => {
 
           const combinedMessage = textContent + (extractedText ? `\nNội dung từ hình ảnh: ${extractedText}` : '');
           if (!combinedMessage) {
-            await replyToLark(messageId, 'Không trích xuất được nội dung.');
+            await replyToLark(messageId, 'Không trích xuất được nội dung.', mentionUserId, mentionUserName);
             return;
           }
 
@@ -430,10 +467,10 @@ app.post('/webhook', async (req, res) => {
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage);
-          await replyToLark(messageId, cleanMessage);
+          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
         } catch (e) {
           console.error('[Post Processing Error]', e?.response?.data?.msg || e.message);
-          await replyToLark(messageId, '❌ Lỗi khi xử lý post.');
+          await replyToLark(messageId, '❌ Lỗi khi xử lý post.', mentionUserId, mentionUserName);
         }
       } else if (messageType === 'text' && userMessage.trim()) {
         try {
@@ -458,17 +495,22 @@ app.post('/webhook', async (req, res) => {
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage);
-          await replyToLark(messageId, cleanMessage);
+          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
         } catch (e) {
           console.error('[AI Error]', e?.response?.data?.msg || e.message);
           let errorMessage = '❌ Lỗi khi gọi AI, vui lòng thử lại sau.';
           if (e.code === 'ECONNABORTED') {
             errorMessage = '❌ Hết thời gian chờ khi gọi API AI, vui lòng thử lại sau hoặc kiểm tra kết nối mạng.';
           }
-          await replyToLark(messageId, errorMessage);
+          await replyToLark(messageId, errorMessage, mentionUserId, mentionUserName);
         }
       } else {
-        await replyToLark(messageId, 'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report FIN kèm câu hỏi.');
+        await replyToLark(
+          messageId,
+          'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report FIN kèm câu hỏi.',
+          mentionUserId,
+          mentionUserName
+        );
       }
     }
   } catch (e) {
