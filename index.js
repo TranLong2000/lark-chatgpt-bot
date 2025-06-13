@@ -123,6 +123,24 @@ async function getAppAccessToken() {
   return resp.data.app_access_token;
 }
 
+async function logBotOpenId() {
+  try {
+    const token = await getAppAccessToken();
+    const response = await axios.get(`${process.env.LARK_DOMAIN}/open-apis/bot/v3/info`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    const botOpenId = response.data.bot.open_id;
+    console.log('[Bot Info] BOT_OPEN_ID:', botOpenId);
+    return botOpenId;
+  } catch (err) {
+    console.error('[LogBotOpenId Error]', err?.response?.data || err.message);
+    return null;
+  }
+}
+
 async function getAllRows(baseId, tableId, token, maxRows = 20) {
   const rows = [];
   let pageToken = '';
@@ -459,6 +477,9 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`Máy chủ đang chạy trên cổng ${port}`);
+// Gọi hàm logBotOpenId khi server khởi động
+logBotOpenId().then(() => {
+  app.listen(port, () => {
+    console.log(`Máy chủ đang chạy trên cổng ${port}`);
+  });
 });
