@@ -319,7 +319,7 @@ app.post('/webhook', async (req, res) => {
     const bodyRaw = req.body.toString('utf8');
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
-      console.error('[Webhook] Chữ ký không hợp lệ, kiểm tra LARK_ENCRYPT_KEY');
+      console.error('[Webhook] Chữ ký không hợp lệ, kiểm tra LARK_ENCRYPT_KEY. Request Body:', bodyRaw);
       return res.status(401).send('Chữ ký không hợp lệ');
     }
 
@@ -521,7 +521,7 @@ app.post('/webhook', async (req, res) => {
           console.log('[Post Debug] No matching file found for parentId:', parentId, 'pendingFiles:', JSON.stringify(pendingFiles));
           await replyToLark(
             messageId,
-            'Vui lòng reply trực tiếp tin nhắn chứa file để mình xử lý. Nếu đã gửi file, hãy kiểm tra lại quy trình hoặc gửi lại file.',
+            'Vui lòng reply trực tiếp tin nhắn chứa file để mình xử lý. Nếu đã gửi file, hãy gửi lại file hoặc kiểm tra lại quy trình.',
             mentionUserId,
             mentionUserName
           );
