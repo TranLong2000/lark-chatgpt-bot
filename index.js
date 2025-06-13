@@ -335,7 +335,7 @@ app.post('/webhook', async (req, res) => {
       const messageId = message.message_id;
       const chatId = message.chat_id;
       const messageType = message.message_type;
-      const parentId = message.parent_id; // Thêm để theo dõi reply
+      const parentId = message.parent_id; // Theo dõi reply
       const mentions = message.mentions || [];
 
       if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
@@ -354,15 +354,15 @@ app.post('/webhook', async (req, res) => {
         console.error('[Parse Content Error] Nguyên nhân:', err.message);
       }
 
-      console.log('[Mentions Debug]', JSON.stringify(mentions, null, 2));
       console.log('[Message Debug] chatId:', chatId, 'messageId:', messageId, 'parentId:', parentId, 'messageType:', messageType);
+      console.log('[Mentions Debug]', JSON.stringify(mentions, null, 2));
 
       const hasAllMention = mentions.some(mention => mention.key === '@_all');
       if (hasAllMention && !isBotMentioned) {
         return res.json({ code: 0 });
       }
 
-      if (!isBotMentioned) {
+      if (!isBotMentioned && messageType !== 'file' && messageType !== 'image') {
         return res.json({ code: 0 });
       }
 
@@ -438,7 +438,7 @@ app.post('/webhook', async (req, res) => {
           console.log('[File/Image Debug] File key:', fileKey, 'File name:', fileName, 'Extension:', ext);
 
           // Lưu thông tin file tạm thời
-          pendingFiles.set(chatId, { fileKey, fileName, ext, messageId });
+          pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
 
           await replyToLark(
             messageId,
