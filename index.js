@@ -57,10 +57,7 @@ function decryptMessage(encrypt) {
 async function getUserInfo(openId, token) {
   try {
     const response = await axios.get(`${process.env.LARK_DOMAIN}/open-apis/contact/v3/users/${openId}?user_id_type=open_id`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });
     const user = response.data.data.user;
     return user.name || `User_${openId.slice(-4)}`;
@@ -81,25 +78,15 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
     let msgType = 'text';
     if (mentionUserId && mentionUserName && mentionUserId !== process.env.BOT_OPEN_ID) {
       console.log('[Reply Debug] Tagging user:', mentionUserId, mentionUserName);
-      messageContent = {
-        text: `${content} <at user_id="${mentionUserId}">${mentionUserName}</at>`,
-      };
+      messageContent = { text: `${content} <at user_id="${mentionUserId}">${mentionUserName}</at>` };
     } else {
       messageContent = { text: content };
     }
 
     const response = await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
-      {
-        msg_type: msgType,
-        content: JSON.stringify(messageContent),
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-      }
+      { msg_type: msgType, content: JSON.stringify(messageContent) },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
     console.log('[Reply Success] Response:', response.data);
   } catch (err) {
@@ -170,10 +157,7 @@ async function logBotOpenId() {
   try {
     const token = await getAppAccessToken();
     const response = await axios.get(`${process.env.LARK_DOMAIN}/open-apis/bot/v3/info`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });
     const botOpenId = response.data.bot.open_id;
     console.log('[Bot Info] BOT_OPEN_ID:', botOpenId);
@@ -191,10 +175,7 @@ async function getAllRows(baseId, tableId, token, maxRows = 20) {
     const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
     try {
       console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId);
-      const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 15000,
-      });
+      const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 });
       rows.push(...(resp.data.data.items || []));
       pageToken = resp.data.data.page_token || '';
       if (rows.length >= maxRows) break;
@@ -349,14 +330,19 @@ app.post('/webhook', async (req, res) => {
 
       let userMessage = '';
       try {
-        const parsed = JSON.parse(message.content);
-        userMessage = parsed.text || '';
+        const parsedContent = JSON.parse(message.content);
+        // Xử lý text trong trường hợp có mention
+        userMessage = parsedContent.text || '';
+        if (userMessage.includes(`<at id="${botOpenId}">`)) {
+          userMessage = userMessage.replace(new RegExp(`<at id="${botOpenId}">[^<]*</at>`), '').trim();
+        }
       } catch (err) {
         console.error('[Parse Content Error] Nguyên nhân:', err.message, 'Content:', message.content);
       }
 
       console.log('[Message Debug] chatId:', chatId, 'messageId:', messageId, 'parentId:', parentId, 'messageType:', messageType, 'Full Message:', JSON.stringify(message));
       console.log('[Mentions Debug] Mentions:', JSON.stringify(mentions, null, 2));
+      console.log('[User Message] Sau khi xử lý:', userMessage);
 
       const hasAllMention = mentions.some(mention => mention.key === '@_all');
       if (hasAllMention && !isBotMentioned) {
