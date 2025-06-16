@@ -489,7 +489,10 @@ app.post('/webhook', async (req, res) => {
 
       if (baseId && tableId) {
         if (userMessage.toLowerCase().includes('trend purchase')) {
-          console.log('[Webhook] Phát hiện yêu cầu Trend Purchase, gọi sendTrendPurchaseChart với tableId:', tableId, 'viewId:', viewId);
+          // Ưu tiên tableId và viewId cho Trend Purchase
+          tableId = 'tbl61rgzOwS8viB2'; // Đảm bảo dùng tableId chứa dữ liệu raw
+          viewId = 'vewi5cxZif'; // Đảm bảo dùng viewId chứa dữ liệu biểu đồ
+          console.log('[Webhook] Phát hiện yêu cầu Trend Purchase, sử dụng tableId:', tableId, 'viewId:', viewId);
           await sendTrendPurchaseChart(messageId, baseId, tableId, viewId, token, mentionUserId, mentionUserName);
         } else {
           console.log('[Webhook] Không phải Trend Purchase, gọi processBaseData');
