@@ -7,7 +7,7 @@ const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
-const { createCanvas } = require('canvas'); // Thêm canvas để vẽ biểu đồ
+const { createCanvas } = require('canvas');
 require('dotenv').config();
 
 const app = express();
@@ -23,7 +23,7 @@ const BASE_MAPPINGS = {
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
 const pendingTasks = new Map();
-const pendingFiles = new Map(); // Lưu trữ file tạm thời theo chat_id
+const pendingFiles = new Map();
 
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
@@ -304,6 +304,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 // Function vẽ và gửi biểu đồ Trend Purchase
 async function getChartData(baseId, tableId, viewId, token) {
   const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records`;
+  console.log('[getChartData] Gọi API với URL:', url, 'viewId:', viewId);
   const resp = await axios.get(url, {
     headers: { Authorization: `Bearer ${token}` },
     params: { view_id: viewId, page_size: 50 },
@@ -358,10 +359,13 @@ async function createTrendPurchaseChart(data) {
 }
 
 async function sendTrendPurchaseChart(messageId, baseId, tableId, viewId, token, mentionUserId, mentionUserName) {
+  console.log('[sendTrendPurchaseChart] Bắt đầu, messageId:', messageId, 'baseId:', baseId, 'tableId:', tableId, 'viewId:', viewId);
   try {
     const chartData = await getChartData(baseId, tableId, viewId, token);
+    console.log('[sendTrendPurchaseChart] Dữ liệu lấy được:', chartData.length, 'dòng');
     const chartBuffer = await createTrendPurchaseChart(chartData);
     fs.writeFileSync(path.join('temp_files', `${messageId}_trend_chart.png`), chartBuffer);
+    console.log('[sendTrendPurchaseChart] Đã tạo file hình ảnh');
 
     const uploadResp = await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/images`,
@@ -369,13 +373,14 @@ async function sendTrendPurchaseChart(messageId, baseId, tableId, viewId, token,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const imageKey = uploadResp.data.data.image_key;
+    console.log('[sendTrendPurchaseChart] Upload thành công, imageKey:', imageKey);
 
     await replyToLark(messageId, {
       msg_type: 'image',
       content: JSON.stringify({ image_key: imageKey })
     }, mentionUserId, mentionUserName);
   } catch (err) {
-    console.error('[Chart Error]', err?.response?.data || err.message);
+    console.error('[Chart Error]', 'messageId:', messageId, 'Nguyên nhân:', err?.response?.data || err.message);
     await replyToLark(messageId, 'Lỗi khi tạo biểu đồ, vui lòng thử lại.', mentionUserId, mentionUserName);
   } finally {
     fs.unlink(path.join('temp_files', `${messageId}_trend_chart.png`), () => {});
@@ -421,7 +426,7 @@ app.post('/webhook', async (req, res) => {
       const messageId = message.message_id;
       const chatId = message.chat_id;
       const messageType = message.message_type;
-      const parentId = message.parent_id; // Theo dõi reply
+      const parentId = message.parent_id;
       const mentions = message.mentions || [];
 
       if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
@@ -471,43 +476,23 @@ app.post('/webhook', async (req, res) => {
 
       let baseId = '';
       let tableId = '';
-      let commandType = '';
+      let viewId = 'vewi5cxZif'; // Mặc định viewId cho Trend Purchase
 
-      const baseMatch = userMessage.match(/Base (\w+)/i);
-      const reportMatch = userMessage.match(/Report (\w+)/i);
-
-      if (baseMatch) {
-        commandType = 'BASE';
-        const baseName = baseMatch[1].toUpperCase();
-        const baseUrl = BASE_MAPPINGS[baseName];
-        if (baseUrl) {
-          const urlMatch = baseUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
-          if (urlMatch) {
-            baseId = urlMatch[1];
-            tableId = urlMatch[2];
-          }
-        }
-      } else if (reportMatch) {
-        commandType = 'REPORT';
-        const reportName = reportMatch[1].toUpperCase();
-        const reportKey = `REPORT_${reportName}`;
-        const reportUrl = BASE_MAPPINGS[reportKey];
-        if (reportUrl) {
-          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
-          if (urlMatch) {
-            baseId = urlMatch[1];
-            tableId = urlMatch[2];
-          }
-        }
+      // Trích xuất baseId và tableId từ URL trong tin nhắn
+      const urlMatch = userMessage.match(/https:\/\/cgfscmkep8m\.sg\.larksuite\.com\/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)(?:&view=([a-zA-Z0-9]+))?/);
+      if (urlMatch) {
+        baseId = urlMatch[1];
+        tableId = urlMatch[2];
+        viewId = urlMatch[3] || 'vewi5cxZif'; // Lấy viewId từ URL nếu có, hoặc mặc định
+        console.log('[Webhook] Trích xuất baseId:', baseId, 'tableId:', tableId, 'viewId:', viewId);
       }
 
       if (baseId && tableId) {
-        const viewMatch = userMessage.match(/view=([a-zA-Z0-9]+)/);
-        const viewId = viewMatch ? viewMatch[1] : 'vewi5cxZif'; // Mặc định viewId nếu không chỉ định
-
         if (userMessage.toLowerCase().includes('trend purchase')) {
+          console.log('[Webhook] Phát hiện yêu cầu Trend Purchase, gọi sendTrendPurchaseChart với tableId:', tableId, 'viewId:', viewId);
           await sendTrendPurchaseChart(messageId, baseId, tableId, viewId, token, mentionUserId, mentionUserName);
         } else {
+          console.log('[Webhook] Không phải Trend Purchase, gọi processBaseData');
           pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
           await processBaseData(messageId, baseId, tableId, userMessage, token);
         }
@@ -530,7 +515,6 @@ app.post('/webhook', async (req, res) => {
           const ext = path.extname(fileName).slice(1).toLowerCase();
           console.log('[File/Image Debug] File key:', fileKey, 'File name:', fileName, 'Extension:', ext);
 
-          // Lưu thông tin file tạm thời với timestamp
           pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
 
           await replyToLark(
@@ -549,7 +533,6 @@ app.post('/webhook', async (req, res) => {
           );
         }
       } else if (messageType === 'post' && parentId) {
-        // Xử lý reply với file trước đó
         const pendingFile = pendingFiles.get(chatId);
         if (pendingFile && pendingFile.messageId === parentId) {
           try {
@@ -598,7 +581,7 @@ app.post('/webhook', async (req, res) => {
               updateConversationMemory(chatId, 'assistant', cleanMessage);
               await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
             }
-            pendingFiles.delete(chatId); // Xóa file sau khi xử lý
+            pendingFiles.delete(chatId);
           } catch (err) {
             console.error('[Post Processing Error] Nguyên nhân:', err?.response?.data || err.message);
             await replyToLark(
