@@ -7,6 +7,7 @@ const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
+const { createCanvas } = require('canvas'); // Thêm canvas để vẽ biểu đồ
 require('dotenv').config();
 
 const app = express();
@@ -84,6 +85,9 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
       messageContent = {
         text: `${content} <at user_id="${mentionUserId}">${mentionUserName}</at>`,
       };
+    } else if (typeof content === 'object' && content.msg_type) {
+      msgType = content.msg_type;
+      messageContent = content.content;
     } else {
       messageContent = { text: content };
     }
@@ -92,7 +96,7 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
       {
         msg_type: msgType,
-        content: JSON.stringify(messageContent),
+        content: messageContent,
       },
       {
         headers: {
@@ -297,6 +301,87 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
   }
 }
 
+// Function vẽ và gửi biểu đồ Trend Purchase
+async function getChartData(baseId, tableId, viewId, token) {
+  const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records`;
+  const resp = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    params: { view_id: viewId, page_size: 50 },
+  });
+  return resp.data.data.items.map(item => item.fields);
+}
+
+async function createTrendPurchaseChart(data) {
+  const canvas = createCanvas(400, 200);
+  const ctx = canvas.getContext('2d');
+
+  // Nền và trục giống Lark Base
+  ctx.fillStyle = '#EAF0F7';
+  ctx.fillRect(0, 0, 400, 200);
+  ctx.strokeStyle = '#D3DCE6';
+  ctx.beginPath();
+  ctx.moveTo(50, 10);
+  ctx.lineTo(50, 190);
+  ctx.lineTo(390, 190);
+  ctx.stroke();
+
+  // Lấy dữ liệu (giả sử 'Date' và 'Purchase Value')
+  const dates = data.map(item => item['Date'] || item['Ngày'] || Object.keys(item)[0]).filter(d => d);
+  const values = data.map(item => parseFloat(item['Purchase Value'] || item['Giá trị'] || 0)).filter(v => !isNaN(v));
+  const maxValue = Math.max(...values, 300000); // Tối đa 300,000 theo trục y
+
+  // Vẽ cột
+  const barWidth = (340 / Math.max(dates.length, 1)) || 20;
+  values.forEach((value, i) => {
+    const height = (value / maxValue) * 180;
+    ctx.fillStyle = '#1E88E5'; // Màu xanh dương giống Lark
+    ctx.fillRect(50 + i * barWidth, 190 - height, barWidth - 5, height);
+    // Ghi nhãn giá trị
+    ctx.fillStyle = '#000';
+    ctx.font = '10px Arial';
+    ctx.fillText(value.toLocaleString(), 50 + i * barWidth, 190 - height - 5);
+  });
+
+  // Vẽ nhãn trục x (ngày)
+  dates.forEach((date, i) => {
+    ctx.fillStyle = '#000';
+    ctx.font = '10px Arial';
+    ctx.fillText(date.slice(0, 5), 50 + i * barWidth, 200); // Cắt ngắn ngày
+  });
+
+  // Vẽ nhãn trục y
+  ctx.fillText('0', 30, 190);
+  ctx.fillText((maxValue / 2).toLocaleString(), 20, 100);
+  ctx.fillText(maxValue.toLocaleString(), 20, 10);
+
+  return canvas.toBuffer('image/png');
+}
+
+async function sendTrendPurchaseChart(messageId, baseId, tableId, viewId, token, mentionUserId, mentionUserName) {
+  try {
+    const chartData = await getChartData(baseId, tableId, viewId, token);
+    const chartBuffer = await createTrendPurchaseChart(chartData);
+    fs.writeFileSync(path.join('temp_files', `${messageId}_trend_chart.png`), chartBuffer);
+
+    const uploadResp = await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/images`,
+      { image_type: 'message', image: fs.readFileSync(path.join('temp_files', `${messageId}_trend_chart.png`)) },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const imageKey = uploadResp.data.data.image_key;
+
+    await replyToLark(messageId, {
+      msg_type: 'image',
+      content: JSON.stringify({ image_key: imageKey })
+    }, mentionUserId, mentionUserName);
+  } catch (err) {
+    console.error('[Chart Error]', err?.response?.data || err.message);
+    await replyToLark(messageId, 'Lỗi khi tạo biểu đồ, vui lòng thử lại.', mentionUserId, mentionUserName);
+  } finally {
+    fs.unlink(path.join('temp_files', `${messageId}_trend_chart.png`), () => {});
+  }
+}
+
 // Xử lý tín hiệu dừng
 process.on('SIGTERM', () => {
   console.log('[Server] Nhận tín hiệu SIGTERM, đang tắt...');
@@ -417,8 +502,15 @@ app.post('/webhook', async (req, res) => {
       }
 
       if (baseId && tableId) {
-        pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
-        await processBaseData(messageId, baseId, tableId, userMessage, token);
+        const viewMatch = userMessage.match(/view=([a-zA-Z0-9]+)/);
+        const viewId = viewMatch ? viewMatch[1] : 'vewi5cxZif'; // Mặc định viewId nếu không chỉ định
+
+        if (userMessage.toLowerCase().includes('trend purchase')) {
+          await sendTrendPurchaseChart(messageId, baseId, tableId, viewId, token, mentionUserId, mentionUserName);
+        } else {
+          pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
+          await processBaseData(messageId, baseId, tableId, userMessage, token);
+        }
       } else if (messageType === 'file' || messageType === 'image') {
         try {
           console.log('[File/Image Debug] Processing message type:', messageType, 'Full Message:', JSON.stringify(message));
