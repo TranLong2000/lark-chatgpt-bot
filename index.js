@@ -250,14 +250,14 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
 1. Xác định các cột liên quan nhất để trả lời (trả về mảng JSON ["column1", "column2", ...]).
 2. Đề xuất cách xử lý dữ liệu (ví dụ: tính tổng, đếm, liệt kê) dựa trên ngữ nghĩa câu hỏi.
 3. Thực hiện tính toán hoặc xử lý trên dữ liệu mẫu (giả định dữ liệu là các giá trị số hoặc text từ các cột đã chọn) và trả về kết quả dưới dạng chuỗi.
-Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu tiên cột 'Month' cho thời gian và các cột khác dựa trên từ khóa như 'count', 'total', 'list', 'supplier'.`;
+Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu tiên cột 'Month' cho thời gian và các cột khác dựa trên từ khóa như 'count', 'total', 'list', 'supplier'. Trả về định dạng JSON hợp lệ {"columns": ["column1", "column2", ...], "operation": "tính tổng|đếm|liệt kê", "result": "chuỗi kết quả"} ngay cả khi có lỗi, thay vì trả về nội dung không hợp lệ.`;
 
     const aiResp = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là trợ lý AI chuyên phân tích và xử lý dữ liệu. Trả về kết quả dưới dạng JSON {"columns": ["column1", "column2", ...], "operation": "tính tổng|đếm|liệt kê", "result": "chuỗi kết quả"}.' },
+          { role: 'system', content: 'Bạn là trợ lý AI chuyên phân tích và xử lý dữ liệu. Luôn trả về JSON hợp lệ {"columns": [], "operation": "", "result": "chuỗi kết quả"} ngay cả khi không thể xử lý.' },
           { role: 'user', content: prompt },
         ],
         stream: false,
@@ -272,10 +272,13 @@ Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu 
     );
 
     const aiResponse = aiResp.data.choices?.[0]?.message?.content || '{"columns": [], "operation": "", "result": "Không thể xử lý"}';
-    const { columns, operation, result } = JSON.parse(aiResponse.replace(/```json|```/g, '').trim());
+    let { columns, operation, result } = JSON.parse(aiResponse.replace(/```json|```/g, '').trim());
     console.log('[AI Analysis] Columns:', columns, 'Operation:', operation, 'Result:', result);
 
     // Lấy dữ liệu chỉ với các cột đã chọn
+    if (columns.length === 0) {
+      columns = ['Month']; // Fallback nếu AI không xác định cột
+    }
     const rows = await getAllRows(baseId, tableId, token, columns);
     const allRows = rows.map(row => row.fields || {});
 
