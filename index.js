@@ -444,10 +444,10 @@ app.post('/webhook', async (req, res) => {
       const parentId = message.parent_id;
       const mentions = message.mentions || [];
 
-      if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
+      if (processedMessageIds.has(messageId)) return res.sendStatus(200); // Chỉ gửi một phản hồi
       processedMessageIds.add(messageId);
 
-      if (senderId === (process.env.BOT_SENDER_ID || '')) return res.json({ code: 0 });
+      if (senderId === (process.env.BOT_SENDER_ID || '')) return res.sendStatus(200);
 
       const botOpenId = process.env.BOT_OPEN_ID;
       const isBotMentioned = mentions.some(mention => mention.id.open_id === botOpenId);
@@ -465,14 +465,15 @@ app.post('/webhook', async (req, res) => {
 
       const hasAllMention = mentions.some(mention => mention.key === '@_all');
       if (hasAllMention && !isBotMentioned) {
-        return res.json({ code: 0 });
+        return res.sendStatus(200);
       }
 
       if (!isBotMentioned && messageType !== 'file' && messageType !== 'image') {
-        return res.json({ code: 0 });
+        return res.sendStatus(200);
       }
 
-      res.json({ code: 0 });
+      // Chỉ gửi phản hồi một lần
+      res.sendStatus(200);
 
       const token = await getAppAccessToken();
 
@@ -495,9 +496,10 @@ app.post('/webhook', async (req, res) => {
 
       // Chỉ mapping từ khóa trước dấu phẩy sau @mention
       const mentionPrefix = `@_user_1 `;
+      let reportMatch; // Định nghĩa reportMatch ở cấp độ ngoài if
       if (userMessage.startsWith(mentionPrefix)) {
         const contentAfterMention = userMessage.slice(mentionPrefix.length);
-        const reportMatch = contentAfterMention.match(new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|,)`, 'i'));
+        reportMatch = contentAfterMention.match(new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|,)`, 'i'));
         if (reportMatch) {
           const reportName = reportMatch[1].toUpperCase();
           const reportUrl = BASE_MAPPINGS[reportName];
