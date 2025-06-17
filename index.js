@@ -326,24 +326,23 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
     }
 
     const chatId = pendingTasks.get(messageId)?.chatId;
-    const memory = conversationMemory.get(chatId) || [];
     const headers = sheetData[0] || []; // Dòng đầu tiên là tiêu đề
     const rows = sheetData.slice(1).map(row => row.map(cell => cell || ''));
 
-    // Tìm cột ngày và cột PO
-    const dateColIndex = headers.findIndex(header => header && header.toLowerCase().includes('date') || header.toLowerCase().includes('ngày'));
-    const poColIndex = headers.findIndex(header => header && header.toLowerCase().includes('po'));
+    // Tìm cột Month và Count PO
+    const monthColIndex = headers.findIndex(header => header && header.toLowerCase().includes('month'));
+    const poColIndex = headers.findIndex(header => header && header.toLowerCase().includes('count po'));
 
-    if (dateColIndex === -1 || poColIndex === -1) {
-      await replyToLark(messageId, 'Không tìm thấy cột Date hoặc PO trong sheet.', mentionUserId, mentionUserName);
+    if (monthColIndex === -1 || poColIndex === -1) {
+      await replyToLark(messageId, 'Không tìm thấy cột Month hoặc Count PO trong sheet.', mentionUserId, mentionUserName);
       return;
     }
 
     // Lọc dữ liệu cho tháng 06/2025
     const targetMonth = '06/2025';
     const filteredRows = rows.filter(row => {
-      const date = row[dateColIndex];
-      return date && date.includes(targetMonth);
+      const month = row[monthColIndex];
+      return month && month === targetMonth; // So sánh chính xác
     });
 
     let totalPO = 0;
@@ -472,12 +471,17 @@ app.post('/webhook', async (req, res) => {
       } else if (reportMatch) {
         const reportName = reportMatch[1].toUpperCase();
         const reportKey = `REPORT_${reportName}`;
-        const reportUrl = BASE_MAPPINGS[reportKey];
+        const reportUrl = BASE_MAPPINGS[reportKey] || SHEET_MAPPINGS[reportKey];
         if (reportUrl) {
-          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
-          if (urlMatch) {
-            baseId = urlMatch[1];
-            tableId = urlMatch[2];
+          if (reportUrl.includes('sheets')) {
+            const urlMatch = reportUrl.match(/sheets\/([a-zA-Z0-9]+)/);
+            if (urlMatch) spreadsheetToken = urlMatch[1];
+          } else {
+            const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
+            if (urlMatch) {
+              baseId = urlMatch[1];
+              tableId = urlMatch[2];
+            }
           }
         }
       } else if (sheetMatch) {
