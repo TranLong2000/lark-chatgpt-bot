@@ -493,27 +493,25 @@ app.post('/webhook', async (req, res) => {
       let tableId = '';
       let spreadsheetToken = '';
 
-      // Chỉ mapping trước dấu phẩy ở đầu câu
-      const reportMatch = userMessage.match(new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|,)`, 'i'));
-      if (reportMatch) {
-        const reportName = reportMatch[1].toUpperCase();
-        const reportUrl = BASE_MAPPINGS[reportName];
-        if (reportUrl) {
-          console.log('[Webhook] Processing report:', reportName, 'URL:', reportUrl);
-          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
-          if (urlMatch) {
-            baseId = urlMatch[1];
-            tableId = urlMatch[2];
-            console.log('[Webhook] Extracted baseId:', baseId, 'tableId:', tableId);
-          } else {
-            console.error('[Webhook] Failed to extract baseId/tableId from URL:', reportUrl);
+      // Chỉ mapping từ khóa trước dấu phẩy sau @mention
+      const mentionPrefix = `@_user_1 `;
+      if (userMessage.startsWith(mentionPrefix)) {
+        const contentAfterMention = userMessage.slice(mentionPrefix.length);
+        const reportMatch = contentAfterMention.match(new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|,)`, 'i'));
+        if (reportMatch) {
+          const reportName = reportMatch[1].toUpperCase();
+          const reportUrl = BASE_MAPPINGS[reportName];
+          if (reportUrl) {
+            console.log('[Webhook] Processing report:', reportName, 'URL:', reportUrl);
+            const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
+            if (urlMatch) {
+              baseId = urlMatch[1];
+              tableId = urlMatch[2];
+              console.log('[Webhook] Extracted baseId:', baseId, 'tableId:', tableId);
+            } else {
+              console.error('[Webhook] Failed to extract baseId/tableId from URL:', reportUrl);
+            }
           }
-        }
-      } else {
-        const sheetMatch = userMessage.match(/https:\/\/cgfscmkep8m\.sg\.larksuite\.com\/sheets\/([a-zA-Z0-9]+)/);
-        if (sheetMatch) {
-          spreadsheetToken = sheetMatch[1];
-          console.log('[Webhook] Trích xuất spreadsheetToken:', spreadsheetToken);
         }
       }
 
