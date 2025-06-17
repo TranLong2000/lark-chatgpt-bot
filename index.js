@@ -190,25 +190,26 @@ async function logBotOpenId() {
   }
 }
 
-async function getAllRows(baseId, tableId, token, maxRows = 50) {
+async function getAllRows(baseId, tableId, token, requiredFields = []) {
   const rows = [];
   let pageToken = '';
+  const fieldNames = requiredFields.length > 0 ? requiredFields : [];
   do {
     const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
     try {
-      console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId);
+      console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId, 'Fields:', fieldNames);
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
+        params: { field_names: fieldNames.join(',') },
         timeout: 15000,
       });
       rows.push(...(resp.data.data.items || []));
       pageToken = resp.data.data.page_token || '';
-      if (rows.length >= maxRows) break;
     } catch (e) {
       console.error('[getAllRows] Lỗi:', e.response?.data || e.message);
       break;
     }
-  } while (pageToken && rows.length < maxRows);
+  } while (pageToken && rows.length < 50); // Giới hạn tối đa 50 dòng
   console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 2)));
   return rows;
 }
@@ -239,7 +240,15 @@ function updateConversationMemory(chatId, role, content) {
 
 async function processBaseData(messageId, baseId, tableId, userMessage, token) {
   try {
-    const rows = await getAllRows(baseId, tableId, token);
+    // Xác định các cột cần thiết dựa trên câu hỏi
+    let requiredFields = ['Month'];
+    if (userMessage.toLowerCase().includes('số po') || userMessage.toLowerCase().includes('count po')) {
+      requiredFields.push('Count PO');
+    } else if (userMessage.toLowerCase().includes('nhà cung cấp')) {
+      requiredFields.push('SupplierName'); // Giả định tên cột nhà cung cấp
+    }
+
+    const rows = await getAllRows(baseId, tableId, token, requiredFields);
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
@@ -269,7 +278,6 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     const headers = Object.keys(firstRow || {});
     console.log('[processBaseData] Tất cả headers:', headers);
 
-    // Tự động nhận diện cột dựa trên câu hỏi
     const monthCol = headers.find(header => header.toLowerCase().includes('month') || header.toLowerCase().includes('tháng'));
     let valueCol = null;
     if (userMessage.toLowerCase().includes('số po') || userMessage.toLowerCase().includes('count po')) {
@@ -304,12 +312,11 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     const filteredRows = validRows.filter(row => {
       const month = row[monthCol];
       let monthValue = month ? month.toString().trim() : null;
-      // Xử lý định dạng text (ví dụ: "Tháng 9/2024" hoặc "9/2024")
       if (monthValue && monthValue.toLowerCase().startsWith('tháng')) {
         monthValue = monthValue.replace(/tháng/i, '').trim();
       }
       if (monthValue && !monthValue.includes('/')) {
-        monthValue = `0${monthValue}/2024`; // Giả định năm 2024 nếu không có năm
+        monthValue = `0${monthValue}/2024`;
       }
       console.log('[processBaseData] Checking row:', JSON.stringify(row), 'Month value:', monthValue, 'Target:', targetMonth);
       return monthValue && monthValue === targetMonth;
