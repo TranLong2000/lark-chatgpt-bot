@@ -209,7 +209,7 @@ async function getAllRows(baseId, tableId, token, maxRows = 50) {
       break;
     }
   } while (pageToken && rows.length < maxRows);
-  console.log('[getAllRows] Tổng số dòng lấy được:', rows.length);
+  console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 2)));
   return rows;
 }
 
@@ -267,21 +267,27 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     const headers = Object.keys(firstRow || {});
     const rowsData = validRows;
 
-    // Tìm cột Month và Count PO (hoặc tương tự)
+    console.log('[processBaseData] Headers:', headers);
+
+    // Tìm cột Month và Count PO (hoặc tương tự) linh hoạt hơn
     const monthCol = headers.find(header => header.toLowerCase().includes('month') || header.toLowerCase().includes('tháng'));
-    const poCol = headers.find(header => header.toLowerCase().includes('count po') || header.toLowerCase().includes('số po'));
+    const poCol = headers.find(header => header.toLowerCase().includes('count po') || header.toLowerCase().includes('số po') || header.toLowerCase().includes('po count'));
 
     if (!monthCol || !poCol) {
-      await replyToLark(messageId, 'Không tìm thấy cột Month hoặc Count PO trong bảng.', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+      await replyToLark(messageId, 'Không tìm thấy cột Month hoặc Count PO trong bảng. Headers: ' + JSON.stringify(headers), pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
       return;
     }
+
+    console.log('[processBaseData] Selected columns - Month:', monthCol, 'Count PO:', poCol);
 
     // Lọc dữ liệu cho tháng 6/2025
     const targetMonth = '06/2025';
     const filteredRows = rowsData.filter(row => {
       const month = row[monthCol];
-      return month && month === targetMonth;
+      return month && month.toString().trim() === targetMonth;
     });
+
+    console.log('[processBaseData] Filtered rows for 06/2025:', JSON.stringify(filteredRows));
 
     let totalPO = 0;
     filteredRows.forEach(row => {
@@ -350,7 +356,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
     updateConversationMemory(chatId, 'assistant', response);
     await replyToLark(messageId, response, mentionUserId, mentionUserName);
   } catch (e) {
-    console.error('[Sheet API Error]', e?.response?.data || e.message);
+    console.error('[Sheet API Error]', e?.response?.data || err.message);
     await replyToLark(messageId, '❌ Lỗi khi xử lý Lark Sheet, vui lòng thử lại sau.', mentionUserId, mentionUserName);
   } finally {
     pendingTasks.delete(messageId);
