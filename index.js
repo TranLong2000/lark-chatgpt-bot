@@ -415,11 +415,11 @@ setInterval(() => {
 }, 2 * 60 * 60 * 1000);
 
 app.post('/webhook', async (req, res) => {
+  let bodyRaw = req.body.toString('utf8'); // Định nghĩa bodyRaw ở cấp độ ngoài try-catch
   try {
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
     const nonce = req.headers['x-lark-request-nonce'];
-    const bodyRaw = req.body.toString('utf8');
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
       console.error('[Webhook] Chữ ký không hợp lệ, kiểm tra LARK_ENCRYPT_KEY. Request Body:', bodyRaw);
@@ -669,7 +669,7 @@ app.post('/webhook', async (req, res) => {
       }
     }
   } catch (e) {
-    console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', bodyRaw);
+    console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', bodyRaw || 'Không có dữ liệu');
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
