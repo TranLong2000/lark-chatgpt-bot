@@ -499,7 +499,7 @@ app.post('/webhook', async (req, res) => {
         console.log('[Webhook] Trích xuất spreadsheetToken:', spreadsheetToken);
       }
 
-      if (baseId && tableId) {
+      if (baseId && tableId && userMessage.toLowerCase().includes('report pur_base')) {
         pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
         await processBaseData(messageId, baseId, tableId, userMessage, token);
       } else if (spreadsheetToken) {
