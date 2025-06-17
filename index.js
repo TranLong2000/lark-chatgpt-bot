@@ -116,7 +116,7 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
 async function extractFileContent(fileUrl, fileType) {
   try {
     console.log('[ExtractFileContent] Đang tải file:', fileUrl, 'với type:', fileType);
-    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 10000 });
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 20000 });
     const buffer = Buffer.from(response.data);
 
     if (fileType === 'pdf') {
@@ -165,11 +165,16 @@ async function extractImageContent(imageData) {
 }
 
 async function getAppAccessToken() {
-  const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
-    app_id: process.env.LARK_APP_ID,
-    app_secret: process.env.LARK_APP_SECRET,
-  });
-  return resp.data.app_access_token;
+  try {
+    const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
+      app_id: process.env.LARK_APP_ID,
+      app_secret: process.env.LARK_APP_SECRET,
+    }, { timeout: 20000 });
+    return resp.data.app_access_token;
+  } catch (err) {
+    console.error('[GetAppAccessToken Error]', err?.response?.data || err.message);
+    throw err;
+  }
 }
 
 async function logBotOpenId() {
@@ -180,6 +185,7 @@ async function logBotOpenId() {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
+      timeout: 20000,
     });
     const botOpenId = response.data.bot.open_id;
     console.log('[Bot Info] BOT_OPEN_ID:', botOpenId);
@@ -201,7 +207,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
         params: { field_names: fieldNames.join(',') },
-        timeout: 15000,
+        timeout: 20000,
       });
       rows.push(...(resp.data.data.items || []));
       pageToken = resp.data.data.page_token || '';
@@ -220,7 +226,7 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
   try {
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 15000,
+      timeout: 20000,
     });
     return resp.data.data.valueRange.values || [];
   } catch (err) {
@@ -267,7 +273,7 @@ Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu 
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 15000,
+        timeout: 20000,
       }
     );
 
@@ -354,7 +360,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     updateConversationMemory(chatId, 'assistant', result);
     await replyToLark(messageId, result, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
   } catch (e) {
-    console.error('[Base API Error]', e?.response?.data || e.message);
+    console.error('[Base API Error] Nguyên nhân:', e?.response?.data || e.message);
     await replyToLark(
       messageId,
       'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
@@ -410,7 +416,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
     updateConversationMemory(chatId, 'assistant', response);
     await replyToLark(messageId, response, mentionUserId, mentionUserName);
   } catch (e) {
-    console.error('[Sheet API Error]', e?.response?.data || err.message);
+    console.error('[Sheet API Error] Nguyên nhân:', e?.response?.data || err.message);
     await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
   } finally {
     pendingTasks.delete(messageId);
@@ -584,7 +590,7 @@ app.post('/webhook', async (req, res) => {
 
             const fileUrlResp = await axios.get(
               `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${fileKey}/download_url`,
-              { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
+              { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
             );
             const fileUrl = fileUrlResp.data.data.download_url;
             console.log('[Post Debug] Download URL:', fileUrl);
@@ -615,7 +621,7 @@ app.post('/webhook', async (req, res) => {
                     Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
                     'Content-Type': 'application/json',
                   },
-                  timeout: 15000,
+                  timeout: 20000,
                 }
               );
 
@@ -660,7 +666,7 @@ app.post('/webhook', async (req, res) => {
                 Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
                 'Content-Type': 'application/json',
               },
-              timeout: 15000,
+              timeout: 20000,
             }
           );
 
