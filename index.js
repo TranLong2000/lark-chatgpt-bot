@@ -19,10 +19,15 @@ const BASE_MAPPINGS = {
   'REPORT_FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr'
 };
 
+// Thêm ánh xạ cho Lark Sheet
+const SHEET_MAPPINGS = {
+  'REPORT_PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
+};
+
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
 const pendingTasks = new Map();
-const pendingFiles = new Map(); // Lưu trữ file tạm thời theo chat_id
+const pendingFiles = new Map();
 
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
@@ -207,6 +212,21 @@ async function getAllRows(baseId, tableId, token, maxRows = 20) {
   return rows;
 }
 
+async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${range}`;
+  console.log('[getSheetData] Gọi API với URL:', url);
+  try {
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 15000,
+    });
+    return resp.data.data.valueRange.values || [];
+  } catch (err) {
+    console.error('[getSheetData Error]', err?.response?.data || err.message);
+    return [];
+  }
+}
+
 function updateConversationMemory(chatId, role, content) {
   if (!conversationMemory.has(chatId)) {
     conversationMemory.set(chatId, []);
@@ -297,6 +317,53 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
   }
 }
 
+async function processSheetData(messageId, spreadsheetToken, userMessage, token, mentionUserId, mentionUserName) {
+  try {
+    const sheetData = await getSheetData(spreadsheetToken, token);
+    if (!sheetData || sheetData.length === 0) {
+      await replyToLark(messageId, 'Không có dữ liệu từ Lark Sheet.', mentionUserId, mentionUserName);
+      return;
+    }
+
+    const chatId = pendingTasks.get(messageId)?.chatId;
+    const memory = conversationMemory.get(chatId) || [];
+    const headers = sheetData[0] || []; // Dòng đầu tiên là tiêu đề
+    const rows = sheetData.slice(1).map(row => row.map(cell => cell || ''));
+
+    // Tìm cột ngày và cột PO
+    const dateColIndex = headers.findIndex(header => header && header.toLowerCase().includes('date') || header.toLowerCase().includes('ngày'));
+    const poColIndex = headers.findIndex(header => header && header.toLowerCase().includes('po'));
+
+    if (dateColIndex === -1 || poColIndex === -1) {
+      await replyToLark(messageId, 'Không tìm thấy cột Date hoặc PO trong sheet.', mentionUserId, mentionUserName);
+      return;
+    }
+
+    // Lọc dữ liệu cho tháng 06/2025
+    const targetMonth = '06/2025';
+    const filteredRows = rows.filter(row => {
+      const date = row[dateColIndex];
+      return date && date.includes(targetMonth);
+    });
+
+    let totalPO = 0;
+    filteredRows.forEach(row => {
+      const poValue = parseFloat(row[poColIndex]) || 0;
+      totalPO += poValue;
+    });
+
+    const response = totalPO > 0 ? `Tổng số PO của tháng 06/2025 là ${totalPO}` : 'Không có dữ liệu PO cho tháng 06/2025.';
+    updateConversationMemory(chatId, 'user', userMessage);
+    updateConversationMemory(chatId, 'assistant', response);
+    await replyToLark(messageId, response, mentionUserId, mentionUserName);
+  } catch (e) {
+    console.error('[Sheet API Error]', e?.response?.data || e.message);
+    await replyToLark(messageId, '❌ Lỗi khi xử lý Lark Sheet, vui lòng thử lại sau.', mentionUserId, mentionUserName);
+  } finally {
+    pendingTasks.delete(messageId);
+  }
+}
+
 // Xử lý tín hiệu dừng
 process.on('SIGTERM', () => {
   console.log('[Server] Nhận tín hiệu SIGTERM, đang tắt...');
@@ -336,7 +403,7 @@ app.post('/webhook', async (req, res) => {
       const messageId = message.message_id;
       const chatId = message.chat_id;
       const messageType = message.message_type;
-      const parentId = message.parent_id; // Theo dõi reply
+      const parentId = message.parent_id;
       const mentions = message.mentions || [];
 
       if (processedMessageIds.has(messageId)) return res.send({ code: 0 });
@@ -386,13 +453,13 @@ app.post('/webhook', async (req, res) => {
 
       let baseId = '';
       let tableId = '';
-      let commandType = '';
+      let spreadsheetToken = '';
 
       const baseMatch = userMessage.match(/Base (\w+)/i);
       const reportMatch = userMessage.match(/Report (\w+)/i);
+      const sheetMatch = userMessage.match(/https:\/\/cgfscmkep8m\.sg\.larksuite\.com\/sheets\/([a-zA-Z0-9]+)/);
 
       if (baseMatch) {
-        commandType = 'BASE';
         const baseName = baseMatch[1].toUpperCase();
         const baseUrl = BASE_MAPPINGS[baseName];
         if (baseUrl) {
@@ -403,7 +470,6 @@ app.post('/webhook', async (req, res) => {
           }
         }
       } else if (reportMatch) {
-        commandType = 'REPORT';
         const reportName = reportMatch[1].toUpperCase();
         const reportKey = `REPORT_${reportName}`;
         const reportUrl = BASE_MAPPINGS[reportKey];
@@ -414,11 +480,17 @@ app.post('/webhook', async (req, res) => {
             tableId = urlMatch[2];
           }
         }
+      } else if (sheetMatch) {
+        spreadsheetToken = sheetMatch[1];
+        console.log('[Webhook] Trích xuất spreadsheetToken:', spreadsheetToken);
       }
 
       if (baseId && tableId) {
         pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
         await processBaseData(messageId, baseId, tableId, userMessage, token);
+      } else if (spreadsheetToken) {
+        pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
+        await processSheetData(messageId, spreadsheetToken, userMessage, token, mentionUserId, mentionUserName);
       } else if (messageType === 'file' || messageType === 'image') {
         try {
           console.log('[File/Image Debug] Processing message type:', messageType, 'Full Message:', JSON.stringify(message));
@@ -438,7 +510,6 @@ app.post('/webhook', async (req, res) => {
           const ext = path.extname(fileName).slice(1).toLowerCase();
           console.log('[File/Image Debug] File key:', fileKey, 'File name:', fileName, 'Extension:', ext);
 
-          // Lưu thông tin file tạm thời với timestamp
           pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
 
           await replyToLark(
@@ -457,7 +528,6 @@ app.post('/webhook', async (req, res) => {
           );
         }
       } else if (messageType === 'post' && parentId) {
-        // Xử lý reply với file trước đó
         const pendingFile = pendingFiles.get(chatId);
         if (pendingFile && pendingFile.messageId === parentId) {
           try {
@@ -506,7 +576,7 @@ app.post('/webhook', async (req, res) => {
               updateConversationMemory(chatId, 'assistant', cleanMessage);
               await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
             }
-            pendingFiles.delete(chatId); // Xóa file sau khi xử lý
+            pendingFiles.delete(chatId);
           } catch (err) {
             console.error('[Post Processing Error] Nguyên nhân:', err?.response?.data || err.message);
             await replyToLark(
