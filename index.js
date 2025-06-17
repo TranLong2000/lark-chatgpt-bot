@@ -243,6 +243,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
+      console.log('[processBaseData] Không có dữ liệu trong Base');
       await replyToLark(
         messageId,
         'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
@@ -254,6 +255,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 
     const validRows = allRows.filter(row => row && typeof row === 'object');
     if (validRows.length === 0) {
+      console.log('[processBaseData] Không có hàng hợp lệ');
       await replyToLark(
         messageId,
         'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
@@ -265,9 +267,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 
     const firstRow = validRows[0];
     const headers = Object.keys(firstRow || {});
-    const rowsData = validRows;
-
-    console.log('[processBaseData] Headers:', headers);
+    console.log('[processBaseData] Tất cả headers:', headers);
 
     // Tự động nhận diện cột dựa trên câu hỏi
     const monthCol = headers.find(header => header.toLowerCase().includes('month') || header.toLowerCase().includes('tháng'));
@@ -280,12 +280,12 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 
     if (!monthCol) {
       console.log('[processBaseData] Không tìm thấy cột Month');
-      await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+      await replyToLark(messageId, 'Xin lỗi, không tìm thấy cột Month trong dữ liệu, vui lòng kiểm tra Base', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
       return;
     }
     if (!valueCol) {
       console.log('[processBaseData] Không tìm thấy cột phù hợp cho Số PO');
-      await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+      await replyToLark(messageId, 'Xin lỗi, không tìm thấy cột Count PO trong dữ liệu, vui lòng kiểm tra Base', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
       return;
     }
 
@@ -299,11 +299,20 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
       const year = monthMatch[2];
       targetMonth = `${month}/${year}`;
     }
+    console.log('[processBaseData] Target month:', targetMonth);
 
-    const filteredRows = rowsData.filter(row => {
+    const filteredRows = validRows.filter(row => {
       const month = row[monthCol];
-      console.log('[processBaseData] Checking row:', row, 'Month value:', month);
-      return month && month.toString().trim() === targetMonth;
+      let monthValue = month ? month.toString().trim() : null;
+      // Xử lý định dạng text (ví dụ: "Tháng 9/2024" hoặc "9/2024")
+      if (monthValue && monthValue.toLowerCase().startsWith('tháng')) {
+        monthValue = monthValue.replace(/tháng/i, '').trim();
+      }
+      if (monthValue && !monthValue.includes('/')) {
+        monthValue = `0${monthValue}/2024`; // Giả định năm 2024 nếu không có năm
+      }
+      console.log('[processBaseData] Checking row:', JSON.stringify(row), 'Month value:', monthValue, 'Target:', targetMonth);
+      return monthValue && monthValue === targetMonth;
     });
 
     console.log('[processBaseData] Filtered rows for', targetMonth, ':', JSON.stringify(filteredRows));
@@ -312,7 +321,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
       console.log('[processBaseData] Không có dữ liệu cho tháng:', targetMonth);
       await replyToLark(
         messageId,
-        'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
+        `Xin lỗi, không có dữ liệu cho tháng ${targetMonth}, vui lòng kiểm tra và cập nhật Base`,
         pendingTasks.get(messageId)?.mentionUserId,
         pendingTasks.get(messageId)?.mentionUserName
       );
