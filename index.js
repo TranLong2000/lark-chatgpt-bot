@@ -269,33 +269,43 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 
     console.log('[processBaseData] Headers:', headers);
 
-    // Tìm cột Month và Count PO (hoặc tương tự) linh hoạt hơn
+    // Tự động nhận diện cột dựa trên câu hỏi
     const monthCol = headers.find(header => header.toLowerCase().includes('month') || header.toLowerCase().includes('tháng'));
-    const poCol = headers.find(header => header.toLowerCase().includes('count po') || header.toLowerCase().includes('số po') || header.toLowerCase().includes('po count'));
+    let valueCol = null;
+    if (userMessage.toLowerCase().includes('số po') || userMessage.toLowerCase().includes('count po')) {
+      valueCol = headers.find(header => header.toLowerCase().includes('count po') || header.toLowerCase().includes('số po') || header.toLowerCase().includes('po count'));
+    }
 
-    if (!monthCol || !poCol) {
-      await replyToLark(messageId, 'Không tìm thấy cột Month hoặc Count PO trong bảng. Headers: ' + JSON.stringify(headers), pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+    if (!monthCol || !valueCol) {
+      await replyToLark(messageId, 'Không tìm thấy cột phù hợp trong bảng. Headers: ' + JSON.stringify(headers), pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
       return;
     }
 
-    console.log('[processBaseData] Selected columns - Month:', monthCol, 'Count PO:', poCol);
+    console.log('[processBaseData] Selected columns - Month:', monthCol, 'Value:', valueCol);
 
-    // Lọc dữ liệu cho tháng 6/2025
-    const targetMonth = '06/2025';
+    // Lọc dữ liệu dựa trên tháng trong câu hỏi
+    const monthMatch = userMessage.match(/tháng\s*(\d{1,2})\/(\d{4})/i) || userMessage.match(/month\s*(\d{1,2})\/(\d{4})/i);
+    let targetMonth = '06/2025'; // Mặc định tháng 6/2025 nếu không tìm thấy
+    if (monthMatch) {
+      const month = monthMatch[1].padStart(2, '0');
+      const year = monthMatch[2];
+      targetMonth = `${month}/${year}`;
+    }
+
     const filteredRows = rowsData.filter(row => {
       const month = row[monthCol];
       return month && month.toString().trim() === targetMonth;
     });
 
-    console.log('[processBaseData] Filtered rows for 06/2025:', JSON.stringify(filteredRows));
+    console.log('[processBaseData] Filtered rows for', targetMonth, ':', JSON.stringify(filteredRows));
 
-    let totalPO = 0;
+    let totalValue = 0;
     filteredRows.forEach(row => {
-      const poValue = parseFloat(row[poCol]) || 0;
-      totalPO += poValue;
+      const value = parseFloat(row[valueCol]) || 0;
+      totalValue += value;
     });
 
-    const response = totalPO > 0 ? `Tổng số PO của tháng 6/2025 là ${totalPO}` : 'Không có dữ liệu PO cho tháng 6/2025.';
+    const response = totalValue > 0 ? `Tổng ${valueCol} của ${targetMonth} là ${totalValue}` : `Không có dữ liệu ${valueCol} cho ${targetMonth}.`;
     const chatId = pendingTasks.get(messageId)?.chatId;
     updateConversationMemory(chatId, 'user', userMessage);
     updateConversationMemory(chatId, 'assistant', response);
