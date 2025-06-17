@@ -215,7 +215,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       console.error('[getAllRows] Lỗi:', e.response?.data || e.message);
       break;
     }
-  } while (pageToken && rows.length < 50); // Giới hạn tối đa 50 dòng
+  } while (pageToken && rows.length < 100); // Tăng giới hạn lên 100 dòng
   console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 2)));
   return rows;
 }
@@ -277,7 +277,9 @@ Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu 
       }
     );
 
-    const aiResponse = aiResp.data.choices?.[0]?.message?.content || '{"columns": [], "operation": "", "result": "Không thể xử lý"}';
+    let aiResponse = aiResp.data.choices?.[0]?.message?.content || '{"columns": [], "operation": "", "result": "Không thể xử lý"}';
+    // Làm sạch phản hồi để loại bỏ ký tự không mong muốn
+    aiResponse = aiResponse.replace(/[#`~]/g, '').trim();
     let { columns, operation, result } = JSON.parse(aiResponse.replace(/```json|```/g, '').trim());
     console.log('[AI Analysis] Columns:', columns, 'Operation:', operation, 'Result:', result);
 
@@ -297,19 +299,20 @@ Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu 
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Nếu AI chưa tính toán đầy đủ, thực hiện dựa trên operation
+    // Nếu AI thất bại, sử dụng logic fallback
     if (!result || result === 'Không thể xử lý') {
       const monthCol = columns.find(col => col.toLowerCase().includes('month'));
-      let valueCol = columns.find(col => !col.toLowerCase().includes('month'));
+      let valueCol = columns.find(col => col.toLowerCase().includes('count') || col.toLowerCase().includes('po'));
 
       if (!monthCol) {
         return { result: 'Không tìm thấy cột Month' };
       }
       if (!valueCol) {
-        return { result: 'Không tìm thấy cột dữ liệu' };
+        valueCol = columns.find(col => col !== monthCol); // Lấy cột khác làm giá trị mặc định
+        if (!valueCol) return { result: 'Không tìm thấy cột dữ liệu' };
       }
 
-      const monthMatch = userMessage.match(/tháng\s*(\d{1,2})\/(\d{4})/i) || userMessage.match(/month\s*(\d{1,2})\/(\d{4})/i);
+      const monthMatch = userMessage.match(/tháng\s*(\d{1,2})\/(\d{4})/i);
       let targetMonth = '06/2025'; // Mặc định
       if (monthMatch) {
         const month = monthMatch[1].padStart(2, '0');
@@ -333,16 +336,8 @@ Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu 
         return { result: `Không có dữ liệu cho tháng ${targetMonth}` };
       }
 
-      if (operation.toLowerCase().includes('tính tổng') || operation.toLowerCase().includes('total')) {
-        const total = filteredRows.reduce((sum, row) => sum + (parseFloat(row[valueCol]) || 0), 0);
-        return { result: `Tổng ${valueCol} của ${targetMonth} là ${total}` };
-      } else if (operation.toLowerCase().includes('đếm') || operation.toLowerCase().includes('count')) {
-        const count = filteredRows.length;
-        return { result: `Số lượng ${valueCol} trong ${targetMonth} là ${count}` };
-      } else if (operation.toLowerCase().includes('liệt kê') || operation.toLowerCase().includes('list')) {
-        const uniqueValues = [...new Set(filteredRows.map(row => row[valueCol] || 'Không xác định'))];
-        return { result: `Các ${valueCol} trong ${targetMonth} là: ${uniqueValues.join(', ')}` };
-      }
+      const total = filteredRows.reduce((sum, row) => sum + (parseFloat(row[valueCol]) || 0), 0);
+      return { result: `Tổng ${valueCol} của ${targetMonth} là ${total}` };
     }
 
     return { result };
