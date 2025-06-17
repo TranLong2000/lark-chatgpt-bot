@@ -238,122 +238,118 @@ function updateConversationMemory(chatId, role, content) {
   if (mem.length > 10) mem.shift();
 }
 
-async function processBaseData(messageId, baseId, tableId, userMessage, token) {
+async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
-    // Xác định các cột cần thiết dựa trên câu hỏi
-    let requiredFields = ['Month'];
-    if (userMessage.toLowerCase().includes('số po') || userMessage.toLowerCase().includes('count po')) {
-      requiredFields.push('Count PO');
-    } else if (userMessage.toLowerCase().includes('nhà cung cấp')) {
-      requiredFields.push('SupplierName'); // Giả định tên cột nhà cung cấp
-    }
+    // Lấy hàng đầu tiên để làm mẫu tiêu đề cột
+    const sampleRows = await getAllRows(baseId, tableId, token, []);
+    const firstRow = sampleRows[0]?.fields || {};
+    const headers = Object.keys(firstRow);
 
-    const rows = await getAllRows(baseId, tableId, token, requiredFields);
+    // Gửi câu hỏi và tiêu đề cột đến AI để phân tích và xử lý
+    const prompt = `Dựa trên câu hỏi: "${userMessage}", và các tiêu đề cột từ Base: ${JSON.stringify(headers)}, hãy:
+1. Xác định các cột liên quan nhất để trả lời (trả về mảng JSON ["column1", "column2", ...]).
+2. Đề xuất cách xử lý dữ liệu (ví dụ: tính tổng, đếm, liệt kê) dựa trên ngữ nghĩa câu hỏi.
+3. Thực hiện tính toán hoặc xử lý trên dữ liệu mẫu (giả định dữ liệu là các giá trị số hoặc text từ các cột đã chọn) và trả về kết quả dưới dạng chuỗi.
+Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu tiên cột 'Month' cho thời gian và các cột khác dựa trên từ khóa như 'count', 'total', 'list', 'supplier'.`;
+
+    const aiResp = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn là trợ lý AI chuyên phân tích và xử lý dữ liệu. Trả về kết quả dưới dạng JSON {"columns": ["column1", "column2", ...], "operation": "tính tổng|đếm|liệt kê", "result": "chuỗi kết quả"}.' },
+          { role: 'user', content: prompt },
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      }
+    );
+
+    const aiResponse = aiResp.data.choices?.[0]?.message?.content || '{"columns": [], "operation": "", "result": "Không thể xử lý"}';
+    const { columns, operation, result } = JSON.parse(aiResponse.replace(/```json|```/g, '').trim());
+    console.log('[AI Analysis] Columns:', columns, 'Operation:', operation, 'Result:', result);
+
+    // Lấy dữ liệu chỉ với các cột đã chọn
+    const rows = await getAllRows(baseId, tableId, token, columns);
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
-      console.log('[processBaseData] Không có dữ liệu trong Base');
-      await replyToLark(
-        messageId,
-        'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
-        pendingTasks.get(messageId)?.mentionUserId,
-        pendingTasks.get(messageId)?.mentionUserName
-      );
-      return;
+      return { result: 'Không có dữ liệu trong Base' };
     }
 
     const validRows = allRows.filter(row => row && typeof row === 'object');
     if (validRows.length === 0) {
-      console.log('[processBaseData] Không có hàng hợp lệ');
-      await replyToLark(
-        messageId,
-        'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
-        pendingTasks.get(messageId)?.mentionUserId,
-        pendingTasks.get(messageId)?.mentionUserName
-      );
-      return;
+      return { result: 'Không có hàng hợp lệ' };
     }
 
-    const firstRow = validRows[0];
-    const headers = Object.keys(firstRow || {});
-    console.log('[processBaseData] Tất cả headers:', headers);
+    // Nếu AI chưa tính toán đầy đủ, thực hiện dựa trên operation
+    if (!result || result === 'Không thể xử lý') {
+      const monthCol = columns.find(col => col.toLowerCase().includes('month'));
+      let valueCol = columns.find(col => !col.toLowerCase().includes('month'));
 
-    const monthCol = headers.find(header => header.toLowerCase().includes('month') || header.toLowerCase().includes('tháng'));
-    let valueCol = null;
-    if (userMessage.toLowerCase().includes('số po') || userMessage.toLowerCase().includes('count po')) {
-      valueCol = headers.find(header => header.toLowerCase().includes('count po') || header.toLowerCase().includes('số po') || header.toLowerCase().includes('po count'));
-    } else if (userMessage.toLowerCase().includes('nhà cung cấp')) {
-      valueCol = headers.find(header => header.toLowerCase().includes('suppliername') || header.toLowerCase().includes('nhà cung cấp'));
-    }
-
-    if (!monthCol) {
-      console.log('[processBaseData] Không tìm thấy cột Month');
-      await replyToLark(messageId, 'Xin lỗi, không tìm thấy cột Month trong dữ liệu, vui lòng kiểm tra Base', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
-      return;
-    }
-    if (!valueCol) {
-      console.log('[processBaseData] Không tìm thấy cột phù hợp cho Số PO');
-      await replyToLark(messageId, 'Xin lỗi, không tìm thấy cột Count PO trong dữ liệu, vui lòng kiểm tra Base', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
-      return;
-    }
-
-    console.log('[processBaseData] Selected columns - Month:', monthCol, 'Value:', valueCol);
-
-    // Lọc dữ liệu dựa trên tháng trong câu hỏi
-    const monthMatch = userMessage.match(/tháng\s*(\d{1,2})\/(\d{4})/i) || userMessage.match(/month\s*(\d{1,2})\/(\d{4})/i);
-    let targetMonth = '06/2025'; // Mặc định tháng 6/2025 nếu không tìm thấy
-    if (monthMatch) {
-      const month = monthMatch[1].padStart(2, '0');
-      const year = monthMatch[2];
-      targetMonth = `${month}/${year}`;
-    }
-    console.log('[processBaseData] Target month:', targetMonth);
-
-    const filteredRows = validRows.filter(row => {
-      const month = row[monthCol];
-      let monthValue = month ? month.toString().trim() : null;
-      if (monthValue && monthValue.toLowerCase().startsWith('tháng')) {
-        monthValue = monthValue.replace(/tháng/i, '').trim();
+      if (!monthCol) {
+        return { result: 'Không tìm thấy cột Month' };
       }
-      if (monthValue && !monthValue.includes('/')) {
-        monthValue = `0${monthValue}/2024`;
+      if (!valueCol) {
+        return { result: 'Không tìm thấy cột dữ liệu' };
       }
-      console.log('[processBaseData] Checking row:', JSON.stringify(row), 'Month value:', monthValue, 'Target:', targetMonth);
-      return monthValue && monthValue === targetMonth;
-    });
 
-    console.log('[processBaseData] Filtered rows for', targetMonth, ':', JSON.stringify(filteredRows));
+      const monthMatch = userMessage.match(/tháng\s*(\d{1,2})\/(\d{4})/i) || userMessage.match(/month\s*(\d{1,2})\/(\d{4})/i);
+      let targetMonth = '06/2025'; // Mặc định
+      if (monthMatch) {
+        const month = monthMatch[1].padStart(2, '0');
+        const year = monthMatch[2];
+        targetMonth = `${month}/${year}`;
+      }
 
-    if (filteredRows.length === 0) {
-      console.log('[processBaseData] Không có dữ liệu cho tháng:', targetMonth);
-      await replyToLark(
-        messageId,
-        `Xin lỗi, không có dữ liệu cho tháng ${targetMonth}, vui lòng kiểm tra và cập nhật Base`,
-        pendingTasks.get(messageId)?.mentionUserId,
-        pendingTasks.get(messageId)?.mentionUserName
-      );
-      return;
-    }
-
-    if (userMessage.toLowerCase().includes('số po') || userMessage.toLowerCase().includes('count po')) {
-      let totalValue = 0;
-      filteredRows.forEach(row => {
-        const value = parseFloat(row[valueCol]) || 0;
-        totalValue += value;
+      const filteredRows = validRows.filter(row => {
+        const month = row[monthCol];
+        let monthValue = month ? month.toString().trim() : null;
+        if (monthValue && monthValue.toLowerCase().startsWith('tháng')) {
+          monthValue = monthValue.replace(/tháng/i, '').trim();
+        }
+        if (monthValue && !monthValue.includes('/')) {
+          monthValue = `0${monthValue}/2024`;
+        }
+        return monthValue && monthValue === targetMonth;
       });
-      const response = `Tổng ${valueCol} của ${targetMonth} là ${totalValue}`;
-      const chatId = pendingTasks.get(messageId)?.chatId;
-      updateConversationMemory(chatId, 'user', userMessage);
-      updateConversationMemory(chatId, 'assistant', response);
-      await replyToLark(messageId, response, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
-    } else if (userMessage.toLowerCase().includes('nhà cung cấp')) {
-      const suppliers = [...new Set(filteredRows.map(row => row[valueCol] || 'Không xác định'))];
-      const response = `Các nhà cung cấp trong ${targetMonth} là: ${suppliers.join(', ')}`;
-      const chatId = pendingTasks.get(messageId)?.chatId;
-      updateConversationMemory(chatId, 'user', userMessage);
-      updateConversationMemory(chatId, 'assistant', response);
-      await replyToLark(messageId, response, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+
+      if (filteredRows.length === 0) {
+        return { result: `Không có dữ liệu cho tháng ${targetMonth}` };
+      }
+
+      if (operation.toLowerCase().includes('tính tổng') || operation.toLowerCase().includes('total')) {
+        const total = filteredRows.reduce((sum, row) => sum + (parseFloat(row[valueCol]) || 0), 0);
+        return { result: `Tổng ${valueCol} của ${targetMonth} là ${total}` };
+      } else if (operation.toLowerCase().includes('đếm') || operation.toLowerCase().includes('count')) {
+        const count = filteredRows.length;
+        return { result: `Số lượng ${valueCol} trong ${targetMonth} là ${count}` };
+      } else if (operation.toLowerCase().includes('liệt kê') || operation.toLowerCase().includes('list')) {
+        const uniqueValues = [...new Set(filteredRows.map(row => row[valueCol] || 'Không xác định'))];
+        return { result: `Các ${valueCol} trong ${targetMonth} là: ${uniqueValues.join(', ')}` };
+      }
     }
+
+    return { result };
+  } catch (e) {
+    console.error('[AI Analysis Error] Nguyên nhân:', e?.response?.data?.msg || e.message);
+    return { result: 'Lỗi khi xử lý, vui lòng liên hệ Admin Long' };
+  }
+}
+
+async function processBaseData(messageId, baseId, tableId, userMessage, token) {
+  try {
+    const { result } = await analyzeQueryAndProcessData(userMessage, baseId, tableId, token);
+    const chatId = pendingTasks.get(messageId)?.chatId;
+    updateConversationMemory(chatId, 'user', userMessage);
+    updateConversationMemory(chatId, 'assistant', result);
+    await replyToLark(messageId, result, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
   } catch (e) {
     console.error('[Base API Error]', e?.response?.data || e.message);
     await replyToLark(
