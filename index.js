@@ -278,7 +278,13 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
       valueCol = headers.find(header => header.toLowerCase().includes('suppliername') || header.toLowerCase().includes('nhà cung cấp'));
     }
 
-    if (!monthCol || !valueCol) {
+    if (!monthCol) {
+      console.log('[processBaseData] Không tìm thấy cột Month');
+      await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+      return;
+    }
+    if (!valueCol) {
+      console.log('[processBaseData] Không tìm thấy cột phù hợp cho Số PO');
       await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
       return;
     }
@@ -296,12 +302,14 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 
     const filteredRows = rowsData.filter(row => {
       const month = row[monthCol];
+      console.log('[processBaseData] Checking row:', row, 'Month value:', month);
       return month && month.toString().trim() === targetMonth;
     });
 
     console.log('[processBaseData] Filtered rows for', targetMonth, ':', JSON.stringify(filteredRows));
 
     if (filteredRows.length === 0) {
+      console.log('[processBaseData] Không có dữ liệu cho tháng:', targetMonth);
       await replyToLark(
         messageId,
         'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
@@ -485,21 +493,9 @@ app.post('/webhook', async (req, res) => {
       let tableId = '';
       let spreadsheetToken = '';
 
-      const baseMatch = userMessage.match(/Base (\w+)/i);
-      const reportMatch = userMessage.match(new RegExp(`\\b(${Object.keys(BASE_MAPPINGS).join('|')})\\b`, 'i'));
-      const sheetMatch = userMessage.match(/https:\/\/cgfscmkep8m\.sg\.larksuite\.com\/sheets\/([a-zA-Z0-9]+)/);
-
-      if (baseMatch) {
-        const baseName = baseMatch[1].toUpperCase();
-        const baseUrl = BASE_MAPPINGS[baseName];
-        if (baseUrl) {
-          const urlMatch = baseUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
-          if (urlMatch) {
-            baseId = urlMatch[1];
-            tableId = urlMatch[2];
-          }
-        }
-      } else if (reportMatch) {
+      // Chỉ mapping trước dấu phẩy ở đầu câu
+      const reportMatch = userMessage.match(new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|,)`, 'i'));
+      if (reportMatch) {
         const reportName = reportMatch[1].toUpperCase();
         const reportUrl = BASE_MAPPINGS[reportName];
         if (reportUrl) {
@@ -513,9 +509,12 @@ app.post('/webhook', async (req, res) => {
             console.error('[Webhook] Failed to extract baseId/tableId from URL:', reportUrl);
           }
         }
-      } else if (sheetMatch) {
-        spreadsheetToken = sheetMatch[1];
-        console.log('[Webhook] Trích xuất spreadsheetToken:', spreadsheetToken);
+      } else {
+        const sheetMatch = userMessage.match(/https:\/\/cgfscmkep8m\.sg\.larksuite\.com\/sheets\/([a-zA-Z0-9]+)/);
+        if (sheetMatch) {
+          spreadsheetToken = sheetMatch[1];
+          console.log('[Webhook] Trích xuất spreadsheetToken:', spreadsheetToken);
+        }
       }
 
       if (baseId && tableId) {
@@ -665,7 +664,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await replyToLark(
           messageId,
-          'Vui lòng sử dụng lệnh PUR, SALE, FIN hoặc TEST kèm câu hỏi, hoặc gửi file/hình ảnh.',
+          'Vui lòng sử dụng lệnh PUR, SALE, FIN hoặc TEST kèm dấu phẩy và câu hỏi, hoặc gửi file/hình ảnh.',
           mentionUserId,
           mentionUserName
         );
