@@ -20,7 +20,7 @@ const BASE_MAPPINGS = {
   'REPORT_PUR_BASE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbllwXLQBdRgex9z&view=vewksBlcon'
 };
 
-// Thêm ánh xạ cho Lark Sheet (dù tạm thời bỏ qua)
+// Thêm ánh xạ cho Lark Sheet
 const SHEET_MAPPINGS = {
   'REPORT_PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
 };
@@ -267,16 +267,16 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     const headers = Object.keys(firstRow || {});
     const rowsData = validRows;
 
-    // Tìm cột Month và Count PO
-    const monthCol = headers.find(header => header.toLowerCase().includes('month'));
-    const poCol = headers.find(header => header.toLowerCase().includes('count po'));
+    // Tìm cột Month và Count PO (hoặc tương tự)
+    const monthCol = headers.find(header => header.toLowerCase().includes('month') || header.toLowerCase().includes('tháng'));
+    const poCol = headers.find(header => header.toLowerCase().includes('count po') || header.toLowerCase().includes('số po'));
 
     if (!monthCol || !poCol) {
       await replyToLark(messageId, 'Không tìm thấy cột Month hoặc Count PO trong bảng.', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
       return;
     }
 
-    // Lọc dữ liệu cho tháng 06/2025
+    // Lọc dữ liệu cho tháng 6/2025
     const targetMonth = '06/2025';
     const filteredRows = rowsData.filter(row => {
       const month = row[monthCol];
@@ -289,7 +289,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
       totalPO += poValue;
     });
 
-    const response = totalPO > 0 ? `Tổng số PO của tháng 06/2025 là ${totalPO}` : 'Không có dữ liệu PO cho tháng 06/2025.';
+    const response = totalPO > 0 ? `Tổng số PO của tháng 6/2025 là ${totalPO}` : 'Không có dữ liệu PO cho tháng 6/2025.';
     const chatId = pendingTasks.get(messageId)?.chatId;
     updateConversationMemory(chatId, 'user', userMessage);
     updateConversationMemory(chatId, 'assistant', response);
@@ -332,7 +332,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
       return;
     }
 
-    // Lọc dữ liệu cho tháng 06/2025
+    // Lọc dữ liệu cho tháng 6/2025
     const targetMonth = '06/2025';
     const filteredRows = rows.filter(row => {
       const month = row[monthColIndex];
@@ -345,7 +345,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
       totalPO += poValue;
     });
 
-    const response = totalPO > 0 ? `Tổng số PO của tháng 06/2025 là ${totalPO}` : 'Không có dữ liệu PO cho tháng 06/2025.';
+    const response = totalPO > 0 ? `Tổng số PO của tháng 6/2025 là ${totalPO}` : 'Không có dữ liệu PO cho tháng 6/2025.';
     updateConversationMemory(chatId, 'user', userMessage);
     updateConversationMemory(chatId, 'assistant', response);
     await replyToLark(messageId, response, mentionUserId, mentionUserName);
@@ -569,7 +569,7 @@ app.post('/webhook', async (req, res) => {
                 }
               );
 
-              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
+              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không hiểu yêu cầu';
               const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
               updateConversationMemory(chatId, 'assistant', cleanMessage);
               await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
@@ -614,7 +614,7 @@ app.post('/webhook', async (req, res) => {
             }
           );
 
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không hiểu yêu cầu';
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage);
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
@@ -629,7 +629,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await replyToLark(
           messageId,
-          'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report PUR_BASE kèm câu hỏi, hoặc gửi file/hình ảnh.',
+          'Vui lòng sử dụng lệnh Report PUR, Report SALE, Report FIN hoặc Report PUR_BASE kèm câu hỏi, hoặc gửi file/hình ảnh.',
           mentionUserId,
           mentionUserName
         );
