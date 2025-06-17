@@ -16,10 +16,11 @@ const port = process.env.PORT || 8080;
 const BASE_MAPPINGS = {
   'REPORT_PUR': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
   'REPORT_SALE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
-  'REPORT_FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr'
+  'REPORT_FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr',
+  'REPORT_PUR_BASE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbllwXLQBdRgex9z&view=vewksBlcon'
 };
 
-// Thêm ánh xạ cho Lark Sheet
+// Thêm ánh xạ cho Lark Sheet (dù tạm thời bỏ qua)
 const SHEET_MAPPINGS = {
   'REPORT_PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
 };
@@ -189,7 +190,7 @@ async function logBotOpenId() {
   }
 }
 
-async function getAllRows(baseId, tableId, token, maxRows = 20) {
+async function getAllRows(baseId, tableId, token, maxRows = 50) {
   const rows = [];
   let pageToken = '';
   do {
@@ -263,43 +264,36 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     }
 
     const firstRow = validRows[0];
-    const columns = Object.keys(firstRow || {});
-    const tableData = { columns, rows: validRows };
+    const headers = Object.keys(firstRow || {});
+    const rowsData = validRows;
 
+    // Tìm cột Month và Count PO
+    const monthCol = headers.find(header => header.toLowerCase().includes('month'));
+    const poCol = headers.find(header => header.toLowerCase().includes('count po'));
+
+    if (!monthCol || !poCol) {
+      await replyToLark(messageId, 'Không tìm thấy cột Month hoặc Count PO trong bảng.', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+      return;
+    }
+
+    // Lọc dữ liệu cho tháng 06/2025
+    const targetMonth = '06/2025';
+    const filteredRows = rowsData.filter(row => {
+      const month = row[monthCol];
+      return month && month === targetMonth;
+    });
+
+    let totalPO = 0;
+    filteredRows.forEach(row => {
+      const poValue = parseFloat(row[poCol]) || 0;
+      totalPO += poValue;
+    });
+
+    const response = totalPO > 0 ? `Tổng số PO của tháng 06/2025 là ${totalPO}` : 'Không có dữ liệu PO cho tháng 06/2025.';
     const chatId = pendingTasks.get(messageId)?.chatId;
-    const memory = conversationMemory.get(chatId) || [];
-    const aiResp = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model: 'deepseek/deepseek-r1-0528:free',
-        messages: [
-          ...memory.map(({ role, content }) => ({ role, content })),
-          {
-            role: 'user',
-            content: `Dữ liệu bảng từ Base ${baseId}, Table ${tableId}:\n${JSON.stringify(tableData, null, 2)}\nCâu hỏi: ${userMessage}\nHãy phân tích dữ liệu, tự động chọn cột phù hợp nhất để trả lời câu hỏi (ví dụ: nếu hỏi về nhà cung cấp, chọn cột có tên liên quan như 'Supplier', nếu hỏi số lượng PO, chọn cột 'PO'). Trả lời chính xác dựa trên cột được chọn, không thêm định dạng như dấu * hoặc markdown.`
-          }
-        ],
-        stream: false,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      }
-    );
-
-    const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không có câu trả lời.';
-    const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
     updateConversationMemory(chatId, 'user', userMessage);
-    updateConversationMemory(chatId, 'assistant', cleanMessage);
-    await replyToLark(
-      messageId,
-      cleanMessage,
-      pendingTasks.get(messageId)?.mentionUserId,
-      pendingTasks.get(messageId)?.mentionUserName
-    );
+    updateConversationMemory(chatId, 'assistant', response);
+    await replyToLark(messageId, response, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
   } catch (e) {
     console.error('[Base API Error]', e?.response?.data || e.message);
     let errorMessage = '❌ Lỗi khi xử lý, vui lòng thử lại sau.';
@@ -342,7 +336,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
     const targetMonth = '06/2025';
     const filteredRows = rows.filter(row => {
       const month = row[monthColIndex];
-      return month && month === targetMonth; // So sánh chính xác
+      return month && month === targetMonth;
     });
 
     let totalPO = 0;
@@ -635,7 +629,7 @@ app.post('/webhook', async (req, res) => {
       } else {
         await replyToLark(
           messageId,
-          'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report FIN kèm câu hỏi, hoặc gửi file/hình ảnh.',
+          'Vui lòng sử dụng lệnh Base PRO, Base FIN, Report PRO, Report SALE hoặc Report PUR_BASE kèm câu hỏi, hoặc gửi file/hình ảnh.',
           mentionUserId,
           mentionUserName
         );
