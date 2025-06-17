@@ -486,7 +486,7 @@ app.post('/webhook', async (req, res) => {
       let spreadsheetToken = '';
 
       const baseMatch = userMessage.match(/Base (\w+)/i);
-      const reportMatch = userMessage.match(/(\w+)/i); // Nhận diện PUR, SALE, FIN, TEST
+      const reportMatch = userMessage.match(new RegExp(`\\b(${Object.keys(BASE_MAPPINGS).join('|')})\\b`, 'i'));
       const sheetMatch = userMessage.match(/https:\/\/cgfscmkep8m\.sg\.larksuite\.com\/sheets\/([a-zA-Z0-9]+)/);
 
       if (baseMatch) {
@@ -499,7 +499,7 @@ app.post('/webhook', async (req, res) => {
             tableId = urlMatch[2];
           }
         }
-      } else if (reportMatch && ['PUR', 'SALE', 'FIN', 'TEST'].includes(reportMatch[1].toUpperCase())) {
+      } else if (reportMatch) {
         const reportName = reportMatch[1].toUpperCase();
         const reportUrl = BASE_MAPPINGS[reportName];
         if (reportUrl) {
@@ -630,7 +630,7 @@ app.post('/webhook', async (req, res) => {
             mentionUserName
           );
         }
-      } else if (messageType === 'text' && userMessage.trim() && !(baseId && tableId)) {
+      } else if (messageType === 'text' && userMessage.trim() && !baseId && !tableId) {
         try {
           updateConversationMemory(chatId, 'user', userMessage);
           const memory = conversationMemory.get(chatId) || [];
