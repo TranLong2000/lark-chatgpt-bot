@@ -12,17 +12,17 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Cập nhật ánh xạ Base và Report
+// Cập nhật ánh xạ Base
 const BASE_MAPPINGS = {
-  'REPORT_PUR': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
-  'REPORT_SALE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
-  'REPORT_FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr',
-  'REPORT_PUR_BASE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbllwXLQBdRgex9z&view=vewksBlcon'
+  'PUR': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
+  'SALE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
+  'FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr',
+  'TEST': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbllwXLQBdRgex9z&view=vewksBlcon'
 };
 
 // Thêm ánh xạ cho Lark Sheet
 const SHEET_MAPPINGS = {
-  'REPORT_PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
+  'PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
 };
 
 const processedMessageIds = new Set();
@@ -245,7 +245,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     if (!allRows || allRows.length === 0) {
       await replyToLark(
         messageId,
-        'Không có dữ liệu từ bảng.',
+        'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
         pendingTasks.get(messageId)?.mentionUserId,
         pendingTasks.get(messageId)?.mentionUserName
       );
@@ -256,7 +256,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     if (validRows.length === 0) {
       await replyToLark(
         messageId,
-        'Không có dòng dữ liệu hợp lệ.',
+        'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
         pendingTasks.get(messageId)?.mentionUserId,
         pendingTasks.get(messageId)?.mentionUserName
       );
@@ -274,10 +274,12 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     let valueCol = null;
     if (userMessage.toLowerCase().includes('số po') || userMessage.toLowerCase().includes('count po')) {
       valueCol = headers.find(header => header.toLowerCase().includes('count po') || header.toLowerCase().includes('số po') || header.toLowerCase().includes('po count'));
+    } else if (userMessage.toLowerCase().includes('nhà cung cấp')) {
+      valueCol = headers.find(header => header.toLowerCase().includes('suppliername') || header.toLowerCase().includes('nhà cung cấp'));
     }
 
     if (!monthCol || !valueCol) {
-      await replyToLark(messageId, 'Không tìm thấy cột phù hợp trong bảng. Headers: ' + JSON.stringify(headers), pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+      await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
       return;
     }
 
@@ -299,26 +301,40 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 
     console.log('[processBaseData] Filtered rows for', targetMonth, ':', JSON.stringify(filteredRows));
 
-    let totalValue = 0;
-    filteredRows.forEach(row => {
-      const value = parseFloat(row[valueCol]) || 0;
-      totalValue += value;
-    });
+    if (filteredRows.length === 0) {
+      await replyToLark(
+        messageId,
+        'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
+        pendingTasks.get(messageId)?.mentionUserId,
+        pendingTasks.get(messageId)?.mentionUserName
+      );
+      return;
+    }
 
-    const response = totalValue > 0 ? `Tổng ${valueCol} của ${targetMonth} là ${totalValue}` : `Không có dữ liệu ${valueCol} cho ${targetMonth}.`;
-    const chatId = pendingTasks.get(messageId)?.chatId;
-    updateConversationMemory(chatId, 'user', userMessage);
-    updateConversationMemory(chatId, 'assistant', response);
-    await replyToLark(messageId, response, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+    if (userMessage.toLowerCase().includes('số po') || userMessage.toLowerCase().includes('count po')) {
+      let totalValue = 0;
+      filteredRows.forEach(row => {
+        const value = parseFloat(row[valueCol]) || 0;
+        totalValue += value;
+      });
+      const response = `Tổng ${valueCol} của ${targetMonth} là ${totalValue}`;
+      const chatId = pendingTasks.get(messageId)?.chatId;
+      updateConversationMemory(chatId, 'user', userMessage);
+      updateConversationMemory(chatId, 'assistant', response);
+      await replyToLark(messageId, response, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+    } else if (userMessage.toLowerCase().includes('nhà cung cấp')) {
+      const suppliers = [...new Set(filteredRows.map(row => row[valueCol] || 'Không xác định'))];
+      const response = `Các nhà cung cấp trong ${targetMonth} là: ${suppliers.join(', ')}`;
+      const chatId = pendingTasks.get(messageId)?.chatId;
+      updateConversationMemory(chatId, 'user', userMessage);
+      updateConversationMemory(chatId, 'assistant', response);
+      await replyToLark(messageId, response, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+    }
   } catch (e) {
     console.error('[Base API Error]', e?.response?.data || e.message);
-    let errorMessage = '❌ Lỗi khi xử lý, vui lòng thử lại sau.';
-    if (e.code === 'ECONNABORTED') {
-      errorMessage = '❌ Hết thời gian chờ khi gọi API, vui lòng thử lại sau hoặc kiểm tra kết nối mạng.';
-    }
     await replyToLark(
       messageId,
-      errorMessage,
+      'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
       pendingTasks.get(messageId)?.mentionUserId,
       pendingTasks.get(messageId)?.mentionUserName
     );
@@ -331,7 +347,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
   try {
     const sheetData = await getSheetData(spreadsheetToken, token);
     if (!sheetData || sheetData.length === 0) {
-      await replyToLark(messageId, 'Không có dữ liệu từ Lark Sheet.', mentionUserId, mentionUserName);
+      await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
       return;
     }
 
@@ -344,7 +360,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
     const poColIndex = headers.findIndex(header => header && header.toLowerCase().includes('count po'));
 
     if (monthColIndex === -1 || poColIndex === -1) {
-      await replyToLark(messageId, 'Không tìm thấy cột Month hoặc Count PO trong sheet.', mentionUserId, mentionUserName);
+      await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
       return;
     }
 
@@ -355,19 +371,24 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
       return month && month === targetMonth;
     });
 
+    if (filteredRows.length === 0) {
+      await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
+      return;
+    }
+
     let totalPO = 0;
     filteredRows.forEach(row => {
       const poValue = parseFloat(row[poColIndex]) || 0;
       totalPO += poValue;
     });
 
-    const response = totalPO > 0 ? `Tổng số PO của tháng 6/2025 là ${totalPO}` : 'Không có dữ liệu PO cho tháng 6/2025.';
+    const response = `Tổng số PO của tháng ${targetMonth} là ${totalPO}`;
     updateConversationMemory(chatId, 'user', userMessage);
     updateConversationMemory(chatId, 'assistant', response);
     await replyToLark(messageId, response, mentionUserId, mentionUserName);
   } catch (e) {
     console.error('[Sheet API Error]', e?.response?.data || err.message);
-    await replyToLark(messageId, '❌ Lỗi khi xử lý Lark Sheet, vui lòng thử lại sau.', mentionUserId, mentionUserName);
+    await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
   } finally {
     pendingTasks.delete(messageId);
   }
@@ -465,7 +486,7 @@ app.post('/webhook', async (req, res) => {
       let spreadsheetToken = '';
 
       const baseMatch = userMessage.match(/Base (\w+)/i);
-      const reportMatch = userMessage.match(/Report (\w+)/i);
+      const reportMatch = userMessage.match(/(\w+)/i); // Nhận diện PUR, SALE, FIN, TEST
       const sheetMatch = userMessage.match(/https:\/\/cgfscmkep8m\.sg\.larksuite\.com\/sheets\/([a-zA-Z0-9]+)/);
 
       if (baseMatch) {
@@ -478,20 +499,18 @@ app.post('/webhook', async (req, res) => {
             tableId = urlMatch[2];
           }
         }
-      } else if (reportMatch) {
+      } else if (reportMatch && ['PUR', 'SALE', 'FIN', 'TEST'].includes(reportMatch[1].toUpperCase())) {
         const reportName = reportMatch[1].toUpperCase();
-        const reportKey = `REPORT_${reportName}`;
-        const reportUrl = BASE_MAPPINGS[reportKey] || SHEET_MAPPINGS[reportKey];
+        const reportUrl = BASE_MAPPINGS[reportName];
         if (reportUrl) {
-          if (reportUrl.includes('sheets')) {
-            const urlMatch = reportUrl.match(/sheets\/([a-zA-Z0-9]+)/);
-            if (urlMatch) spreadsheetToken = urlMatch[1];
+          console.log('[Webhook] Processing report:', reportName, 'URL:', reportUrl);
+          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
+          if (urlMatch) {
+            baseId = urlMatch[1];
+            tableId = urlMatch[2];
+            console.log('[Webhook] Extracted baseId:', baseId, 'tableId:', tableId);
           } else {
-            const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
-            if (urlMatch) {
-              baseId = urlMatch[1];
-              tableId = urlMatch[2];
-            }
+            console.error('[Webhook] Failed to extract baseId/tableId from URL:', reportUrl);
           }
         }
       } else if (sheetMatch) {
@@ -499,7 +518,8 @@ app.post('/webhook', async (req, res) => {
         console.log('[Webhook] Trích xuất spreadsheetToken:', spreadsheetToken);
       }
 
-      if (baseId && tableId && userMessage.toLowerCase().includes('report pur_base')) {
+      if (baseId && tableId) {
+        console.log('[Webhook] Triggering processBaseData for:', reportMatch ? reportMatch[1].toUpperCase() : 'unknown');
         pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
         await processBaseData(messageId, baseId, tableId, userMessage, token);
       } else if (spreadsheetToken) {
@@ -585,7 +605,7 @@ app.post('/webhook', async (req, res) => {
                 }
               );
 
-              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không hiểu yêu cầu';
+              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long';
               const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
               updateConversationMemory(chatId, 'assistant', cleanMessage);
               await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
@@ -610,7 +630,7 @@ app.post('/webhook', async (req, res) => {
             mentionUserName
           );
         }
-      } else if (messageType === 'text' && userMessage.trim()) {
+      } else if (messageType === 'text' && userMessage.trim() && !(baseId && tableId)) {
         try {
           updateConversationMemory(chatId, 'user', userMessage);
           const memory = conversationMemory.get(chatId) || [];
@@ -630,22 +650,22 @@ app.post('/webhook', async (req, res) => {
             }
           );
 
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, không hiểu yêu cầu';
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long';
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage);
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
         } catch (e) {
           console.error('[AI Error] Nguyên nhân:', e?.response?.data?.msg || e.message);
-          let errorMessage = '❌ Lỗi khi gọi AI, vui lòng thử lại sau.';
+          let errorMessage = 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long';
           if (e.code === 'ECONNABORTED') {
-            errorMessage = '❌ Hết thời gian chờ khi gọi API AI, vui lòng thử lại sau hoặc kiểm tra kết nối mạng.';
+            errorMessage = 'Hết thời gian chờ khi gọi API AI, vui lòng thử lại sau hoặc kiểm tra kết nối mạng.';
           }
           await replyToLark(messageId, errorMessage, mentionUserId, mentionUserName);
         }
       } else {
         await replyToLark(
           messageId,
-          'Vui lòng sử dụng lệnh Report PUR, Report SALE, Report FIN hoặc Report PUR_BASE kèm câu hỏi, hoặc gửi file/hình ảnh.',
+          'Vui lòng sử dụng lệnh PUR, SALE, FIN hoặc TEST kèm câu hỏi, hoặc gửi file/hình ảnh.',
           mentionUserId,
           mentionUserName
         );
