@@ -13,7 +13,6 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Cập nhật ánh xạ Base
 const BASE_MAPPINGS = {
   'PUR': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
   'SALE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
@@ -202,7 +201,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
   const rows = [];
   let pageToken = '';
   do {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=100&page_token=${pageToken}`;
     try {
       console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId);
       const resp = await axios.get(url, {
@@ -221,7 +220,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       console.error('[getAllRows] Lỗi:', e.response?.data || e.message, 'Status:', e.response?.status);
       break;
     }
-  } while (pageToken && rows.length < 100);
+  } while (pageToken);
   console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 5)));
   global.lastRows = { baseId, tableId, rows }; // Lưu cache
   return rows;
@@ -252,11 +251,11 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
     // Lấy metadata của bảng để xác định cột
     const fields = await getTableMeta(baseId, tableId, token);
-    const fieldNames = fields.length > 0 ? fields.map(f => f.name) : []; // Lấy từ hàng tiêu đề
+    const fieldNames = fields.length > 0 ? fields.map(f => f.name) : []; // Lấy từ metadata
     console.log('[Debug] Các cột trong bảng:', fieldNames);
 
     // Lấy tất cả dữ liệu từ Base
-    const rows = await getAllRows(baseId, tableId, token);
+    const rows = await getAllRows(baseId, tableId, token, fieldNames);
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
@@ -270,23 +269,31 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Lấy hàng tiêu đề (dòng đầu tiên) làm tiêu chí xác định cột
-    const headerRow = validRows[0];
+    // Tạo ánh xạ cột dựa trên field_id và tên cột
     const columnMapping = {};
-    if (headerRow) {
-      Object.keys(headerRow).forEach((fieldId, index) => {
-        columnMapping[fieldId] = fieldNames[index] || fieldId; // Ánh xạ field_id với tên cột
-      });
-    }
+    fields.forEach((field, index) => {
+      columnMapping[field.field_id] = field.name;
+    });
     console.log('[Debug] Ánh xạ cột:', columnMapping);
 
-    // Gửi câu hỏi và dữ liệu cột sang OpenRouter để phân tích
+    // Lấy dữ liệu cột dựa trên câu hỏi (ưu tiên cột được nhắc đến)
+    const relevantColumns = fieldNames.filter(name => userMessage.toLowerCase().includes(name.toLowerCase()));
+    if (relevantColumns.length === 0) relevantColumns.push(fieldNames[0] || ''); // Fallback nếu không tìm thấy
+    console.log('[Debug] Cột liên quan:', relevantColumns);
+
     const columnData = {};
-    Object.keys(columnMapping).forEach(fieldId => {
-      columnData[columnMapping[fieldId]] = validRows.map(row => row[fieldId] ? row[fieldId].toString().trim() : null);
+    validRows.forEach(row => {
+      relevantColumns.forEach(colName => {
+        const fieldId = fields.find(f => f.name === colName)?.field_id;
+        if (fieldId && row[fieldId] !== undefined) {
+          if (!columnData[colName]) columnData[colName] = [];
+          columnData[colName].push(row[fieldId] ? row[fieldId].toString().trim() : null);
+        }
+      });
     });
     console.log('[Debug] Dữ liệu cột:', columnData);
 
+    // Gửi câu hỏi và dữ liệu cột sang OpenRouter
     const analysisPrompt = `
       Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng. Dựa trên câu hỏi sau và dữ liệu cột dưới đây:
       - Câu hỏi: "${userMessage}"
@@ -318,7 +325,6 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       }
     );
 
-    // Kiểm tra và parse phản hồi từ OpenRouter
     const aiContent = aiResponse.data.choices[0].message.content.trim();
     let analysis;
     try {
@@ -699,14 +705,12 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Gọi hàm logBotOpenId khi server khởi động
 logBotOpenId().then(() => {
   app.listen(port, () => {
     console.log(`Máy chủ đang chạy trên cổng ${port}`);
   });
 });
 
-// Xóa file trong pendingFiles sau 5 phút nếu không có reply
 setInterval(() => {
   const now = Date.now();
   for (const [chatId, file] of pendingFiles) {
