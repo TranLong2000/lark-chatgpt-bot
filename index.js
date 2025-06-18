@@ -13,12 +13,12 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Cập nhật ánh xạ Base (kiểm tra lại tableId nếu cần)
+// Cập nhật ánh xạ Base
 const BASE_MAPPINGS = {
   'PUR': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
   'SALE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
   'FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr',
-  'TEST': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbllwXLQBdRgex9z&view=vewksBlcon' // Xác minh tableId này
+  'TEST': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbllwXLQBdRgex9z&view=vewksBlcon'
 };
 
 // Thêm ánh xạ cho Lark Sheet
@@ -204,20 +204,25 @@ async function getTableMeta(baseId, tableId, token) {
     console.log('[getTableMeta] Gọi API với URL:', url);
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 30000,
+      timeout: 30000, // Tăng lên 30 giây
     });
-    console.log('[getTableMeta] Phản hồi thành công:', JSON.stringify(resp.data.data.fields.slice(0, 5)));
+    console.log('[getTableMeta] Phản hồi thành công:', JSON.stringify(resp.data.data.fields.slice(0, 5))); // Log 5 cột đầu để debug
     return resp.data.data.fields.map(field => ({
       name: field.name,
       field_id: field.field_id,
     }));
   } catch (err) {
-    console.error('[getTableMeta Error] Nguyên nhân:', err.response?.data || err.message, 'Status:', err.response?.status);
-    return []; // Trả về mảng rỗng nhưng tiếp tục xử lý
+    console.warn('[getTableMeta Error] Nguyên nhân:', err.response?.data || err.message, 'Status:', err.response?.status);
+    return []; // Trả về mảng rỗng nhưng tiếp tục xử lý với log cảnh báo
   }
 }
 
 async function getAllRows(baseId, tableId, token, requiredFields = []) {
+  if (global.lastRows && global.lastRows.baseId === baseId && global.lastRows.tableId === tableId) {
+    console.log('[getAllRows] Sử dụng dữ liệu đã lấy:', global.lastRows.rows.length, 'dòng');
+    return global.lastRows.rows;
+  }
+
   const rows = [];
   let pageToken = '';
   do {
@@ -227,7 +232,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
         params: requiredFields.length > 0 ? { field_names: requiredFields.join(',') } : {},
-        timeout: 30000,
+        timeout: 30000, // Tăng lên 30 giây
       });
       if (!resp.data || !resp.data.data) {
         console.error('[getAllRows] Phản hồi API không hợp lệ:', JSON.stringify(resp.data));
@@ -240,8 +245,9 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       console.error('[getAllRows] Lỗi:', e.response?.data || e.message, 'Status:', e.response?.status);
       break;
     }
-  } while (pageToken && rows.length < 100);
+  } while (pageToken && rows.length < 100); // Giới hạn tối đa 100 dòng
   console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 5)));
+  global.lastRows = { baseId, tableId, rows }; // Lưu cache để tránh gọi lặp
   return rows;
 }
 
@@ -294,10 +300,10 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
     const analysisPrompt = `
       Phân tích câu hỏi sau và trích xuất:
       - Tên cột (column name) cần tính toán hoặc lọc (từ danh sách cột: ${fieldNames.join(', ')}).
-      - Điều kiện lọc (nếu có, ví dụ: tháng, lớn hơn, nhỏ hơn).
+      - Điều kiện lọc (nếu có, ví dụ: tháng, lớn hơn, nhỏ hơn, v.v.).
       - Giá trị mục tiêu (target value) nếu có (ví dụ: tháng 6/2025, số 500).
       Câu hỏi: "${userMessage}"
-      Trả lời dưới dạng JSON: { "column": string, "condition": string, "value": string }.
+      Trả lời dưới dạng JSON với các trường: { "column": string, "condition": string, "value": string }.
       Nếu không rõ, đặt "column", "condition", "value" là null.
     `;
 
@@ -306,7 +312,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích câu hỏi với ít token nhất.' },
+          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích câu hỏi và trích xuất thông tin từ dữ liệu bảng với ít token nhất.' },
           { role: 'user', content: analysisPrompt },
         ],
         stream: false,
@@ -316,7 +322,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 30000,
+        timeout: 30000, // Tăng lên 30 giây
       }
     );
 
@@ -325,15 +331,17 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
 
     const { column, condition, value } = analysis;
 
-    // Xác nhận cột dựa trên dữ liệu có sẵn
-    let targetColumn = column || fieldNames.find(f => userMessage.toLowerCase().includes(f.toLowerCase())) || 'Count PO';
-    if (!fieldNames.includes(targetColumn)) targetColumn = 'Count PO'; // Fallback
+    // Xác nhận cột dựa trên hàng đầu tiên (metadata)
+    let targetColumn = column || fieldNames.find(f => userMessage.toLowerCase().includes(f.toLowerCase()));
+    if (!targetColumn || !fieldNames.includes(targetColumn)) {
+      targetColumn = 'Count PO'; // Mặc định nếu không tìm thấy
+    }
     console.log('[Debug] Cột được chọn:', targetColumn);
 
     // Lấy dữ liệu chỉ từ cột được chọn
     const selectedData = validRows.map(row => ({
       value: row[targetColumn] ? row[targetColumn].toString().trim() : null,
-      rowData: row
+      rowData: row // Giữ nguyên row để lọc sau
     }));
     console.log('[Debug] Dữ liệu cột được chọn:', selectedData.map(d => d.value));
 
