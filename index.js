@@ -204,16 +204,16 @@ async function getTableMeta(baseId, tableId, token) {
     console.log('[getTableMeta] Gọi API với URL:', url);
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 30000, // Tăng lên 30 giây
+      timeout: 30000,
     });
-    console.log('[getTableMeta] Phản hồi thành công:', JSON.stringify(resp.data.data.fields.slice(0, 5))); // Log 5 cột đầu để debug
+    console.log('[getTableMeta] Phản hồi thành công:', JSON.stringify(resp.data.data.fields.slice(0, 5)));
     return resp.data.data.fields.map(field => ({
       name: field.name,
       field_id: field.field_id,
     }));
   } catch (err) {
     console.warn('[getTableMeta Error] Nguyên nhân:', err.response?.data || err.message, 'Status:', err.response?.status);
-    return []; // Trả về mảng rỗng nhưng tiếp tục xử lý với log cảnh báo
+    return []; // Fallback với log cảnh báo
   }
 }
 
@@ -232,7 +232,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
         params: requiredFields.length > 0 ? { field_names: requiredFields.join(',') } : {},
-        timeout: 30000, // Tăng lên 30 giây
+        timeout: 30000,
       });
       if (!resp.data || !resp.data.data) {
         console.error('[getAllRows] Phản hồi API không hợp lệ:', JSON.stringify(resp.data));
@@ -245,9 +245,9 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       console.error('[getAllRows] Lỗi:', e.response?.data || e.message, 'Status:', e.response?.status);
       break;
     }
-  } while (pageToken && rows.length < 100); // Giới hạn tối đa 100 dòng
+  } while (pageToken && rows.length < 100);
   console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 5)));
-  global.lastRows = { baseId, tableId, rows }; // Lưu cache để tránh gọi lặp
+  global.lastRows = { baseId, tableId, rows }; // Lưu cache
   return rows;
 }
 
@@ -287,32 +287,35 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
+      console.log('[Debug] Không có dữ liệu trong Base');
       return { result: 'Không có dữ liệu trong Base' };
     }
 
     const validRows = allRows.filter(row => row && typeof row === 'object');
     if (validRows.length === 0) {
+      console.log('[Debug] Không có hàng hợp lệ');
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Gửi câu hỏi đến OpenRouter để phân tích (chỉ trích xuất thông tin cơ bản)
+    // Gửi câu hỏi đến OpenRouter để phân tích
     const currentYear = moment().tz('Asia/Ho_Chi_Minh').year(); // 2025
     const analysisPrompt = `
       Phân tích câu hỏi sau và trích xuất:
       - Tên cột (column name) cần tính toán hoặc lọc (từ danh sách cột: ${fieldNames.join(', ')}).
-      - Điều kiện lọc (nếu có, ví dụ: tháng, lớn hơn, nhỏ hơn, v.v.).
+      - Điều kiện lọc (nếu có, ví dụ: tháng, lớn hơn, nhỏ hơn).
       - Giá trị mục tiêu (target value) nếu có (ví dụ: tháng 6/2025, số 500).
       Câu hỏi: "${userMessage}"
-      Trả lời dưới dạng JSON với các trường: { "column": string, "condition": string, "value": string }.
+      Trả lời dưới dạng JSON: { "column": string, "condition": string, "value": string }.
       Nếu không rõ, đặt "column", "condition", "value" là null.
     `;
 
+    console.log('[Debug] Gửi prompt đến OpenRouter:', analysisPrompt);
     const aiResponse = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích câu hỏi và trích xuất thông tin từ dữ liệu bảng với ít token nhất.' },
+          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích câu hỏi với ít token nhất.' },
           { role: 'user', content: analysisPrompt },
         ],
         stream: false,
@@ -322,7 +325,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 30000, // Tăng lên 30 giây
+        timeout: 30000,
       }
     );
 
@@ -331,17 +334,15 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
 
     const { column, condition, value } = analysis;
 
-    // Xác nhận cột dựa trên hàng đầu tiên (metadata)
-    let targetColumn = column || fieldNames.find(f => userMessage.toLowerCase().includes(f.toLowerCase()));
-    if (!targetColumn || !fieldNames.includes(targetColumn)) {
-      targetColumn = 'Count PO'; // Mặc định nếu không tìm thấy
-    }
+    // Xác nhận cột dựa trên dữ liệu có sẵn
+    let targetColumn = column || fieldNames.find(f => userMessage.toLowerCase().includes(f.toLowerCase())) || 'Count PO';
+    if (!fieldNames.includes(targetColumn)) targetColumn = 'Count PO'; // Fallback
     console.log('[Debug] Cột được chọn:', targetColumn);
 
     // Lấy dữ liệu chỉ từ cột được chọn
     const selectedData = validRows.map(row => ({
       value: row[targetColumn] ? row[targetColumn].toString().trim() : null,
-      rowData: row // Giữ nguyên row để lọc sau
+      rowData: row
     }));
     console.log('[Debug] Dữ liệu cột được chọn:', selectedData.map(d => d.value));
 
@@ -375,6 +376,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       );
     }
 
+    console.log('[Debug] Số lượng dòng lọc được:', filteredRows.length);
     if (filteredRows.length === 0) {
       return { result: `Không có dữ liệu cho ${targetColumn} với ${condition || ''} ${value || ''}` };
     }
