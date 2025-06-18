@@ -197,17 +197,34 @@ async function logBotOpenId() {
   }
 }
 
+async function getTableMeta(baseId, tableId, token) {
+  try {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/meta`;
+    console.log('[getTableMeta] Gọi API với URL:', url);
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 20000,
+    });
+    return resp.data.data.fields.map(field => ({
+      name: field.name,
+      field_id: field.field_id,
+    }));
+  } catch (err) {
+    console.error('[getTableMeta Error] Nguyên nhân:', err.response?.data || err.message);
+    return [];
+  }
+}
+
 async function getAllRows(baseId, tableId, token, requiredFields = []) {
   const rows = [];
   let pageToken = '';
-  const fieldNames = requiredFields.length > 0 ? requiredFields : [];
   do {
     const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
     try {
-      console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId, 'Fields:', fieldNames);
+      console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId, 'Fields:', requiredFields);
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
-        params: { field_names: fieldNames.join(',') },
+        params: requiredFields.length > 0 ? { field_names: requiredFields.join(',') } : {},
         timeout: 20000,
       });
       if (!resp.data || !resp.data.data) {
@@ -251,8 +268,12 @@ function updateConversationMemory(chatId, role, content) {
 
 async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
-    // Lấy dữ liệu với các cột cụ thể
-    const rows = await getAllRows(baseId, tableId, token, ['Month', 'Count PO']);
+    // Lấy metadata của bảng để xác định cột
+    const fields = await getTableMeta(baseId, tableId, token);
+    console.log('[Debug] Các cột trong bảng:', fields.map(f => f.name));
+
+    // Lấy tất cả dữ liệu mà không chỉ định trường
+    const rows = await getAllRows(baseId, tableId, token);
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
@@ -264,13 +285,16 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
+    // Ánh xạ cột dựa trên từ khóa
+    const monthCol = fields.find(f => ['month', 'tháng'].some(k => f.name.toLowerCase().includes(k)))?.name || 'Month';
+    const valueCol = fields.find(f => ['po', 'số po', 'count po'].some(k => f.name.toLowerCase().includes(k)))?.name || 'Count PO';
+    console.log('[Debug] Cột Month:', monthCol, 'Cột Value:', valueCol);
+
     // Debug: Hiển thị tất cả giá trị Month
-    const monthValues = validRows.map(row => row['Month'] ? row['Month'].toString().trim() : 'null');
+    const monthValues = validRows.map(row => row[monthCol] ? row[monthCol].toString().trim() : 'null');
     console.log('[Debug] Giá trị Month trong dữ liệu:', monthValues);
 
     // Lọc dữ liệu cho tháng 11/2023
-    const monthCol = 'Month';
-    const valueCol = 'Count PO';
     const monthMatch = userMessage.match(/tháng\s*(\d{1,2})\/(\d{4})/i);
     let targetMonth = '11/2023'; // Mặc định theo yêu cầu
     if (monthMatch) {
@@ -339,8 +363,8 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
     const rows = sheetData.slice(1).map(row => row.map(cell => cell || ''));
 
     // Tìm cột Month và Count PO
-    const monthColIndex = headers.findIndex(header => header && header.toLowerCase().includes('month'));
-    const poColIndex = headers.findIndex(header => header && header.toLowerCase().includes('count po'));
+    const monthColIndex = headers.findIndex(header => header && ['month', 'tháng'].some(k => header.toLowerCase().includes(k)));
+    const poColIndex = headers.findIndex(header => header && ['po', 'số po', 'count po'].some(k => header.toLowerCase().includes(k)));
 
     if (monthColIndex === -1 || poColIndex === -1) {
       await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
@@ -390,7 +414,7 @@ setInterval(() => {
 }, 2 * 60 * 60 * 1000);
 
 app.post('/webhook', async (req, res) => {
-  let bodyRaw = req.body.toString('utf8'); // Định nghĩa bodyRaw ở cấp độ ngoài try-catch
+  let bodyRaw = req.body.toString('utf8');
   try {
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
@@ -419,7 +443,7 @@ app.post('/webhook', async (req, res) => {
       const parentId = message.parent_id;
       const mentions = message.mentions || [];
 
-      if (processedMessageIds.has(messageId)) return res.sendStatus(200); // Chỉ gửi một phản hồi
+      if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
 
       if (senderId === (process.env.BOT_SENDER_ID || '')) return res.sendStatus(200);
@@ -447,7 +471,6 @@ app.post('/webhook', async (req, res) => {
         return res.sendStatus(200);
       }
 
-      // Chỉ gửi phản hồi một lần
       res.sendStatus(200);
 
       const token = await getAppAccessToken();
@@ -469,9 +492,8 @@ app.post('/webhook', async (req, res) => {
       let tableId = '';
       let spreadsheetToken = '';
 
-      // Chỉ mapping từ khóa trước dấu phẩy sau @mention
       const mentionPrefix = `@_user_1 `;
-      let reportMatch; // Định nghĩa reportMatch ở cấp độ ngoài if
+      let reportMatch;
       if (userMessage.startsWith(mentionPrefix)) {
         const contentAfterMention = userMessage.slice(mentionPrefix.length);
         reportMatch = contentAfterMention.match(new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|,)`, 'i'));
