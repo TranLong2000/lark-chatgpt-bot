@@ -204,14 +204,15 @@ async function getTableMeta(baseId, tableId, token) {
     console.log('[getTableMeta] Gọi API với URL:', url);
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000,
+      timeout: 30000, // Tăng lên 30 giây
     });
+    console.log('[getTableMeta] Phản hồi thành công:', JSON.stringify(resp.data.data.fields.slice(0, 5))); // Log 5 cột đầu để debug
     return resp.data.data.fields.map(field => ({
       name: field.name,
       field_id: field.field_id,
     }));
   } catch (err) {
-    console.error('[getTableMeta Error] Nguyên nhân:', err.response?.data || err.message);
+    console.error('[getTableMeta Error] Nguyên nhân:', err.response?.data || err.message, 'Status:', err.response?.status);
     return [];
   }
 }
@@ -222,11 +223,11 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
   do {
     const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
     try {
-      console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId, 'Fields:', requiredFields);
+      console.log('[getAllRows] Đang lấy dữ liệu, số dòng hiện tại:', rows.length, 'cho baseId:', baseId, 'tableId:', tableId);
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
         params: requiredFields.length > 0 ? { field_names: requiredFields.join(',') } : {},
-        timeout: 20000,
+        timeout: 30000, // Tăng lên 30 giây
       });
       if (!resp.data || !resp.data.data) {
         console.error('[getAllRows] Phản hồi API không hợp lệ:', JSON.stringify(resp.data));
@@ -234,12 +235,13 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       }
       rows.push(...(resp.data.data.items || []));
       pageToken = resp.data.data.page_token || '';
+      console.log('[getAllRows] Lấy thêm:', rows.length - (resp.data.data.items?.length || 0), 'đến', rows.length);
     } catch (e) {
-      console.error('[getAllRows] Lỗi:', e.response?.data || e.message);
+      console.error('[getAllRows] Lỗi:', e.response?.data || e.message, 'Status:', e.response?.status);
       break;
     }
   } while (pageToken && rows.length < 100); // Giới hạn tối đa 100 dòng
-  console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 5))); // Hiển thị 5 dòng mẫu
+  console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 5)));
   return rows;
 }
 
@@ -314,7 +316,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
           Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        timeout: 20000,
+        timeout: 30000, // Tăng lên 30 giây
       }
     );
 
@@ -378,7 +380,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
     // Trả về kết quả
     return { result: `Tổng ${targetColumn} ${condition ? `(${condition} ${value})` : ''} là ${total}` };
   } catch (e) {
-    console.error('[Analysis Error] Nguyên nhân:', e.message);
+    console.error('[Analysis Error] Nguyên nhân:', e.message, 'Stack:', e.stack);
     return { result: 'Lỗi khi xử lý, vui lòng liên hệ Admin Long' };
   }
 }
@@ -391,7 +393,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     updateConversationMemory(chatId, 'assistant', result);
     await replyToLark(messageId, result, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
   } catch (e) {
-    console.error('[Base API Error] Nguyên nhân:', e?.response?.data || e.message);
+    console.error('[Base API Error] Nguyên nhân:', e?.response?.data || e.message, 'Stack:', e.stack);
     await replyToLark(
       messageId,
       'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
@@ -447,7 +449,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
     updateConversationMemory(chatId, 'assistant', response);
     await replyToLark(messageId, response, mentionUserId, mentionUserName);
   } catch (e) {
-    console.error('[Sheet API Error] Nguyên nhân:', e?.response?.data || err.message);
+    console.error('[Sheet API Error] Nguyên nhân:', e?.response?.data || e.message, 'Stack:', e.stack);
     await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
   } finally {
     pendingTasks.delete(messageId);
@@ -721,7 +723,7 @@ app.post('/webhook', async (req, res) => {
       }
     }
   } catch (e) {
-    console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', bodyRaw || 'Không có dữ liệu');
+    console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', bodyRaw || 'Không có dữ liệu', 'Stack:', e.stack);
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
