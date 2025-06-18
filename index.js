@@ -215,8 +215,8 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       console.error('[getAllRows] Lỗi:', e.response?.data || e.message);
       break;
     }
-  } while (pageToken && rows.length < 100); // Tăng giới hạn lên 100 dòng
-  console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 2)));
+  } while (pageToken && rows.length < 100); // Giới hạn tối đa 100 dòng
+  console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 5))); // Hiển thị 5 dòng mẫu
   return rows;
 }
 
@@ -246,48 +246,8 @@ function updateConversationMemory(chatId, role, content) {
 
 async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
-    // Lấy hàng đầu tiên để làm mẫu tiêu đề cột
-    const sampleRows = await getAllRows(baseId, tableId, token, []);
-    const firstRow = sampleRows[0]?.fields || {};
-    const headers = Object.keys(firstRow);
-
-    // Gửi câu hỏi và tiêu đề cột đến AI để phân tích và xử lý
-    const prompt = `Dựa trên câu hỏi: "${userMessage}", và các tiêu đề cột từ Base: ${JSON.stringify(headers)}, hãy:
-1. Xác định các cột liên quan nhất để trả lời (trả về mảng JSON ["column1", "column2", ...]).
-2. Đề xuất cách xử lý dữ liệu (ví dụ: tính tổng, đếm, liệt kê) dựa trên ngữ nghĩa câu hỏi.
-3. Thực hiện tính toán hoặc xử lý trên dữ liệu mẫu (giả định dữ liệu là các giá trị số hoặc text từ các cột đã chọn) và trả về kết quả dưới dạng chuỗi.
-Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu tiên cột 'Month' cho thời gian và các cột khác dựa trên từ khóa như 'count', 'total', 'list', 'supplier'. Trả về định dạng JSON hợp lệ {"columns": ["column1", "column2", ...], "operation": "tính tổng|đếm|liệt kê", "result": "chuỗi kết quả"} ngay cả khi có lỗi, thay vì trả về nội dung không hợp lệ.`;
-
-    const aiResp = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model: 'deepseek/deepseek-r1-0528:free',
-        messages: [
-          { role: 'system', content: 'Bạn là trợ lý AI chuyên phân tích và xử lý dữ liệu. Luôn trả về JSON hợp lệ {"columns": [], "operation": "", "result": "chuỗi kết quả"} ngay cả khi không thể xử lý.' },
-          { role: 'user', content: prompt },
-        ],
-        stream: false,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 20000,
-      }
-    );
-
-    let aiResponse = aiResp.data.choices?.[0]?.message?.content || '{"columns": [], "operation": "", "result": "Không thể xử lý"}';
-    // Làm sạch phản hồi để loại bỏ ký tự không mong muốn
-    aiResponse = aiResponse.replace(/[#`~]/g, '').trim();
-    let { columns, operation, result } = JSON.parse(aiResponse.replace(/```json|```/g, '').trim());
-    console.log('[AI Analysis] Columns:', columns, 'Operation:', operation, 'Result:', result);
-
-    // Lấy dữ liệu chỉ với các cột đã chọn
-    if (columns.length === 0) {
-      columns = ['Month']; // Fallback nếu AI không xác định cột
-    }
-    const rows = await getAllRows(baseId, tableId, token, columns);
+    // Lấy dữ liệu với các cột cụ thể
+    const rows = await getAllRows(baseId, tableId, token, ['Month', 'Count PO']);
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
@@ -299,50 +259,44 @@ Hỗ trợ cả tiếng Việt và tiếng Anh. Nếu không chắc chắn, ưu 
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Nếu AI thất bại, sử dụng logic fallback
-    if (!result || result === 'Không thể xử lý') {
-      const monthCol = columns.find(col => col.toLowerCase().includes('month'));
-      let valueCol = columns.find(col => col.toLowerCase().includes('count') || col.toLowerCase().includes('po'));
+    // Debug: Hiển thị tất cả giá trị Month
+    const monthValues = validRows.map(row => row['Month'] ? row['Month'].toString().trim() : 'null');
+    console.log('[Debug] Giá trị Month trong dữ liệu:', monthValues);
 
-      if (!monthCol) {
-        return { result: 'Không tìm thấy cột Month' };
-      }
-      if (!valueCol) {
-        valueCol = columns.find(col => col !== monthCol); // Lấy cột khác làm giá trị mặc định
-        if (!valueCol) return { result: 'Không tìm thấy cột dữ liệu' };
-      }
-
-      const monthMatch = userMessage.match(/tháng\s*(\d{1,2})\/(\d{4})/i);
-      let targetMonth = '06/2025'; // Mặc định
-      if (monthMatch) {
-        const month = monthMatch[1].padStart(2, '0');
-        const year = monthMatch[2];
-        targetMonth = `${month}/${year}`;
-      }
-
-      const filteredRows = validRows.filter(row => {
-        const month = row[monthCol];
-        let monthValue = month ? month.toString().trim() : null;
-        if (monthValue && monthValue.toLowerCase().startsWith('tháng')) {
-          monthValue = monthValue.replace(/tháng/i, '').trim();
-        }
-        if (monthValue && !monthValue.includes('/')) {
-          monthValue = `0${monthValue}/2024`;
-        }
-        return monthValue && monthValue === targetMonth;
-      });
-
-      if (filteredRows.length === 0) {
-        return { result: `Không có dữ liệu cho tháng ${targetMonth}` };
-      }
-
-      const total = filteredRows.reduce((sum, row) => sum + (parseFloat(row[valueCol]) || 0), 0);
-      return { result: `Tổng ${valueCol} của ${targetMonth} là ${total}` };
+    // Lọc dữ liệu cho tháng 11/2023
+    const monthCol = 'Month';
+    const valueCol = 'Count PO';
+    const monthMatch = userMessage.match(/tháng\s*(\d{1,2})\/(\d{4})/i);
+    let targetMonth = '11/2023'; // Mặc định theo yêu cầu
+    if (monthMatch) {
+      const month = monthMatch[1].padStart(2, '0');
+      const year = monthMatch[2];
+      targetMonth = `${month}/${year}`;
     }
 
-    return { result };
+    const filteredRows = validRows.filter(row => {
+      const month = row[monthCol];
+      let monthValue = month ? month.toString().trim() : null;
+      if (monthValue && monthValue.toLowerCase().startsWith('tháng')) {
+        monthValue = monthValue.replace(/tháng/i, '').trim();
+      }
+      if (monthValue && !monthValue.includes('/')) {
+        monthValue = `0${monthValue}/2024`;
+      }
+      console.log('[Debug] So sánh Month:', monthValue, 'với target:', targetMonth);
+      return monthValue && monthValue === targetMonth;
+    });
+
+    if (filteredRows.length === 0) {
+      return { result: `Không có dữ liệu cho tháng ${targetMonth}` };
+    }
+
+    // Tính tổng Count PO
+    const total = filteredRows.reduce((sum, row) => sum + (parseFloat(row[valueCol]) || 0), 0);
+    console.log('[Debug] Dữ liệu lọc được:', JSON.stringify(filteredRows));
+    return { result: `Tổng ${valueCol} của ${targetMonth} là ${total}` };
   } catch (e) {
-    console.error('[AI Analysis Error] Nguyên nhân:', e?.response?.data?.msg || e.message);
+    console.error('[Analysis Error] Nguyên nhân:', e.message);
     return { result: 'Lỗi khi xử lý, vui lòng liên hệ Admin Long' };
   }
 }
