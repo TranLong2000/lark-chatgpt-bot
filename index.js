@@ -315,7 +315,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích câu hỏi với ít token nhất.' },
+          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích câu hỏi với ít token nhất. Luôn trả lời dưới dạng JSON hợp lệ.' },
           { role: 'user', content: analysisPrompt },
         ],
         stream: false,
@@ -329,8 +329,28 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       }
     );
 
-    const analysis = JSON.parse(aiResponse.data.choices[0].message.content);
-    console.log('[Debug] Phân tích AI:', analysis);
+    // Kiểm tra và parse phản hồi từ OpenRouter
+    const aiContent = aiResponse.data.choices[0].message.content.trim();
+    let analysis;
+    try {
+      analysis = JSON.parse(aiContent);
+      console.log('[Debug] Phân tích AI:', analysis);
+    } catch (parseError) {
+      console.error('[Debug] Phân tích AI thất bại, nội dung:', aiContent, 'Lỗi:', parseError.message);
+      // Fallback: Thử trích xuất thủ công nếu JSON không hợp lệ
+      const match = aiContent.match(/\{.*?\}/s);
+      if (match) {
+        try {
+          analysis = JSON.parse(match[0]);
+          console.log('[Debug] Phân tích AI fallback thành công:', analysis);
+        } catch (fallbackError) {
+          console.error('[Debug] Fallback thất bại, nội dung:', match[0], 'Lỗi:', fallbackError.message);
+          return { result: 'Lỗi khi phân tích câu hỏi, vui lòng kiểm tra lại cú pháp' };
+        }
+      } else {
+        return { result: 'Lỗi khi phân tích câu hỏi, vui lòng kiểm tra lại cú pháp' };
+      }
+    }
 
     const { column, condition, value } = analysis;
 
