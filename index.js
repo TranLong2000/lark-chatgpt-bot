@@ -7,6 +7,7 @@ const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
+const moment = require('moment-timezone'); // Để lấy năm hiện tại
 require('dotenv').config();
 
 const app = express();
@@ -270,9 +271,10 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
     // Lấy metadata của bảng để xác định cột
     const fields = await getTableMeta(baseId, tableId, token);
-    console.log('[Debug] Các cột trong bảng:', fields.map(f => f.name));
+    const fieldNames = fields.map(f => f.name);
+    console.log('[Debug] Các cột trong bảng:', fieldNames);
 
-    // Lấy tất cả dữ liệu mà không chỉ định trường
+    // Lấy tất cả dữ liệu
     const rows = await getAllRows(baseId, tableId, token);
     const allRows = rows.map(row => row.fields || {});
 
@@ -285,45 +287,96 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Ánh xạ cột dựa trên từ khóa
-    const monthCol = fields.find(f => ['month', 'tháng'].some(k => f.name.toLowerCase().includes(k)))?.name || 'Month';
-    const valueCol = fields.find(f => ['po', 'số po', 'count po'].some(k => f.name.toLowerCase().includes(k)))?.name || 'Count PO';
-    console.log('[Debug] Cột Month:', monthCol, 'Cột Value:', valueCol);
+    // Gửi câu hỏi đến OpenRouter để phân tích (chỉ trích xuất thông tin cơ bản)
+    const currentYear = moment().tz('Asia/Ho_Chi_Minh').year(); // 2025
+    const analysisPrompt = `
+      Phân tích câu hỏi sau và trích xuất:
+      - Tên cột (column name) cần tính toán hoặc lọc (từ danh sách cột: ${fieldNames.join(', ')}).
+      - Điều kiện lọc (nếu có, ví dụ: tháng, lớn hơn, nhỏ hơn, v.v.).
+      - Giá trị mục tiêu (target value) nếu có (ví dụ: tháng 6/2025, số 500).
+      Câu hỏi: "${userMessage}"
+      Trả lời dưới dạng JSON với các trường: { "column": string, "condition": string, "value": string }.
+      Nếu không rõ, đặt "column", "condition", "value" là null.
+    `;
 
-    // Debug: Hiển thị tất cả giá trị Month
-    const monthValues = validRows.map(row => row[monthCol] ? row[monthCol].toString().trim() : 'null');
-    console.log('[Debug] Giá trị Month trong dữ liệu:', monthValues);
+    const aiResponse = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích câu hỏi và trích xuất thông tin từ dữ liệu bảng với ít token nhất.' },
+          { role: 'user', content: analysisPrompt },
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 20000,
+      }
+    );
 
-    // Lọc dữ liệu cho tháng 11/2023
-    const monthMatch = userMessage.match(/tháng\s*(\d{1,2})\/(\d{4})/i);
-    let targetMonth = '11/2023'; // Mặc định theo yêu cầu
-    if (monthMatch) {
-      const month = monthMatch[1].padStart(2, '0');
-      const year = monthMatch[2];
-      targetMonth = `${month}/${year}`;
+    const analysis = JSON.parse(aiResponse.data.choices[0].message.content);
+    console.log('[Debug] Phân tích AI:', analysis);
+
+    const { column, condition, value } = analysis;
+
+    // Xác nhận cột dựa trên hàng đầu tiên (metadata)
+    let targetColumn = column || fieldNames.find(f => userMessage.toLowerCase().includes(f.toLowerCase()));
+    if (!targetColumn || !fieldNames.includes(targetColumn)) {
+      targetColumn = 'Count PO'; // Mặc định nếu không tìm thấy
     }
+    console.log('[Debug] Cột được chọn:', targetColumn);
 
-    const filteredRows = validRows.filter(row => {
-      const month = row[monthCol];
-      let monthValue = month ? month.toString().trim() : null;
-      if (monthValue && monthValue.toLowerCase().startsWith('tháng')) {
-        monthValue = monthValue.replace(/tháng/i, '').trim();
-      }
-      if (monthValue && !monthValue.includes('/')) {
-        monthValue = `0${monthValue}/2024`;
-      }
-      console.log('[Debug] So sánh Month:', monthValue, 'với target:', targetMonth);
-      return monthValue && monthValue === targetMonth;
-    });
+    // Lấy dữ liệu chỉ từ cột được chọn
+    const selectedData = validRows.map(row => ({
+      value: row[targetColumn] ? row[targetColumn].toString().trim() : null,
+      rowData: row // Giữ nguyên row để lọc sau
+    }));
+    console.log('[Debug] Dữ liệu cột được chọn:', selectedData.map(d => d.value));
+
+    // Lọc ô/hàng dựa trên điều kiện và giá trị
+    let filteredRows = selectedData;
+    if (condition && value) {
+      filteredRows = selectedData.filter(data => {
+        const cellValue = data.value;
+        if (!cellValue) return false;
+
+        switch (condition.toLowerCase()) {
+          case 'tháng':
+          case 'month':
+            const [targetMonth, targetYear] = value.split(/[\/\.]/).map(Number) || [];
+            const [monthNum, year] = cellValue.split(/[\/\.]/).map(Number) || [];
+            console.log('[Debug] So sánh tháng:', { cellValue, monthNum, year, targetMonth, targetYear });
+            return monthNum === targetMonth && year === targetYear;
+          case 'lớn hơn':
+          case 'greater than':
+            return parseFloat(cellValue) > parseFloat(value);
+          case 'nhỏ hơn':
+          case 'less than':
+            return parseFloat(cellValue) < parseFloat(value);
+          default:
+            return cellValue.toLowerCase().includes(value.toLowerCase());
+        }
+      });
+    } else if (value) {
+      filteredRows = selectedData.filter(data =>
+        data.value && data.value.toLowerCase().includes(value.toLowerCase())
+      );
+    }
 
     if (filteredRows.length === 0) {
-      return { result: `Không có dữ liệu cho tháng ${targetMonth}` };
+      return { result: `Không có dữ liệu cho ${targetColumn} với ${condition || ''} ${value || ''}` };
     }
 
-    // Tính tổng Count PO
-    const total = filteredRows.reduce((sum, row) => sum + (parseFloat(row[valueCol]) || 0), 0);
-    console.log('[Debug] Dữ liệu lọc được:', JSON.stringify(filteredRows));
-    return { result: `Tổng ${valueCol} của ${targetMonth} là ${total}` };
+    // Tính toán từ dữ liệu đã lọc
+    const total = filteredRows.reduce((sum, data) => sum + (parseFloat(data.value) || 0), 0);
+    console.log('[Debug] Dữ liệu lọc được:', filteredRows.map(d => d.value));
+
+    // Trả về kết quả
+    return { result: `Tổng ${targetColumn} ${condition ? `(${condition} ${value})` : ''} là ${total}` };
   } catch (e) {
     console.error('[Analysis Error] Nguyên nhân:', e.message);
     return { result: 'Lỗi khi xử lý, vui lòng liên hệ Admin Long' };
