@@ -272,17 +272,8 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không xác định được cột trong Base' };
     }
 
-    // Xác định các cột liên quan dựa trên từ khóa trong câu hỏi
-    const keywords = userMessage.toLowerCase().match(/\b(po|supplier|month|payment date correct|qty order|name|pro\.code|pic|total rebate|estimated delivery)\b/g) || [];
-    const requiredFields = fieldNames.filter(name => keywords.some(keyword => name.toLowerCase().includes(keyword)));
-    console.log('[Debug] Từ khóa phát hiện:', keywords, 'Cột liên quan:', requiredFields);
-
-    if (requiredFields.length === 0) {
-      requiredFields.push(...fieldNames.slice(0, 3)); // Fallback: Lấy 3 cột đầu nếu không tìm thấy từ khóa
-    }
-
-    // Lấy dữ liệu từ Base với các cột liên quan
-    const rows = await getAllRows(baseId, tableId, token, requiredFields);
+    // Lấy dữ liệu từ Base với tất cả cột để phân tích ban đầu
+    const rows = await getAllRows(baseId, tableId, token, fieldNames);
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
@@ -296,45 +287,45 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Tạo ánh xạ cột dựa trên dữ liệu thực tế
+    // Tạo ánh xạ cột ban đầu
     const columnMapping = {};
     if (fields.length > 0) {
       fields.forEach((field, index) => {
-        if (requiredFields.includes(field.name)) {
-          columnMapping[field.field_id] = field.name;
-        }
+        columnMapping[field.field_id] = field.name;
       });
     } else if (validRows[0]) {
       Object.keys(validRows[0]).forEach((fieldId, index) => {
-        if (requiredFields.includes(fieldNames[index])) {
-          columnMapping[fieldId] = fieldNames[index];
-        }
+        columnMapping[fieldId] = fieldNames[index] || fieldId;
       });
     }
-    console.log('[Debug] Ánh xạ cột:', columnMapping);
+    console.log('[Debug] Ánh xạ cột ban đầu:', columnMapping);
 
-    // Lấy dữ liệu cột, giới hạn 10 dòng đầu tiên
+    // Lấy dữ liệu mẫu từ 10 dòng đầu tiên để phân tích
+    const sampleRows = validRows.slice(0, 10);
     const columnData = {};
-    validRows.slice(0, 10).forEach(row => {
+    sampleRows.forEach(row => {
       Object.keys(columnMapping).forEach(fieldId => {
         const colName = columnMapping[fieldId] || fieldId;
         if (!columnData[colName]) columnData[colName] = [];
         columnData[colName].push(row[fieldId] !== undefined ? row[fieldId].toString().trim() : null);
       });
     });
-    console.log('[Debug] Dữ liệu cột (10 dòng đầu):', columnData);
+    console.log('[Debug] Dữ liệu cột mẫu (10 dòng đầu):', columnData);
 
-    // Gửi câu hỏi và dữ liệu cột sang OpenRouter
+    // Gửi câu hỏi và dữ liệu mẫu để AI tự suy ra cột liên quan
     const analysisPrompt = `
-      Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng. Dựa trên câu hỏi sau và dữ liệu cột dưới đây:
+      Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng. Dựa trên câu hỏi sau và dữ liệu cột mẫu dưới đây:
       - Câu hỏi: "${userMessage}"
-      - Dữ liệu cột: ${JSON.stringify(columnData)}
+      - Dữ liệu cột mẫu: ${JSON.stringify(columnData)}
       Hãy:
-      1. Tự động nhận diện cột liên quan dựa trên từ khóa trong câu hỏi (ví dụ: 'PO' có thể là 'PO'; 'supplier' là 'Supplier'; 'tháng' hoặc 'tháng khởi tạo' là 'Month' hoặc 'Payment date correct').
-      2. Lọc hoặc tính toán dựa trên yêu cầu (tổng, đếm, lọc theo điều kiện, v.v.). Nếu có cột thời gian (như 'Month' hoặc 'Payment date correct'), lọc theo giá trị như '5' hoặc '05/2023'.
+      1. Tự động suy ra các cột liên quan dựa trên nội dung câu hỏi (ví dụ: nếu câu hỏi chứa tên nhà cung cấp như 'CÔNG TY TNHH MỘT THÀNH VIÊN SẢN XUẤT THƯƠNG MẠI TÂN VẠN PHƯỚC', chọn cột chứa giá trị tương tự; nếu có 'PO' hoặc 'số PO', chọn cột có giá trị số; nếu có 'tháng khởi tạo 5', chọn cột chứa ngày/tháng).
+      2. Lọc hoặc tính toán dựa trên yêu cầu (đếm, tổng, lọc theo điều kiện, v.v.) với các cột đã suy ra.
       3. Trả lời dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
       Nếu không rõ hoặc thiếu dữ liệu, trả về: { "result": "Không hiểu yêu cầu hoặc thiếu dữ liệu, vui lòng kiểm tra lại cú pháp hoặc dữ liệu" }.
-      Ví dụ: 'CÔNG TY TNHH MỘT THÀNH VIÊN SẢN XUẤT THƯƠNG MẠI TÂN VẠN PHƯỚC nhà cung cấp này có bao nhiêu PO trong tháng khởi tạo 5' nên đếm cột 'PO' khi 'Supplier' là 'CÔNG TY TNHH MỘT THÀNH VIÊN SẢN XUẤT THƯƠNG MẠI TÂN VẠN PHƯỚC' và 'Month' hoặc 'Payment date correct' chứa '5'.
+      Ví dụ: 'CÔNG TY TNHH MỘT THÀNH VIÊN SẢN XUẤT THƯƠNG MẠI TÂN VẠN PHƯỚC nhà cung cấp này có bao nhiêu PO trong tháng khởi tạo 5' nên:
+      - Lọc cột chứa 'CÔNG TY TNHH MỘT THÀNH VIÊN SẢN XUẤT THƯƠNG MẠI TÂN VẠN PHƯỚC'.
+      - Đếm cột chứa 'PO' hoặc số.
+      - Lọc cột ngày/tháng có chứa '5'.
     `;
 
     console.log('[Debug] Gửi prompt đến OpenRouter (độ dài:', analysisPrompt.length, 'kí tự):', analysisPrompt.substring(0, 500));
