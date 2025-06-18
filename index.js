@@ -170,6 +170,7 @@ async function getAppAccessToken() {
       app_id: process.env.LARK_APP_ID,
       app_secret: process.env.LARK_APP_SECRET,
     }, { timeout: 20000 });
+    console.log('[Debug] Token được tạo:', resp.data.app_access_token);
     return resp.data.app_access_token;
   } catch (err) {
     console.error('[GetAppAccessToken Error]', err?.response?.data || err.message);
@@ -209,6 +210,10 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
         params: { field_names: fieldNames.join(',') },
         timeout: 20000,
       });
+      if (!resp.data || !resp.data.data) {
+        console.error('[getAllRows] Phản hồi API không hợp lệ:', JSON.stringify(resp.data));
+        break;
+      }
       rows.push(...(resp.data.data.items || []));
       pageToken = resp.data.data.page_token || '';
     } catch (e) {
