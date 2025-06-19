@@ -261,7 +261,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       if (firstRow) {
         fieldNames = Object.keys(firstRow).map(key => {
           const value = firstRow[key];
-          return typeof value === 'string' ? value : key; // Lấy giá trị nếu là string, ngược lại dùng key
+          return typeof value === 'string' && value.trim() ? value.trim() : key; // Lấy giá trị string làm tên cột
         });
         console.log('[Debug] Các cột suy ra từ dữ liệu:', fieldNames);
       }
@@ -272,7 +272,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không xác định được cột trong Base' };
     }
 
-    // Lấy tất cả dữ liệu từ Base
+    // Lấy dữ liệu từ Base với tất cả cột để phân tích ban đầu
     const rows = await getAllRows(baseId, tableId, token, fieldNames);
     const allRows = rows.map(row => row.fields || {});
 
@@ -287,43 +287,48 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Tạo ánh xạ cột
+    // Tạo ánh xạ cột ban đầu
     const columnMapping = {};
-    fields.forEach((field, index) => {
-      columnMapping[field.field_id] = field.name;
-    });
-    if (Object.keys(columnMapping).length === 0 && validRows[0]) {
+    if (fields.length > 0) {
+      fields.forEach((field, index) => {
+        columnMapping[field.field_id] = field.name;
+      });
+    } else if (validRows[0]) {
       Object.keys(validRows[0]).forEach((fieldId, index) => {
         columnMapping[fieldId] = fieldNames[index] || fieldId;
       });
     }
-    console.log('[Debug] Ánh xạ cột:', columnMapping);
+    console.log('[Debug] Ánh xạ cột ban đầu:', columnMapping);
 
-    // Lấy tất cả dữ liệu cột (không lọc trước)
+    // Lấy dữ liệu mẫu từ 10 dòng đầu tiên để phân tích
+    const sampleRows = validRows.slice(0, 10);
     const columnData = {};
-    validRows.forEach(row => {
+    sampleRows.forEach(row => {
       Object.keys(columnMapping).forEach(fieldId => {
         const colName = columnMapping[fieldId] || fieldId;
         if (!columnData[colName]) columnData[colName] = [];
-        columnData[colName].push(row[fieldId] ? row[fieldId].toString().trim() : null);
+        columnData[colName].push(row[fieldId] !== undefined ? row[fieldId].toString().trim() : null);
       });
     });
-    console.log('[Debug] Dữ liệu cột:', columnData);
+    console.log('[Debug] Dữ liệu cột mẫu (10 dòng đầu):', columnData);
 
-    // Gửi câu hỏi và dữ liệu cột sang OpenRouter với hướng dẫn chi tiết
+    // Gửi câu hỏi và dữ liệu mẫu để AI tự suy ra cột liên quan
     const analysisPrompt = `
-      Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng. Dựa trên câu hỏi sau và dữ liệu cột dưới đây:
+      Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng. Dựa trên câu hỏi sau và dữ liệu cột mẫu dưới đây:
       - Câu hỏi: "${userMessage}"
-      - Dữ liệu cột: ${JSON.stringify(columnData)}
+      - Dữ liệu cột mẫu: ${JSON.stringify(columnData)}
       Hãy:
-      1. Tự động nhận diện cột liên quan dựa trên từ khóa trong câu hỏi (ví dụ: 'PO' có thể là 'Count PO', 'số PO'; 'tháng' có thể là 'Month').
-      2. Lọc hoặc tính toán dựa trên yêu cầu (tổng, trung bình, lọc theo điều kiện, v.v.). Nếu có cột 'Month', lọc theo giá trị như '12/2023'.
+      1. Tự động suy ra các cột liên quan dựa trên nội dung câu hỏi (ví dụ: nếu câu hỏi chứa tên nhà cung cấp như 'CÔNG TY TNHH MỘT THÀNH VIÊN SẢN XUẤT THƯƠNG MẠI TÂN VẠN PHƯỚC', chọn cột chứa giá trị tương tự; nếu có 'PO' hoặc 'số PO', chọn cột có giá trị số; nếu có 'tháng khởi tạo 5', chọn cột chứa ngày/tháng).
+      2. Lọc hoặc tính toán dựa trên yêu cầu (đếm, tổng, lọc theo điều kiện, v.v.) với các cột đã suy ra.
       3. Trả lời dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
       Nếu không rõ hoặc thiếu dữ liệu, trả về: { "result": "Không hiểu yêu cầu hoặc thiếu dữ liệu, vui lòng kiểm tra lại cú pháp hoặc dữ liệu" }.
-      Ví dụ: 'tổng số PO trong tháng 12/2023' nên tính tổng cột 'Count PO' khi 'Month' là '12/2023'.
+      Ví dụ: 'CÔNG TY TNHH MỘT THÀNH VIÊN SẢN XUẤT THƯƠNG MẠI TÂN VẠN PHƯỚC nhà cung cấp này có bao nhiêu PO trong tháng khởi tạo 5' nên:
+      - Lọc cột chứa 'CÔNG TY TNHH MỘT THÀNH VIÊN SẢN XUẤT THƯƠNG MẠI TÂN VẠN PHƯỚC'.
+      - Đếm cột chứa 'PO' hoặc số.
+      - Lọc cột ngày/tháng có chứa '5'.
     `;
 
-    console.log('[Debug] Gửi prompt đến OpenRouter:', analysisPrompt);
+    console.log('[Debug] Gửi prompt đến OpenRouter (độ dài:', analysisPrompt.length, 'kí tự):', analysisPrompt.substring(0, 500));
     const aiResponse = await axios.post(
       'https://openrouter.ai/api/v1/chat/completions',
       {
@@ -355,7 +360,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
 
     return analysis;
   } catch (e) {
-    console.error('[Analysis Error] Nguyên nhân:', e.message, 'Stack:', e.stack);
+    console.error('[Analysis Error] Nguyên nhân:', e.message, 'Stack:', e.stack, 'Response:', e.response?.data);
     return { result: 'Lỗi khi xử lý, vui lòng liên hệ Admin Long' };
   }
 }
