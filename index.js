@@ -249,28 +249,10 @@ function updateConversationMemory(chatId, role, content) {
 
 async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
-    // Lấy metadata của bảng
+    // Lấy metadata của bảng để xác định cột
     const fields = await getTableMeta(baseId, tableId, token);
-    let fieldNames = fields.length > 0 ? fields.map(f => f.name) : [];
-    console.log('[Debug] Các cột từ metadata:', fieldNames);
-
-    // Nếu metadata thất bại, suy ra từ dữ liệu đầu tiên
-    if (fieldNames.length === 0) {
-      const rows = await getAllRows(baseId, tableId, token, []);
-      const firstRow = rows[0]?.fields;
-      if (firstRow) {
-        fieldNames = Object.keys(firstRow).map(key => {
-          const value = firstRow[key];
-          return typeof value === 'string' ? value : key; // Lấy giá trị nếu là string, ngược lại dùng key
-        });
-        console.log('[Debug] Các cột suy ra từ dữ liệu:', fieldNames);
-      }
-    }
-
-    if (fieldNames.length === 0) {
-      console.log('[Debug] Không xác định được cột');
-      return { result: 'Không xác định được cột trong Base' };
-    }
+    const fieldNames = fields.length > 0 ? fields.map(f => f.name) : []; // Lấy từ metadata
+    console.log('[Debug] Các cột trong bảng:', fieldNames);
 
     // Lấy tất cả dữ liệu từ Base
     const rows = await getAllRows(baseId, tableId, token, fieldNames);
@@ -287,40 +269,40 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Tạo ánh xạ cột
+    // Tạo ánh xạ cột dựa trên field_id và tên cột
     const columnMapping = {};
     fields.forEach((field, index) => {
       columnMapping[field.field_id] = field.name;
     });
-    if (Object.keys(columnMapping).length === 0 && validRows[0]) {
-      Object.keys(validRows[0]).forEach((fieldId, index) => {
-        columnMapping[fieldId] = fieldNames[index] || fieldId;
-      });
-    }
     console.log('[Debug] Ánh xạ cột:', columnMapping);
 
-    // Lấy tất cả dữ liệu cột (không lọc trước)
+    // Lấy dữ liệu cột dựa trên câu hỏi (ưu tiên cột được nhắc đến)
+    const relevantColumns = fieldNames.filter(name => userMessage.toLowerCase().includes(name.toLowerCase()));
+    if (relevantColumns.length === 0) relevantColumns.push(fieldNames[0] || ''); // Fallback nếu không tìm thấy
+    console.log('[Debug] Cột liên quan:', relevantColumns);
+
     const columnData = {};
     validRows.forEach(row => {
-      Object.keys(columnMapping).forEach(fieldId => {
-        const colName = columnMapping[fieldId] || fieldId;
-        if (!columnData[colName]) columnData[colName] = [];
-        columnData[colName].push(row[fieldId] ? row[fieldId].toString().trim() : null);
+      relevantColumns.forEach(colName => {
+        const fieldId = fields.find(f => f.name === colName)?.field_id;
+        if (fieldId && row[fieldId] !== undefined) {
+          if (!columnData[colName]) columnData[colName] = [];
+          columnData[colName].push(row[fieldId] ? row[fieldId].toString().trim() : null);
+        }
       });
     });
     console.log('[Debug] Dữ liệu cột:', columnData);
 
-    // Gửi câu hỏi và dữ liệu cột sang OpenRouter với hướng dẫn chi tiết
+    // Gửi câu hỏi và dữ liệu cột sang OpenRouter
     const analysisPrompt = `
       Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng. Dựa trên câu hỏi sau và dữ liệu cột dưới đây:
       - Câu hỏi: "${userMessage}"
       - Dữ liệu cột: ${JSON.stringify(columnData)}
       Hãy:
-      1. Tự động nhận diện cột liên quan dựa trên từ khóa trong câu hỏi (ví dụ: 'PO' có thể là 'Count PO', 'số PO'; 'tháng' có thể là 'Month').
-      2. Lọc hoặc tính toán dựa trên yêu cầu (tổng, trung bình, lọc theo điều kiện, v.v.). Nếu có cột 'Month', lọc theo giá trị như '12/2023'.
+      1. Xác định cột liên quan và giá trị cần tính toán hoặc lọc.
+      2. Lọc hoặc tính toán dựa trên yêu cầu (tổng, trung bình, lọc theo điều kiện, v.v.).
       3. Trả lời dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
-      Nếu không rõ hoặc thiếu dữ liệu, trả về: { "result": "Không hiểu yêu cầu hoặc thiếu dữ liệu, vui lòng kiểm tra lại cú pháp hoặc dữ liệu" }.
-      Ví dụ: 'tổng số PO trong tháng 12/2023' nên tính tổng cột 'Count PO' khi 'Month' là '12/2023'.
+      Nếu không rõ, trả về: { "result": "Không hiểu yêu cầu, vui lòng kiểm tra lại cú pháp" }.
     `;
 
     console.log('[Debug] Gửi prompt đến OpenRouter:', analysisPrompt);
@@ -451,6 +433,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
   }
 }
 
+// Xử lý tín hiệu dừng
 process.on('SIGTERM', () => {
   console.log('[Server] Nhận tín hiệu SIGTERM, đang tắt...');
   pendingTasks.forEach((task, messageId) => replyToLark(messageId, 'Xử lý bị gián đoạn.', task.mentionUserId, task.mentionUserName));
