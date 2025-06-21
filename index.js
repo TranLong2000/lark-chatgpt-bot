@@ -36,16 +36,19 @@ if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
 }
 
-app.use('/webhook', express.raw({ type: '*/*' }));
+// Sử dụng express.raw với limit và timeout tăng
+app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 30000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
+  console.log('[VerifySignature] Timestamp:', timestamp, 'Nonce:', nonce, 'EncryptKey exists:', !!encryptKey);
   if (!encryptKey) {
     console.error('[VerifySignature] LARK_ENCRYPT_KEY chưa được thiết lập');
     return false;
   }
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
   const hash = crypto.createHash('sha256').update(raw, 'utf8').digest('hex');
+  console.log('[VerifySignature] Calculated hash:', hash, 'Signature:', signature);
   return hash === signature;
 }
 
@@ -254,7 +257,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
     // Lấy metadata của bảng để xác định cột
     const fields = await getTableMeta(baseId, tableId, token);
-    const fieldNames = fields.length > 0 ? fields.map(f => f.name) : []; // Lấy từ hàng tiêu đề
+    const fieldNames = fields.length > 0 ? fields.map(f => f.name) : [];
     console.log('[Debug] Các cột trong bảng:', fieldNames);
 
     // Lấy tất cả dữ liệu từ Base
@@ -277,7 +280,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
     const columnMapping = {};
     if (headerRow) {
       Object.keys(headerRow).forEach((fieldId, index) => {
-        columnMapping[fieldId] = fieldNames[index] || fieldId; // Ánh xạ field_id với tên cột
+        columnMapping[fieldId] = fieldNames[index] || fieldId;
       });
     }
     console.log('[Debug] Ánh xạ cột:', columnMapping);
@@ -320,7 +323,6 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       }
     );
 
-    // Kiểm tra và parse phản hồi từ OpenRouter
     const aiContent = aiResponse.data.choices[0].message.content.trim();
     let analysis;
     try {
@@ -572,8 +574,11 @@ setInterval(() => {
 }, 2 * 60 * 60 * 1000);
 
 app.post('/webhook', async (req, res) => {
-  let bodyRaw = req.body.toString('utf8');
   try {
+    console.log('[Webhook Debug] Headers:', req.headers);
+    let bodyRaw = req.body.toString('utf8');
+    console.log('[Webhook Debug] Body Raw:', bodyRaw);
+
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
     const nonce = req.headers['x-lark-request-nonce'];
@@ -860,7 +865,7 @@ app.post('/webhook', async (req, res) => {
       }
     }
   } catch (e) {
-    console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', bodyRaw || 'Không có dữ liệu', 'Stack:', e.stack);
+    console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', req.body.toString('utf8') || 'Không có dữ liệu', 'Stack:', e.stack);
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
