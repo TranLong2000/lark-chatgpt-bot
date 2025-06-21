@@ -21,6 +21,6 @@
     "form-data": "^4.0.0",
     "canvas": "^2.11.2",
     "moment-timezone": "^0.5.43",
-    "quickchart-js": "^2.3.2"
+    "quickchart-js": "^2.0.0"
   }
 }
