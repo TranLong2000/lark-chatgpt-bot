@@ -576,6 +576,7 @@ setInterval(() => {
 app.post('/webhook', async (req, res) => {
   try {
     console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
+    console.log('[Webhook Debug] Raw Buffer (Hex):', Buffer.from(req.body).toString('hex')); // Log hex để kiểm tra dữ liệu thô
     console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8'));
     let bodyRaw = req.body.toString('utf8');
     console.log('[Webhook Debug] Parsed Body:', bodyRaw);
