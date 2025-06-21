@@ -19,7 +19,8 @@ const BASE_MAPPINGS = {
   'SALE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
   'FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr',
   'TEST': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbllwXLQBdRgex9z&view=vewksBlcon',
-  'PAY': 'https://cgfscmkep8m.sg.larksuite.com/base/UKmZbG3UJaUUWjs50tPllEZRgVe?table=tblNKkAOLOUlEHro&view=vewsMaXJjm'
+  'PAY': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblVd8vhHMCpLwM6&view=vewj16bdqY'
+
 };
 
 const SHEET_MAPPINGS = {
@@ -253,80 +254,11 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
     // Lấy metadata của bảng để xác định cột
     const fields = await getTableMeta(baseId, tableId, token);
-    const fieldNames = fields.length > 0 ? fields.map(f => f.name) : [];
+    const fieldNames = fields.length > 0 ? fields.map(f => f.name) : []; // Lấy từ hàng tiêu đề
     console.log('[Debug] Các cột trong bảng:', fieldNames);
 
-    // Nếu metadata thất bại, suy ra từ dữ liệu đầu tiên
-    if (fieldNames.length === 0) {
-      const rows = await getAllRows(baseId, tableId, token, []);
-      const firstRow = rows[0]?.fields;
-      if (firstRow) {
-        fieldNames = Object.keys(firstRow).map(key => firstRow[key]?.toString().trim() || key);
-        console.log('[Debug] Các cột suy ra từ dữ liệu:', fieldNames);
-      }
-    }
-
-    if (fieldNames.length === 0) {
-      console.log('[Debug] Không xác định được cột');
-      return { result: 'Không xác định được cột trong Base' };
-    }
-
-    // Phân tách từ khóa từ câu hỏi bằng AI hoặc regex đơn giản
-    const keywordPrompt = `
-      Bạn là một trợ lý AI chuyên phân tích câu hỏi. Dựa trên câu hỏi sau:
-      - Câu hỏi: "${userMessage}"
-      Hãy:
-      1. Trích xuất các từ khóa chính (các thực thể hoặc điều kiện như tên, số, ngày tháng).
-      2. Trả lời dưới dạng JSON: { "keywords": [string] }.
-    `;
-    const keywordResponse = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model: 'deepseek/deepseek-r1-0528:free',
-        messages: [
-          { role: 'system', content: 'Bạn là một trợ lý AI trích xuất từ khóa với ít token nhất. Luôn trả lời dưới dạng JSON hợp lệ.' },
-          { role: 'user', content: keywordPrompt },
-        ],
-        stream: false,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 10000,
-      }
-    );
-    const keywordContent = keywordResponse.data.choices[0].message.content.trim();
-    let keywords;
-    try {
-      keywords = JSON.parse(keywordContent).keywords || [];
-      console.log('[Debug] Từ khóa trích xuất:', keywords);
-    } catch (parseError) {
-      console.error('[Debug] Lỗi phân tích từ khóa, nội dung:', keywordContent, 'Lỗi:', parseError.message);
-      keywords = []; // Fallback nếu AI thất bại
-    }
-
-    // Ánh xạ từ khóa với hàng tiêu đề để chọn cột liên quan
-    const requiredFields = [];
-    if (keywords.length > 0) {
-      keywords.forEach(keyword => {
-        const matchedField = fieldNames.find(field => field.toLowerCase().includes(keyword.toLowerCase()) || keyword.toLowerCase().includes(field.toLowerCase()));
-        if (matchedField && !requiredFields.includes(matchedField)) {
-          requiredFields.push(matchedField);
-        }
-      });
-    }
-    if (requiredFields.length === 0) {
-      requiredFields.push(...fieldNames.slice(0, 3)); // Fallback: Lấy 3 cột đầu nếu không tìm thấy từ khóa
-    }
-    console.log('[Debug] Cột được chọn:', requiredFields);
-
-    // Lấy dữ liệu chỉ từ các cột đã chọn
-    const rows = await getAllRows(baseId, tableId, token, requiredFields.map(field => {
-      const fieldObj = fields.find(f => f.name === field);
-      return fieldObj ? fieldObj.field_id : field;
-    }));
+    // Lấy tất cả dữ liệu từ Base
+    const rows = await getAllRows(baseId, tableId, token);
     const allRows = rows.map(row => row.fields || {});
 
     if (!allRows || allRows.length === 0) {
@@ -340,40 +272,29 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Tạo ánh xạ cột dựa trên cột đã chọn
+    // Lấy hàng tiêu đề (dòng đầu tiên) làm tiêu chí xác định cột
+    const headerRow = validRows[0];
     const columnMapping = {};
-    fields.forEach(field => {
-      if (requiredFields.includes(field.name)) {
-        columnMapping[field.field_id] = field.name;
-      }
-    });
-    if (Object.keys(columnMapping).length === 0 && validRows[0]) {
-      Object.keys(validRows[0]).forEach((fieldId, index) => {
-        if (requiredFields.includes(fieldNames[index])) {
-          columnMapping[fieldId] = fieldNames[index];
-        }
+    if (headerRow) {
+      Object.keys(headerRow).forEach((fieldId, index) => {
+        columnMapping[fieldId] = fieldNames[index] || fieldId; // Ánh xạ field_id với tên cột
       });
     }
     console.log('[Debug] Ánh xạ cột:', columnMapping);
 
-    // Chuẩn bị dữ liệu cột chỉ với các cột đã chọn
+    // Gửi câu hỏi và dữ liệu cột sang OpenRouter để phân tích
     const columnData = {};
-    validRows.forEach(row => {
-      Object.keys(columnMapping).forEach(fieldId => {
-        const colName = columnMapping[fieldId] || fieldId;
-        if (!columnData[colName]) columnData[colName] = [];
-        columnData[colName].push(row[fieldId] !== undefined ? row[fieldId].toString().trim() : null);
-      });
+    Object.keys(columnMapping).forEach(fieldId => {
+      columnData[columnMapping[fieldId]] = validRows.map(row => row[fieldId] ? row[fieldId].toString().trim() : null);
     });
     console.log('[Debug] Dữ liệu cột:', columnData);
 
-    // Gửi câu hỏi và dữ liệu cột đã lọc đến AI
     const analysisPrompt = `
       Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng. Dựa trên câu hỏi sau và dữ liệu cột dưới đây:
       - Câu hỏi: "${userMessage}"
       - Dữ liệu cột: ${JSON.stringify(columnData)}
       Hãy:
-      1. Xác định cột liên quan và giá trị cần tính toán hoặc lọc dựa trên dữ liệu đã cung cấp.
+      1. Xác định cột liên quan và giá trị cần tính toán hoặc lọc.
       2. Lọc hoặc tính toán dựa trên yêu cầu (tổng, trung bình, lọc theo điều kiện, v.v.).
       3. Trả lời dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
       Nếu không rõ, trả về: { "result": "Không hiểu yêu cầu, vui lòng kiểm tra lại cú pháp" }.
@@ -399,6 +320,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       }
     );
 
+    // Kiểm tra và parse phản hồi từ OpenRouter
     const aiContent = aiResponse.data.choices[0].message.content.trim();
     let analysis;
     try {
