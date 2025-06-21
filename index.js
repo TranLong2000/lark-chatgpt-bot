@@ -500,10 +500,10 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
     });
 
     const chartUrl = await chart.getShortUrl();
-    console.log('[Chart] Đã tạo biểu đồ:', chartUrl);
+    console.log('[Chart] Đã tạo biểu đồ cho group:', groupChatId, 'URL:', chartUrl);
     return { success: true, chartUrl };
   } catch (err) {
-    console.error('[CreatePieChart Error]', err.message);
+    console.error('[CreatePieChart Error]', err.message, 'Group:', groupChatId);
     return { success: false, message: `Lỗi khi tạo biểu đồ: ${err.message}` };
   }
 }
@@ -520,7 +520,7 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
       },
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
-    console.log('[SendChart] Đã gửi biểu đồ:', response.data);
+    console.log('[SendChart] Đã gửi biểu đồ đến group:', chatId, 'Response:', response.data);
 
     // Gửi tin nhắn văn bản kèm theo
     await axios.post(
@@ -533,7 +533,7 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
   } catch (err) {
-    console.error('[SendChart Error]', err?.response?.data || err.message);
+    console.error('[SendChart Error] Group:', chatId, 'Nguyên nhân:', err?.response?.data || err.message);
   }
 }
 
@@ -585,11 +585,15 @@ app.post('/webhook', async (req, res) => {
 
     const { encrypt } = JSON.parse(bodyRaw);
     const decrypted = decryptMessage(encrypt);
-
     console.log('[Webhook Debug] Received event_type:', decrypted.header.event_type, 'Full Decrypted:', JSON.stringify(decrypted));
 
     if (decrypted.header.event_type === 'url_verification') {
       return res.json({ challenge: decrypted.event.challenge });
+    }
+
+    // Logging chat_id từ sự kiện nếu có
+    if (decrypted.event && decrypted.event.chat_id) {
+      console.log('[Chat ID Debug] Chat ID từ sự kiện:', decrypted.event.chat_id);
     }
 
     // Xử lý sự kiện cập nhật bản ghi từ Base Automation
@@ -597,21 +601,24 @@ app.post('/webhook', async (req, res) => {
       const event = decrypted.event;
       const baseId = event.app_id; // Base ID: PjuWbiJLeaOzBMskS4ulh9Bwg9d
       const tableId = event.table_id; // Table ID: tbl61rgzOwS8viB2
-      const chatId = process.env.LARK_GROUP_CHAT_ID; // Cần cấu hình trong .env
+      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
 
-      if (!chatId) {
-        console.error('[Webhook] LARK_GROUP_CHAT_ID chưa được thiết lập');
-        return res.status(400).send('Thiếu group chat ID');
+      if (groupChatIds.length === 0) {
+        console.error('[Webhook] LARK_GROUP_CHAT_IDS chưa được thiết lập hoặc rỗng');
+        return res.status(400).send('Thiếu group chat IDs');
       }
 
       const token = await getAppAccessToken();
-      const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
+      for (const chatId of groupChatIds) {
+        console.log('[Webhook] Xử lý gửi đến group:', chatId);
+        const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
 
-      if (success) {
-        const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${new Date().toLocaleDateString('vi-VN')})`;
-        await sendChartToGroup(token, chatId, chartUrl, messageText);
-      } else {
-        await sendChartToGroup(token, chatId, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
+        if (success) {
+          const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${new Date().toLocaleDateString('vi-VN')})`;
+          await sendChartToGroup(token, chatId, chartUrl, messageText);
+        } else {
+          await sendChartToGroup(token, chatId, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
+        }
       }
       return res.sendStatus(200);
     }
@@ -624,6 +631,9 @@ app.post('/webhook', async (req, res) => {
       const messageType = message.message_type;
       const parentId = message.parent_id;
       const mentions = message.mentions || [];
+
+      // Logging chat_id từ tin nhắn
+      console.log('[Message Debug] Chat ID từ tin nhắn:', chatId);
 
       if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
