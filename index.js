@@ -37,7 +37,7 @@ if (!fs.existsSync('temp_files')) {
 }
 
 // Sử dụng express.raw với limit và timeout tăng
-app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 30000 }));
+app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 60000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -575,9 +575,11 @@ setInterval(() => {
 
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('[Webhook Debug] Headers:', req.headers);
+    console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
+    console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8'));
     let bodyRaw = req.body.toString('utf8');
-    console.log('[Webhook Debug] Body Raw:', bodyRaw);
+    console.log('[Webhook Debug] Parsed Body:', bodyRaw);
+    console.log('[Webhook Debug] All Headers:', JSON.stringify(req.headers, null, 2));
 
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
