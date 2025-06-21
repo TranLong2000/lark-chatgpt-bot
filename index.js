@@ -8,6 +8,7 @@ const mammoth = require('mammoth');
 const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
 const moment = require('moment-timezone');
+const QuickChart = require('quickchart-js');
 require('dotenv').config();
 
 const app = express();
@@ -20,7 +21,6 @@ const BASE_MAPPINGS = {
   'FIN': 'https://cgfscmkep8m.sg.larksuite.com/base/Um8Zb07ayaDFAws9BRFlbZtngZf?table=tblc0IuDKdYrVGqo&view=vewU8BLeBr',
   'TEST': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbllwXLQBdRgex9z&view=vewksBlcon',
   'PAY': 'https://cgfscmkep8m.sg.larksuite.com/base/UBrwbz2tHaeEwosVO5dlV0Lcgqb?table=tblQcpErvmsBpWCh&view=vewIQhfi04'
-
 };
 
 const SHEET_MAPPINGS = {
@@ -429,6 +429,136 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
   }
 }
 
+// Thêm hàm tạo biểu đồ pie chart
+async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
+  try {
+    // Lấy dữ liệu từ Base
+    const rows = await getAllRows(baseId, tableId, token);
+    const fields = await getTableMeta(baseId, tableId, token);
+    
+    // Xác định cột Manufactory và Value
+    const categoryField = fields.find(f => f.name.toLowerCase() === 'manufactory')?.field_id;
+    const valueField = fields.find(f => f.name.toLowerCase() === 'value')?.field_id;
+
+    if (!categoryField || !valueField) {
+      return { success: false, message: 'Không tìm thấy cột Manufactory hoặc Value phù hợp để tạo biểu đồ' };
+    }
+
+    // Tính tổng và phần trăm
+    const dataMap = new Map();
+    rows.forEach(row => {
+      const fields = row.fields || {};
+      const category = fields[categoryField] ? fields[categoryField].toString() : 'Unknown';
+      const value = parseFloat(fields[valueField]) || 0;
+      dataMap.set(category, (dataMap.get(category) || 0) + value);
+    });
+
+    const total = Array.from(dataMap.values()).reduce((a, b) => a + b, 0);
+    const labels = [];
+    const values = [];
+    dataMap.forEach((value, label) => {
+      labels.push(label);
+      values.push((value / total * 100).toFixed(2));
+    });
+
+    // Tạo pie chart bằng QuickChart
+    const chart = new QuickChart();
+    chart.setConfig({
+      type: 'pie',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: values,
+          backgroundColor: [
+            'rgba(75, 192, 192, 0.2)',
+            'rgba(255, 99, 132, 0.2)',
+            'rgba(54, 162, 235, 0.2)',
+            'rgba(255, 206, 86, 0.2)',
+            'rgba(153, 102, 255, 0.2)',
+            'rgba(255, 159, 64, 0.2)'
+          ],
+          borderColor: [
+            'rgba(75, 192, 192, 1)',
+            'rgba(255, 99, 132, 1)',
+            'rgba(54, 162, 235, 1)',
+            'rgba(255, 206, 86, 1)',
+            'rgba(153, 102, 255, 1)',
+            'rgba(255, 159, 64, 1)'
+          ],
+          borderWidth: 1
+        }]
+      },
+      options: {
+        title: {
+          display: true,
+          text: 'Biểu đồ % Manufactory (Cập nhật hàng ngày)'
+        },
+        plugins: {
+          legend: { position: 'right' }
+        }
+      }
+    });
+
+    const chartUrl = await chart.getShortUrl();
+    console.log('[Chart] Đã tạo biểu đồ:', chartUrl);
+    return { success: true, chartUrl };
+  } catch (err) {
+    console.error('[CreatePieChart Error]', err.message);
+    return { success: false, message: `Lỗi khi tạo biểu đồ: ${err.message}` };
+  }
+}
+
+// Thêm hàm gửi tin nhắn với hình ảnh
+async function sendChartToGroup(token, chatId, chartUrl, messageText) {
+  try {
+    const response = await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
+      {
+        receive_id: chatId,
+        msg_type: 'image',
+        content: JSON.stringify({ image_key: await uploadImageToLark(chartUrl, token) })
+      },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    console.log('[SendChart] Đã gửi biểu đồ:', response.data);
+
+    // Gửi tin nhắn văn bản kèm theo
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
+      {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text: messageText })
+      },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+  } catch (err) {
+    console.error('[SendChart Error]', err?.response?.data || err.message);
+  }
+}
+
+// Hàm tải và upload hình ảnh lên Lark
+async function uploadImageToLark(imageUrl, token) {
+  try {
+    const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data);
+
+    const formData = new FormData();
+    formData.append('image', buffer, { filename: 'chart.png' });
+    formData.append('image_type', 'message');
+
+    const uploadResp = await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/images`,
+      formData,
+      { headers: { Authorization: `Bearer ${token}`, ...formData.getHeaders() } }
+    );
+    return uploadResp.data.data.image_key;
+  } catch (err) {
+    console.error('[UploadImage Error]', err?.response?.data || err.message);
+    throw err;
+  }
+}
+
 // Xử lý tín hiệu dừng
 process.on('SIGTERM', () => {
   console.log('[Server] Nhận tín hiệu SIGTERM, đang tắt...');
@@ -460,6 +590,30 @@ app.post('/webhook', async (req, res) => {
 
     if (decrypted.header.event_type === 'url_verification') {
       return res.json({ challenge: decrypted.event.challenge });
+    }
+
+    // Xử lý sự kiện cập nhật bản ghi từ Base Automation
+    if (decrypted.header.event_type === 'bitable.record.updated') {
+      const event = decrypted.event;
+      const baseId = event.app_id; // Base ID: PjuWbiJLeaOzBMskS4ulh9Bwg9d
+      const tableId = event.table_id; // Table ID: tbl61rgzOwS8viB2
+      const chatId = process.env.LARK_GROUP_CHAT_ID; // Cần cấu hình trong .env
+
+      if (!chatId) {
+        console.error('[Webhook] LARK_GROUP_CHAT_ID chưa được thiết lập');
+        return res.status(400).send('Thiếu group chat ID');
+      }
+
+      const token = await getAppAccessToken();
+      const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
+
+      if (success) {
+        const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${new Date().toLocaleDateString('vi-VN')})`;
+        await sendChartToGroup(token, chatId, chartUrl, messageText);
+      } else {
+        await sendChartToGroup(token, chatId, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
+      }
+      return res.sendStatus(200);
     }
 
     if (decrypted.header.event_type === 'im.message.receive_v1') {
