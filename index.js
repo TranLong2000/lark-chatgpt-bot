@@ -37,7 +37,7 @@ if (!fs.existsSync('temp_files')) {
 }
 
 // Sử dụng express.raw với limit và timeout tăng
-app.use('/webhook', express.raw({ type: '*/*', limit: '1mb', timeout: 300000 }));
+app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 300000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -255,12 +255,10 @@ function updateConversationMemory(chatId, role, content) {
 
 async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
-    // Lấy metadata của bảng để xác định cột
     const fields = await getTableMeta(baseId, tableId, token);
     const fieldNames = fields.length > 0 ? fields.map(f => f.name) : [];
     console.log('[Debug] Các cột trong bảng:', fieldNames);
 
-    // Lấy tất cả dữ liệu từ Base
     const rows = await getAllRows(baseId, tableId, token);
     const allRows = rows.map(row => row.fields || {});
 
@@ -275,7 +273,6 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Lấy hàng tiêu đề (dòng đầu tiên) làm tiêu chí xác định cột
     const headerRow = validRows[0];
     const columnMapping = {};
     if (headerRow) {
@@ -285,7 +282,6 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
     }
     console.log('[Debug] Ánh xạ cột:', columnMapping);
 
-    // Gửi câu hỏi và dữ liệu cột sang OpenRouter để phân tích
     const columnData = {};
     Object.keys(columnMapping).forEach(fieldId => {
       columnData[columnMapping[fieldId]] = validRows.map(row => row[fieldId] ? row[fieldId].toString().trim() : null);
@@ -584,7 +580,7 @@ setInterval(() => {
 
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
+    console.log('[Webhook Debug] Raw Buffer Length:', req.body ? req.body.length : 0);
     if (!req.body || req.body.length === 0) {
       console.error('[Webhook] Body rỗng hoặc không nhận được dữ liệu');
       return res.status(400).send('Body rỗng');
@@ -592,32 +588,11 @@ app.post('/webhook', async (req, res) => {
     console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8')); // Log toàn bộ body
     console.log('[Webhook Debug] All Headers:', JSON.stringify(req.headers, null, 2));
 
-    const signature = req.headers['x-lark-signature'];
-    const timestamp = req.headers['x-lark-request-timestamp'];
-    const nonce = req.headers['x-lark-request-nonce'];
-
-    // Tạm thời bỏ qua kiểm tra chữ ký để debug
-    if (!verifySignature(timestamp, nonce, req.body.toString('utf8'), signature)) {
-      console.warn('[Webhook] Bỏ qua kiểm tra chữ ký để debug. Kiểm tra LARK_ENCRYPT_KEY sau.');
-    } else {
-      console.log('[VerifySignature] Chữ ký hợp lệ, tiếp tục xử lý');
-    }
-
     let decryptedData = {};
     try {
       const parsedBody = req.body.toString('utf8') ? JSON.parse(req.body.toString('utf8')) : {};
       console.log('[Webhook Debug] Parsed JSON Body:', JSON.stringify(parsedBody, null, 2));
-      if (Object.keys(parsedBody).length === 0) {
-        console.error('[Webhook] Payload rỗng, có thể URL webhook hoặc Automation không đúng');
-        return res.status(400).send('Payload rỗng');
-      }
-      const { encrypt } = parsedBody;
-      if (encrypt) {
-        decryptedData = decryptMessage(encrypt);
-        console.log('[Webhook Debug] Decrypted Data:', JSON.stringify(decryptedData, null, 2));
-      } else {
-        decryptedData = parsedBody; // Sử dụng body thô nếu không có encrypt
-      }
+      decryptedData = parsedBody; // Sử dụng body thô để debug
     } catch (parseError) {
       console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message, 'Raw Body:', req.body.toString('utf8'));
       return res.status(400).send('Lỗi khi parse payload');
