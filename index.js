@@ -36,43 +36,8 @@ if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
 }
 
-// ✅ Route xử lý Automation (Base webhook): dùng express.json()
-app.post('/webhook', express.json({ limit: '10mb' }), async (req, res) => {
-  const body = req.body || {};
-  console.log('[Automation] Body:', body);
-
-  // ... xử lý logic base như update Date, biểu đồ, etc.
-  if (body.header?.event_type === 'bitable.record.updated') {
-    // xử lý như cũ
-    return res.sendStatus(200);
-  }
-
-  if (body.header?.event_type === 'url_verification') {
-    return res.json({ challenge: body.event?.challenge });
-  }
-
-  return res.sendStatus(200);
-});
-
-// ✅ Route xử lý tin nhắn: dùng express.raw() để bạn vẫn có thể kiểm soát toàn bộ buffer nếu muốn
-app.post('/webhook-msg', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
-  let parsedBody = {};
-  try {
-    parsedBody = JSON.parse(req.body.toString('utf8'));
-  } catch (e) {
-    console.error('[webhook-msg] Lỗi parse body:', e.message);
-    return res.status(400).send('Invalid JSON');
-  }
-
-  console.log('[webhook-msg] Nhận sự kiện:', parsedBody.header?.event_type);
-
-  // ... xử lý tin nhắn như cũ, ví dụ im.message.receive_v1
-  if (parsedBody.header?.event_type === 'im.message.receive_v1') {
-    // xử lý như file bạn đã làm
-  }
-
-  res.sendStatus(200);
-});
+// Sử dụng express.raw với limit và timeout tăng
+app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 60000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
