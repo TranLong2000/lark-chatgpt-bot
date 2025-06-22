@@ -14,6 +14,8 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
+app.use('/webhook', express.json({ limit: '10mb' }));
+
 // Cập nhật ánh xạ Base
 const BASE_MAPPINGS = {
   'PUR': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
