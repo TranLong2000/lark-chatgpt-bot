@@ -198,7 +198,7 @@ async function getTableMeta(baseId, tableId, token) {
   }
 }
 
-async function getAllRows(baseId, tableId, token, requiredFields = []) {
+async function getAllRows(baseId, tableId, token, requiredFields = [], maxRows = 50) {
   if (global.lastRows && global.lastRows.baseId === baseId && global.lastRows.tableId === tableId) {
     console.log('[getAllRows] Sử dụng dữ liệu đã lấy:', global.lastRows.rows.length, 'dòng');
     return global.lastRows.rows;
@@ -226,7 +226,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       console.error('[getAllRows] Lỗi:', e.response?.data || e.message, 'Status:', e.response?.status);
       break;
     }
-  } while (pageToken && rows.length < 100);
+  } while (pageToken && rows.length < maxRows);
   console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 5)));
   global.lastRows = { baseId, tableId, rows }; // Lưu cache
   return rows;
@@ -598,6 +598,10 @@ app.post('/webhook', async (req, res) => {
     try {
       const parsedBody = bodyRaw ? JSON.parse(bodyRaw) : {};
       console.log('[Webhook Debug] Parsed JSON Body:', JSON.stringify(parsedBody, null, 2));
+      if (Object.keys(parsedBody).length === 0) {
+        console.error('[Webhook Debug] Payload rỗng, có thể URL webhook hoặc Automation không đúng');
+        return res.status(400).send('Payload rỗng');
+      }
       const { encrypt } = parsedBody;
       if (encrypt) {
         decryptedData = decryptMessage(encrypt);
@@ -609,6 +613,7 @@ app.post('/webhook', async (req, res) => {
     } catch (parseError) {
       console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message, 'Raw Body:', bodyRaw);
       decryptedData = {}; // Fallback nếu parse thất bại
+      return res.status(400).send('Lỗi khi parse payload');
     }
 
     if (decryptedData.header && decryptedData.header.event_type === 'url_verification') {
@@ -624,8 +629,8 @@ app.post('/webhook', async (req, res) => {
     if (decryptedData.header && decryptedData.header.event_type === 'bitable.record.updated') {
       console.log('[Webhook] Detected bitable.record.updated event:', JSON.stringify(decryptedData, null, 2));
       const event = decryptedData.event;
-      const baseId = event.app_id; // Base ID: PjuWbiJLeaOzBMskS4ulh9Bwg9d
-      const tableId = event.table_id; // Table ID: tbl61rgzOwS8viB2
+      const baseId = event.app_id;
+      const tableId = event.table_id;
       const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
 
       if (groupChatIds.length === 0) {
