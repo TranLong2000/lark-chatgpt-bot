@@ -54,42 +54,24 @@ app.post('/webhook', express.json({ limit: '10mb' }), async (req, res) => {
   return res.sendStatus(200);
 });
 
-// ✅ Webhook từ Lark BASE (Automation): dùng express.json()
-app.post('/webhook-base', express.json({ limit: '10mb' }), async (req, res) => {
+// ✅ Route xử lý tin nhắn: dùng express.raw() để bạn vẫn có thể kiểm soát toàn bộ buffer nếu muốn
+app.post('/webhook-msg', express.raw({ type: '*/*', limit: '10mb' }), async (req, res) => {
+  let parsedBody = {};
   try {
-    const body = req.body || {};
-    console.log('[Webhook-Base] Nhận dữ liệu:', JSON.stringify(body, null, 2));
-
-    if (body.header?.event_type === 'url_verification') {
-      return res.json({ challenge: body.event?.challenge });
-    }
-
-    if (body.header?.event_type === 'bitable.record.updated') {
-      const event = body.event;
-      const baseId = event.app_id;
-      const tableId = event.table_id;
-      const updateDate = event.fields?.['Update Date'];
-
-      if (!updateDate || updateDate.includes('{{')) {
-        console.warn('[Webhook-Base] Update Date không hợp lệ, bỏ qua');
-        return res.sendStatus(200);
-      }
-
-      const token = await getAppAccessToken();
-      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
-
-      for (const chatId of groupChatIds) {
-        const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
-        const text = success ? `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})` : message;
-        await sendChartToGroup(token, chatId, success ? chartUrl : null, text);
-      }
-    }
-
-    res.sendStatus(200);
-  } catch (err) {
-    console.error('[Webhook-Base Error]', err.message);
-    res.status(500).send('Lỗi server');
+    parsedBody = JSON.parse(req.body.toString('utf8'));
+  } catch (e) {
+    console.error('[webhook-msg] Lỗi parse body:', e.message);
+    return res.status(400).send('Invalid JSON');
   }
+
+  console.log('[webhook-msg] Nhận sự kiện:', parsedBody.header?.event_type);
+
+  // ... xử lý tin nhắn như cũ, ví dụ im.message.receive_v1
+  if (parsedBody.header?.event_type === 'im.message.receive_v1') {
+    // xử lý như file bạn đã làm
+  }
+
+  res.sendStatus(200);
 });
 
 function verifySignature(timestamp, nonce, body, signature) {
