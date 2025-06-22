@@ -14,8 +14,6 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
-app.use('/webhook', express.json({ limit: '10mb' }));
-
 // Cập nhật ánh xạ Base
 const BASE_MAPPINGS = {
   'PUR': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
@@ -37,6 +35,9 @@ const pendingFiles = new Map();
 if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
 }
+
+// Sử dụng express.raw với limit và timeout tăng
+app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 60000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -197,7 +198,7 @@ async function getTableMeta(baseId, tableId, token) {
   }
 }
 
-async function getAllRows(baseId, tableId, token, requiredFields = [], maxRows = 50) {
+async function getAllRows(baseId, tableId, token, requiredFields = []) {
   if (global.lastRows && global.lastRows.baseId === baseId && global.lastRows.tableId === tableId) {
     console.log('[getAllRows] Sử dụng dữ liệu đã lấy:', global.lastRows.rows.length, 'dòng');
     return global.lastRows.rows;
@@ -225,7 +226,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = [], maxRows =
       console.error('[getAllRows] Lỗi:', e.response?.data || e.message, 'Status:', e.response?.status);
       break;
     }
-  } while (pageToken && rows.length < maxRows);
+  } while (pageToken && rows.length < 100);
   console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 5)));
   global.lastRows = { baseId, tableId, rows }; // Lưu cache
   return rows;
@@ -254,10 +255,12 @@ function updateConversationMemory(chatId, role, content) {
 
 async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
+    // Lấy metadata của bảng để xác định cột
     const fields = await getTableMeta(baseId, tableId, token);
     const fieldNames = fields.length > 0 ? fields.map(f => f.name) : [];
     console.log('[Debug] Các cột trong bảng:', fieldNames);
 
+    // Lấy tất cả dữ liệu từ Base
     const rows = await getAllRows(baseId, tableId, token);
     const allRows = rows.map(row => row.fields || {});
 
@@ -272,6 +275,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
+    // Lấy hàng tiêu đề (dòng đầu tiên) làm tiêu chí xác định cột
     const headerRow = validRows[0];
     const columnMapping = {};
     if (headerRow) {
@@ -281,6 +285,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
     }
     console.log('[Debug] Ánh xạ cột:', columnMapping);
 
+    // Gửi câu hỏi và dữ liệu cột sang OpenRouter để phân tích
     const columnData = {};
     Object.keys(columnMapping).forEach(fieldId => {
       columnData[columnMapping[fieldId]] = validRows.map(row => row[fieldId] ? row[fieldId].toString().trim() : null);
@@ -426,33 +431,24 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
   }
 }
 
-// Thêm hàm tạo biểu đồ pie chart (đã cập nhật với lọc tháng 5/2025)
+// Thêm hàm tạo biểu đồ pie chart
 async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
   try {
-    // Lấy dữ liệu từ Base với các cột cần thiết
-    const rows = await getAllRows(baseId, tableId, token, ['fldMBj2zDn', 'fldQDM7Ln9', 'fld1FTluSG']);
+    // Lấy dữ liệu từ Base
+    const rows = await getAllRows(baseId, tableId, token);
     const fields = await getTableMeta(baseId, tableId, token);
     
-    // Xác định cột Month, Manufactory và Value
-    const monthField = 'fld1FTluSG'; // ID cột Month
-    const categoryField = 'fldMBj2zDn'; // ID cột Manufactory
-    const valueField = 'fldQDM7Ln9';   // ID cột Value
+    // Xác định cột Manufactory và Value
+    const categoryField = fields.find(f => f.name.toLowerCase() === 'manufactory')?.field_id;
+    const valueField = fields.find(f => f.name.toLowerCase() === 'value')?.field_id;
 
-    // Lọc dữ liệu chỉ lấy các bản ghi có Month là "5/2025"
-    const filteredRows = rows.filter(row => {
-      const fields = row.fields || {};
-      const month = fields[monthField] ? fields[monthField].toString().trim() : '';
-      return month === '5/2025';
-    });
-
-    if (filteredRows.length === 0) {
-      console.log('[Chart] Không có dữ liệu cho tháng 5/2025 trong baseId:', baseId, 'tableId:', tableId);
-      return { success: false, message: 'Không có dữ liệu cho tháng 5/2025' };
+    if (!categoryField || !valueField) {
+      return { success: false, message: 'Không tìm thấy cột Manufactory hoặc Value phù hợp để tạo biểu đồ' };
     }
 
-    // Tính tổng và phần trăm từ dữ liệu đã lọc
+    // Tính tổng và phần trăm
     const dataMap = new Map();
-    filteredRows.forEach(row => {
+    rows.forEach(row => {
       const fields = row.fields || {};
       const category = fields[categoryField] ? fields[categoryField].toString() : 'Unknown';
       const value = parseFloat(fields[valueField]) || 0;
@@ -497,7 +493,7 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
       options: {
         title: {
           display: true,
-          text: 'Biểu đồ % Manufactory (Tháng 5/2025)'
+          text: 'Biểu đồ % Manufactory (Cập nhật hàng ngày)'
         },
         plugins: {
           legend: { position: 'right' }
@@ -579,43 +575,55 @@ setInterval(() => {
 
 app.post('/webhook', async (req, res) => {
   try {
-    console.log('[Webhook Debug] Raw Buffer Length:', req.body ? req.body.length : 0);
-    if (!req.body || req.body.length === 0) {
-      console.error('[Webhook] Body rỗng hoặc không nhận được dữ liệu');
-      return res.status(400).send('Body rỗng');
-    }
-    console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8')); // Log toàn bộ body
+    console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
+    console.log('[Webhook Debug] Raw Buffer (Hex):', Buffer.from(req.body).toString('hex')); // Log hex để kiểm tra dữ liệu thô
+    console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8'));
+    let bodyRaw = req.body.toString('utf8');
+    console.log('[Webhook Debug] Parsed Body:', bodyRaw);
     console.log('[Webhook Debug] All Headers:', JSON.stringify(req.headers, null, 2));
 
+    const signature = req.headers['x-lark-signature'];
+    const timestamp = req.headers['x-lark-request-timestamp'];
+    const nonce = req.headers['x-lark-request-nonce'];
+
+    // Tạm thời bỏ qua kiểm tra chữ ký để debug
+    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      console.warn('[Webhook] Bỏ qua kiểm tra chữ ký để debug. Kiểm tra LARK_ENCRYPT_KEY sau. Request Body:', bodyRaw);
+      // return res.status(401).send('Chữ ký không hợp lệ');
+    } else {
+      console.log('[VerifySignature] Chữ ký hợp lệ, tiếp tục xử lý');
+    }
+
+    // Thử parse body ngay cả khi rỗng
     let decryptedData = {};
     try {
-      const parsedBody = req.body.toString('utf8') ? JSON.parse(req.body.toString('utf8')) : {};
-      console.log('[Webhook Debug] Parsed JSON Body:', JSON.stringify(parsedBody, null, 2));
-      decryptedData = parsedBody; // Sử dụng body thô để debug
+      const { encrypt } = bodyRaw ? JSON.parse(bodyRaw) : {};
+      if (encrypt) {
+        decryptedData = decryptMessage(encrypt);
+        console.log('[Webhook Debug] Decrypted Data:', JSON.stringify(decryptedData));
+      } else {
+        console.error('[Webhook Debug] Không tìm thấy trường encrypt trong body:', bodyRaw);
+      }
     } catch (parseError) {
-      console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message, 'Raw Body:', req.body.toString('utf8'));
-      return res.status(400).send('Lỗi khi parse payload');
+      console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message, 'Raw Body:', bodyRaw);
     }
 
     if (decryptedData.header && decryptedData.header.event_type === 'url_verification') {
       return res.json({ challenge: decryptedData.event.challenge });
     }
 
+    // Logging chat_id từ sự kiện nếu có
+    if (decryptedData.event && decryptedData.event.chat_id) {
+      console.log('[Chat ID Debug] Chat ID từ sự kiện:', decryptedData.event.chat_id);
+    }
+
+    // Xử lý sự kiện cập nhật bản ghi từ Base Automation
     if (decryptedData.header && decryptedData.header.event_type === 'bitable.record.updated') {
-      console.log('[Webhook] Detected bitable.record.updated event:', JSON.stringify(decryptedData, null, 2));
       const event = decryptedData.event;
-      const baseId = event.app_id;
-      const tableId = event.table_id;
-      const updateDate = event.fields['Update Date'];
-
-      console.log('[Webhook Debug] Extracted Data - baseId:', baseId, 'tableId:', tableId, 'updateDate:', updateDate);
-
-      if (!updateDate || updateDate.includes('{{')) {
-        console.warn('[Webhook] Update Date không hợp lệ hoặc chứa placeholder ({{...}}), bỏ qua. Payload:', JSON.stringify(event.fields));
-        return res.sendStatus(200);
-      }
-
+      const baseId = event.app_id; // Base ID: PjuWbiJLeaOzBMskS4ulh9Bwg9d
+      const tableId = event.table_id; // Table ID: tbl61rgzOwS8viB2
       const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
+
       if (groupChatIds.length === 0) {
         console.error('[Webhook] LARK_GROUP_CHAT_IDS chưa được thiết lập hoặc rỗng');
         return res.status(400).send('Thiếu group chat IDs');
@@ -623,16 +631,14 @@ app.post('/webhook', async (req, res) => {
 
       const token = await getAppAccessToken();
       for (const chatId of groupChatIds) {
-        console.log('[Webhook] Xử lý gửi đến group:', chatId, 'baseId:', baseId, 'tableId:', tableId);
+        console.log('[Webhook] Xử lý gửi đến group:', chatId);
         const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
 
         if (success) {
-          const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})`;
+          const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${new Date().toLocaleDateString('vi-VN')})`;
           await sendChartToGroup(token, chatId, chartUrl, messageText);
-          console.log('[Webhook] Gửi biểu đồ thành công đến group:', chatId);
         } else {
           await sendChartToGroup(token, chatId, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
-          console.error('[Webhook] Gửi lỗi đến group:', chatId, 'Message:', message);
         }
       }
       return res.sendStatus(200);
@@ -646,6 +652,9 @@ app.post('/webhook', async (req, res) => {
       const messageType = message.message_type;
       const parentId = message.parent_id;
       const mentions = message.mentions || [];
+
+      // Logging chat_id từ tin nhắn
+      console.log('[Message Debug] Chat ID từ tin nhắn:', chatId);
 
       if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
@@ -873,7 +882,7 @@ app.post('/webhook', async (req, res) => {
     }
   } catch (e) {
     console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', req.body.toString('utf8') || 'Không có dữ liệu', 'Stack:', e.stack);
-    res.status(500).send('Lỗi server, vui lòng kiểm tra log.');
+    res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
 
