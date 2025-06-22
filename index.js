@@ -37,7 +37,7 @@ if (!fs.existsSync('temp_files')) {
 }
 
 // Sử dụng express.raw với limit và timeout tăng
-app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 60000 }));
+app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 120000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -572,8 +572,7 @@ setInterval(() => {
 app.post('/webhook', async (req, res) => {
   try {
     console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
-    console.log('[Webhook Debug] Raw Buffer (Hex):', Buffer.from(req.body).toString('hex')); // Log hex để kiểm tra dữ liệu thô
-    console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8'));
+    console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8')); // Log toàn bộ body
     let bodyRaw = req.body.toString('utf8');
     console.log('[Webhook Debug] Parsed Body:', bodyRaw);
     console.log('[Webhook Debug] All Headers:', JSON.stringify(req.headers, null, 2));
@@ -892,7 +891,7 @@ app.post('/webhook', async (req, res) => {
     }
   } catch (e) {
     console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', req.body.toString('utf8') || 'Không có dữ liệu', 'Stack:', e.stack);
-    res.status(500).send('Lỗi máy chủ nội bộ');
+    res.status(400).send('Yêu cầu bị hủy, vui lòng kiểm tra payload hoặc kết nối.');
   }
 });
 
