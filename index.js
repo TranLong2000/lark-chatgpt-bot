@@ -434,13 +434,13 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
 // Thêm hàm tạo biểu đồ pie chart
 async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
   try {
-    // Lấy dữ liệu từ Base
+    // Lấy dữ liệu từ Base với các cột cần thiết
     const rows = await getAllRows(baseId, tableId, token, ['fldMBj2zDn', 'fldQDM7Ln9']);
     const fields = await getTableMeta(baseId, tableId, token);
     
     // Xác định cột Manufactory và Value
-    const categoryField = 'fldMBj2zDn'; // Sử dụng ID cột trực tiếp
-    const valueField = 'fldQDM7Ln9';   // Sử dụng ID cột trực tiếp
+    const categoryField = 'fldMBj2zDn'; // ID cột Manufactory
+    const valueField = 'fldQDM7Ln9';   // ID cột Value
 
     // Tính tổng và phần trăm
     const dataMap = new Map();
@@ -626,7 +626,7 @@ app.post('/webhook', async (req, res) => {
       const event = decryptedData.event;
       const baseId = event.app_id;
       const tableId = event.table_id;
-      const updateDate = event.fields['Update Date']; // Kiểm tra cột Update Date
+      const updateDate = event.fields['Update Date']; // Kích hoạt dựa trên Update Date
 
       console.log('[Webhook Debug] Extracted Data - baseId:', baseId, 'tableId:', tableId, 'updateDate:', updateDate);
 
@@ -647,7 +647,7 @@ app.post('/webhook', async (req, res) => {
         const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
 
         if (success) {
-          const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${new Date().toLocaleDateString('vi-VN')})`;
+          const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})`;
           await sendChartToGroup(token, chatId, chartUrl, messageText);
           console.log('[Webhook] Gửi biểu đồ thành công đến group:', chatId);
         } else {
