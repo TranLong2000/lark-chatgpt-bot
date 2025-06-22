@@ -589,23 +589,26 @@ app.post('/webhook', async (req, res) => {
     // Tạm thời bỏ qua kiểm tra chữ ký để debug
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
       console.warn('[Webhook] Bỏ qua kiểm tra chữ ký để debug. Kiểm tra LARK_ENCRYPT_KEY sau. Request Body:', bodyRaw);
-      // return res.status(401).send('Chữ ký không hợp lệ');
     } else {
       console.log('[VerifySignature] Chữ ký hợp lệ, tiếp tục xử lý');
     }
 
-    // Thử parse body ngay cả khi rỗng
+    // Parse và decrypt body
     let decryptedData = {};
     try {
-      const { encrypt } = bodyRaw ? JSON.parse(bodyRaw) : {};
+      const parsedBody = bodyRaw ? JSON.parse(bodyRaw) : {};
+      console.log('[Webhook Debug] Parsed JSON Body:', JSON.stringify(parsedBody, null, 2));
+      const { encrypt } = parsedBody;
       if (encrypt) {
         decryptedData = decryptMessage(encrypt);
-        console.log('[Webhook Debug] Decrypted Data:', JSON.stringify(decryptedData));
+        console.log('[Webhook Debug] Decrypted Data:', JSON.stringify(decryptedData, null, 2));
       } else {
         console.error('[Webhook Debug] Không tìm thấy trường encrypt trong body:', bodyRaw);
+        decryptedData = parsedBody; // Sử dụng body thô nếu không có encrypt
       }
     } catch (parseError) {
       console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message, 'Raw Body:', bodyRaw);
+      decryptedData = {}; // Fallback nếu parse thất bại
     }
 
     if (decryptedData.header && decryptedData.header.event_type === 'url_verification') {
@@ -619,6 +622,7 @@ app.post('/webhook', async (req, res) => {
 
     // Xử lý sự kiện cập nhật bản ghi từ Base Automation
     if (decryptedData.header && decryptedData.header.event_type === 'bitable.record.updated') {
+      console.log('[Webhook] Detected bitable.record.updated event:', JSON.stringify(decryptedData, null, 2));
       const event = decryptedData.event;
       const baseId = event.app_id; // Base ID: PjuWbiJLeaOzBMskS4ulh9Bwg9d
       const tableId = event.table_id; // Table ID: tbl61rgzOwS8viB2
@@ -631,14 +635,16 @@ app.post('/webhook', async (req, res) => {
 
       const token = await getAppAccessToken();
       for (const chatId of groupChatIds) {
-        console.log('[Webhook] Xử lý gửi đến group:', chatId);
+        console.log('[Webhook] Xử lý gửi đến group:', chatId, 'baseId:', baseId, 'tableId:', tableId);
         const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
 
         if (success) {
           const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${new Date().toLocaleDateString('vi-VN')})`;
           await sendChartToGroup(token, chatId, chartUrl, messageText);
+          console.log('[Webhook] Gửi biểu đồ thành công đến group:', chatId);
         } else {
           await sendChartToGroup(token, chatId, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
+          console.error('[Webhook] Gửi lỗi đến group:', chatId, 'Message:', message);
         }
       }
       return res.sendStatus(200);
@@ -652,9 +658,6 @@ app.post('/webhook', async (req, res) => {
       const messageType = message.message_type;
       const parentId = message.parent_id;
       const mentions = message.mentions || [];
-
-      // Logging chat_id từ tin nhắn
-      console.log('[Message Debug] Chat ID từ tin nhắn:', chatId);
 
       if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
