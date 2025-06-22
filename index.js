@@ -37,7 +37,7 @@ if (!fs.existsSync('temp_files')) {
 }
 
 // Sử dụng express.raw với limit và timeout tăng
-app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 120000 }));
+app.use('/webhook', express.raw({ type: '*/*', limit: '1mb', timeout: 300000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -431,20 +431,33 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
   }
 }
 
-// Thêm hàm tạo biểu đồ pie chart
+// Thêm hàm tạo biểu đồ pie chart (đã cập nhật với lọc tháng 5/2025)
 async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
   try {
     // Lấy dữ liệu từ Base với các cột cần thiết
-    const rows = await getAllRows(baseId, tableId, token, ['fldMBj2zDn', 'fldQDM7Ln9']);
+    const rows = await getAllRows(baseId, tableId, token, ['fldMBj2zDn', 'fldQDM7Ln9', 'fld1FTluSG']);
     const fields = await getTableMeta(baseId, tableId, token);
     
-    // Xác định cột Manufactory và Value
+    // Xác định cột Month, Manufactory và Value
+    const monthField = 'fld1FTluSG'; // ID cột Month
     const categoryField = 'fldMBj2zDn'; // ID cột Manufactory
     const valueField = 'fldQDM7Ln9';   // ID cột Value
 
-    // Tính tổng và phần trăm
+    // Lọc dữ liệu chỉ lấy các bản ghi có Month là "5/2025"
+    const filteredRows = rows.filter(row => {
+      const fields = row.fields || {};
+      const month = fields[monthField] ? fields[monthField].toString().trim() : '';
+      return month === '5/2025';
+    });
+
+    if (filteredRows.length === 0) {
+      console.log('[Chart] Không có dữ liệu cho tháng 5/2025 trong baseId:', baseId, 'tableId:', tableId);
+      return { success: false, message: 'Không có dữ liệu cho tháng 5/2025' };
+    }
+
+    // Tính tổng và phần trăm từ dữ liệu đã lọc
     const dataMap = new Map();
-    rows.forEach(row => {
+    filteredRows.forEach(row => {
       const fields = row.fields || {};
       const category = fields[categoryField] ? fields[categoryField].toString() : 'Unknown';
       const value = parseFloat(fields[valueField]) || 0;
@@ -489,7 +502,7 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
       options: {
         title: {
           display: true,
-          text: 'Biểu đồ % Manufactory (Cập nhật hàng ngày)'
+          text: 'Biểu đồ % Manufactory (Tháng 5/2025)'
         },
         plugins: {
           legend: { position: 'right' }
@@ -572,9 +585,11 @@ setInterval(() => {
 app.post('/webhook', async (req, res) => {
   try {
     console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
+    if (!req.body || req.body.length === 0) {
+      console.error('[Webhook] Body rỗng hoặc không nhận được dữ liệu');
+      return res.status(400).send('Body rỗng');
+    }
     console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8')); // Log toàn bộ body
-    let bodyRaw = req.body.toString('utf8');
-    console.log('[Webhook Debug] Parsed Body:', bodyRaw);
     console.log('[Webhook Debug] All Headers:', JSON.stringify(req.headers, null, 2));
 
     const signature = req.headers['x-lark-signature'];
@@ -582,19 +597,18 @@ app.post('/webhook', async (req, res) => {
     const nonce = req.headers['x-lark-request-nonce'];
 
     // Tạm thời bỏ qua kiểm tra chữ ký để debug
-    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
-      console.warn('[Webhook] Bỏ qua kiểm tra chữ ký để debug. Kiểm tra LARK_ENCRYPT_KEY sau. Request Body:', bodyRaw);
+    if (!verifySignature(timestamp, nonce, req.body.toString('utf8'), signature)) {
+      console.warn('[Webhook] Bỏ qua kiểm tra chữ ký để debug. Kiểm tra LARK_ENCRYPT_KEY sau.');
     } else {
       console.log('[VerifySignature] Chữ ký hợp lệ, tiếp tục xử lý');
     }
 
-    // Parse và decrypt body
     let decryptedData = {};
     try {
-      const parsedBody = bodyRaw ? JSON.parse(bodyRaw) : {};
+      const parsedBody = req.body.toString('utf8') ? JSON.parse(req.body.toString('utf8')) : {};
       console.log('[Webhook Debug] Parsed JSON Body:', JSON.stringify(parsedBody, null, 2));
       if (Object.keys(parsedBody).length === 0) {
-        console.error('[Webhook Debug] Payload rỗng, có thể URL webhook hoặc Automation không đúng');
+        console.error('[Webhook] Payload rỗng, có thể URL webhook hoặc Automation không đúng');
         return res.status(400).send('Payload rỗng');
       }
       const { encrypt } = parsedBody;
@@ -602,12 +616,10 @@ app.post('/webhook', async (req, res) => {
         decryptedData = decryptMessage(encrypt);
         console.log('[Webhook Debug] Decrypted Data:', JSON.stringify(decryptedData, null, 2));
       } else {
-        console.error('[Webhook Debug] Không tìm thấy trường encrypt trong body:', bodyRaw);
         decryptedData = parsedBody; // Sử dụng body thô nếu không có encrypt
       }
     } catch (parseError) {
-      console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message, 'Raw Body:', bodyRaw);
-      decryptedData = {}; // Fallback nếu parse thất bại
+      console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message, 'Raw Body:', req.body.toString('utf8'));
       return res.status(400).send('Lỗi khi parse payload');
     }
 
@@ -615,18 +627,12 @@ app.post('/webhook', async (req, res) => {
       return res.json({ challenge: decryptedData.event.challenge });
     }
 
-    // Logging chat_id từ sự kiện nếu có
-    if (decryptedData.event && decryptedData.event.chat_id) {
-      console.log('[Chat ID Debug] Chat ID từ sự kiện:', decryptedData.event.chat_id);
-    }
-
-    // Xử lý sự kiện cập nhật bản ghi từ Base Automation
     if (decryptedData.header && decryptedData.header.event_type === 'bitable.record.updated') {
       console.log('[Webhook] Detected bitable.record.updated event:', JSON.stringify(decryptedData, null, 2));
       const event = decryptedData.event;
       const baseId = event.app_id;
       const tableId = event.table_id;
-      const updateDate = event.fields['Update Date']; // Kích hoạt dựa trên Update Date
+      const updateDate = event.fields['Update Date'];
 
       console.log('[Webhook Debug] Extracted Data - baseId:', baseId, 'tableId:', tableId, 'updateDate:', updateDate);
 
@@ -893,7 +899,7 @@ app.post('/webhook', async (req, res) => {
     }
   } catch (e) {
     console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', req.body.toString('utf8') || 'Không có dữ liệu', 'Stack:', e.stack);
-    res.status(400).send('Yêu cầu bị hủy, vui lòng kiểm tra payload hoặc kết nối.');
+    res.status(500).send('Lỗi server, vui lòng kiểm tra log.');
   }
 });
 
