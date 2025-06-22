@@ -36,8 +36,61 @@ if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
 }
 
-// Sử dụng express.raw với limit và timeout tăng
-app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 60000 }));
+// ✅ Route xử lý Automation (Base webhook): dùng express.json()
+app.post('/webhook', express.json({ limit: '10mb' }), async (req, res) => {
+  const body = req.body || {};
+  console.log('[Automation] Body:', body);
+
+  // ... xử lý logic base như update Date, biểu đồ, etc.
+  if (body.header?.event_type === 'bitable.record.updated') {
+    // xử lý như cũ
+    return res.sendStatus(200);
+  }
+
+  if (body.header?.event_type === 'url_verification') {
+    return res.json({ challenge: body.event?.challenge });
+  }
+
+  return res.sendStatus(200);
+});
+
+// ✅ Webhook từ Lark BASE (Automation): dùng express.json()
+app.post('/webhook-base', express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    const body = req.body || {};
+    console.log('[Webhook-Base] Nhận dữ liệu:', JSON.stringify(body, null, 2));
+
+    if (body.header?.event_type === 'url_verification') {
+      return res.json({ challenge: body.event?.challenge });
+    }
+
+    if (body.header?.event_type === 'bitable.record.updated') {
+      const event = body.event;
+      const baseId = event.app_id;
+      const tableId = event.table_id;
+      const updateDate = event.fields?.['Update Date'];
+
+      if (!updateDate || updateDate.includes('{{')) {
+        console.warn('[Webhook-Base] Update Date không hợp lệ, bỏ qua');
+        return res.sendStatus(200);
+      }
+
+      const token = await getAppAccessToken();
+      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
+
+      for (const chatId of groupChatIds) {
+        const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
+        const text = success ? `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})` : message;
+        await sendChartToGroup(token, chatId, success ? chartUrl : null, text);
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error('[Webhook-Base Error]', err.message);
+    res.status(500).send('Lỗi server');
+  }
+});
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
