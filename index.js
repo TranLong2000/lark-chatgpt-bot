@@ -866,7 +866,7 @@ app.post('/webhook', async (req, res) => {
 // Xử lý webhook mới cho Automation
 app.post('/webhook-base', async (req, res) => {
   try {
-    console.log('[Webhook-Base Debug] Raw Body:', JSON.stringify(req.body, null, 2));
+    console.log('[Webhook-Base Debug] Raw Body as String:', req.body.toString());
     console.log('[Webhook-Base Debug] All Headers:', JSON.stringify(req.headers, null, 2));
 
     const signature = req.headers['x-lark-signature'];
