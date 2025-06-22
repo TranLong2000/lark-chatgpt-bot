@@ -589,11 +589,11 @@ app.post('/webhook', async (req, res) => {
 
     let decryptedData = {};
     try {
-      const parsedBody = req.body.toString('utf8') ? JSON.parse(req.body.toString('utf8')) : {};
+      const parsedBody = req.body || {};
       console.log('[Webhook Debug] Parsed JSON Body:', JSON.stringify(parsedBody, null, 2));
-      decryptedData = parsedBody; // Sử dụng body thô để debug
+      decryptedData = parsedBody;
     } catch (parseError) {
-      console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message, 'Raw Body:', req.body.toString('utf8'));
+      console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message);
       return res.status(400).send('Lỗi khi parse payload');
     }
 
