@@ -435,16 +435,12 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
 async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
   try {
     // Lấy dữ liệu từ Base
-    const rows = await getAllRows(baseId, tableId, token);
+    const rows = await getAllRows(baseId, tableId, token, ['fldMBj2zDn', 'fldQDM7Ln9']);
     const fields = await getTableMeta(baseId, tableId, token);
     
     // Xác định cột Manufactory và Value
-    const categoryField = fields.find(f => f.name.toLowerCase() === 'manufactory')?.field_id;
-    const valueField = fields.find(f => f.name.toLowerCase() === 'value')?.field_id;
-
-    if (!categoryField || !valueField) {
-      return { success: false, message: 'Không tìm thấy cột Manufactory hoặc Value phù hợp để tạo biểu đồ' };
-    }
+    const categoryField = 'fldMBj2zDn'; // Sử dụng ID cột trực tiếp
+    const valueField = 'fldQDM7Ln9';   // Sử dụng ID cột trực tiếp
 
     // Tính tổng và phần trăm
     const dataMap = new Map();
@@ -631,8 +627,14 @@ app.post('/webhook', async (req, res) => {
       const event = decryptedData.event;
       const baseId = event.app_id;
       const tableId = event.table_id;
-      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
+      const updateDate = event.fields['Update Date']; // Kiểm tra cột Update Date
 
+      if (!updateDate) {
+        console.log('[Webhook] Update Date không thay đổi hoặc không tồn tại, bỏ qua');
+        return res.sendStatus(200);
+      }
+
+      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
       if (groupChatIds.length === 0) {
         console.error('[Webhook] LARK_GROUP_CHAT_IDS chưa được thiết lập hoặc rỗng');
         return res.status(400).send('Thiếu group chat IDs');
