@@ -36,8 +36,11 @@ if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
 }
 
-// Sử dụng express.raw với limit và timeout tăng
+// Sử dụng express.raw với limit và timeout tăng cho /webhook
 app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 60000 }));
+
+// Sử dụng express.json cho /webhook-base
+app.use('/webhook-base', express.json({ limit: '10mb', timeout: 60000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
@@ -573,6 +576,7 @@ setInterval(() => {
   console.log('[Memory] Đã xóa bộ nhớ');
 }, 2 * 60 * 60 * 1000);
 
+// Xử lý webhook cũ (giữ nguyên chức năng gốc)
 app.post('/webhook', async (req, res) => {
   try {
     console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
@@ -615,33 +619,6 @@ app.post('/webhook', async (req, res) => {
     // Logging chat_id từ sự kiện nếu có
     if (decryptedData.event && decryptedData.event.chat_id) {
       console.log('[Chat ID Debug] Chat ID từ sự kiện:', decryptedData.event.chat_id);
-    }
-
-    // Xử lý sự kiện cập nhật bản ghi từ Base Automation
-    if (decryptedData.header && decryptedData.header.event_type === 'bitable.record.updated') {
-      const event = decryptedData.event;
-      const baseId = event.app_id; // Base ID: PjuWbiJLeaOzBMskS4ulh9Bwg9d
-      const tableId = event.table_id; // Table ID: tbl61rgzOwS8viB2
-      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
-
-      if (groupChatIds.length === 0) {
-        console.error('[Webhook] LARK_GROUP_CHAT_IDS chưa được thiết lập hoặc rỗng');
-        return res.status(400).send('Thiếu group chat IDs');
-      }
-
-      const token = await getAppAccessToken();
-      for (const chatId of groupChatIds) {
-        console.log('[Webhook] Xử lý gửi đến group:', chatId);
-        const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
-
-        if (success) {
-          const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${new Date().toLocaleDateString('vi-VN')})`;
-          await sendChartToGroup(token, chatId, chartUrl, messageText);
-        } else {
-          await sendChartToGroup(token, chatId, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
-        }
-      }
-      return res.sendStatus(200);
     }
 
     if (decryptedData.header && decryptedData.header.event_type === 'im.message.receive_v1') {
@@ -882,6 +859,68 @@ app.post('/webhook', async (req, res) => {
     }
   } catch (e) {
     console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', req.body.toString('utf8') || 'Không có dữ liệu', 'Stack:', e.stack);
+    res.status(500).send('Lỗi máy chủ nội bộ');
+  }
+});
+
+// Xử lý webhook mới cho Automation
+app.post('/webhook-base', async (req, res) => {
+  try {
+    console.log('[Webhook-Base Debug] Raw Body:', JSON.stringify(req.body, null, 2));
+    console.log('[Webhook-Base Debug] All Headers:', JSON.stringify(req.headers, null, 2));
+
+    const signature = req.headers['x-lark-signature'];
+    const timestamp = req.headers['x-lark-request-timestamp'];
+    const nonce = req.headers['x-lark-request-nonce'];
+    const bodyRaw = JSON.stringify(req.body);
+
+    // Kiểm tra chữ ký nếu có
+    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      console.warn('[Webhook-Base] Chữ ký không hợp lệ hoặc không kiểm tra được. Request Body:', bodyRaw);
+      return res.status(401).send('Chữ ký không hợp lệ');
+    }
+    console.log('[Webhook-Base] Chữ ký hợp lệ, tiếp tục xử lý');
+
+    if (req.body.event_type === 'url_verification') {
+      return res.json({ challenge: req.body.event.challenge });
+    }
+
+    if (req.body.event_type === 'bitable.record.updated') {
+      const event = req.body;
+      const baseId = event.app_id; // Base ID: PjuWbiJLeaOzBMskS4ulh9Bwg9d
+      const tableId = event.table_id; // Table ID: tbl61rgzOwS8viB2
+      const updateDate = event.fields['Update Date'];
+
+      if (!updateDate || updateDate.includes('{{')) {
+        console.warn('[Webhook-Base] Update Date không hợp lệ hoặc chứa placeholder ({{...}}), bỏ qua. Payload:', JSON.stringify(event.fields));
+        return res.sendStatus(200);
+      }
+
+      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
+      if (groupChatIds.length === 0) {
+        console.error('[Webhook-Base] LARK_GROUP_CHAT_IDS chưa được thiết lập hoặc rỗng');
+        return res.status(400).send('Thiếu group chat IDs');
+      }
+
+      const token = await getAppAccessToken();
+      for (const chatId of groupChatIds) {
+        console.log('[Webhook-Base] Xử lý gửi đến group:', chatId);
+        const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
+
+        if (success) {
+          const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})`;
+          await sendChartToGroup(token, chatId, chartUrl, messageText);
+        } else {
+          await sendChartToGroup(token, chatId, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
+        }
+      }
+      return res.sendStatus(200);
+    }
+
+    console.warn('[Webhook-Base] Loại sự kiện không được hỗ trợ:', req.body.event_type);
+    return res.status(400).send('Loại sự kiện không được hỗ trợ');
+  } catch (e) {
+    console.error('[Webhook-Base Handler Error] Nguyên nhân:', e.message, 'Request Body:', JSON.stringify(req.body) || 'Không có dữ liệu', 'Stack:', e.stack);
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
