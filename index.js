@@ -628,8 +628,10 @@ app.post('/webhook', async (req, res) => {
       const tableId = event.table_id;
       const updateDate = event.fields['Update Date']; // Kiểm tra cột Update Date
 
-      if (!updateDate) {
-        console.log('[Webhook] Update Date không thay đổi hoặc không tồn tại, bỏ qua');
+      console.log('[Webhook Debug] Extracted Data - baseId:', baseId, 'tableId:', tableId, 'updateDate:', updateDate);
+
+      if (!updateDate || updateDate.includes('{{')) {
+        console.warn('[Webhook] Update Date không hợp lệ hoặc chứa placeholder ({{...}}), bỏ qua. Payload:', JSON.stringify(event.fields));
         return res.sendStatus(200);
       }
 
