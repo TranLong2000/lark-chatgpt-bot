@@ -39,6 +39,9 @@ if (!fs.existsSync('temp_files')) {
 // Sử dụng express.raw với limit và timeout tăng cho /webhook
 app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 60000 }));
 
+// Sử dụng express.json cho /webhook-base
+app.use('/webhook-base', express.json({ limit: '10mb', timeout: 60000 }));
+
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
   console.log('[VerifySignature] Timestamp:', timestamp, 'Nonce:', nonce, 'EncryptKey exists:', !!encryptKey);
@@ -255,10 +258,12 @@ function updateConversationMemory(chatId, role, content) {
 
 async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
+    // Lấy metadata của bảng để xác định cột
     const fields = await getTableMeta(baseId, tableId, token);
     const fieldNames = fields.length > 0 ? fields.map(f => f.name) : [];
     console.log('[Debug] Các cột trong bảng:', fieldNames);
 
+    // Lấy tất cả dữ liệu từ Base
     const rows = await getAllRows(baseId, tableId, token);
     const allRows = rows.map(row => row.fields || {});
 
@@ -273,6 +278,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
+    // Lấy hàng tiêu đề (dòng đầu tiên) làm tiêu chí xác định cột
     const headerRow = validRows[0];
     const columnMapping = {};
     if (headerRow) {
@@ -282,6 +288,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
     }
     console.log('[Debug] Ánh xạ cột:', columnMapping);
 
+    // Gửi câu hỏi và dữ liệu cột sang OpenRouter để phân tích
     const columnData = {};
     Object.keys(columnMapping).forEach(fieldId => {
       columnData[columnMapping[fieldId]] = validRows.map(row => row[fieldId] ? row[fieldId].toString().trim() : null);
@@ -430,9 +437,11 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
 // Thêm hàm tạo biểu đồ pie chart
 async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
   try {
+    // Lấy dữ liệu từ Base
     const rows = await getAllRows(baseId, tableId, token);
     const fields = await getTableMeta(baseId, tableId, token);
     
+    // Xác định cột Manufactory và Value
     const categoryField = fields.find(f => f.name.toLowerCase() === 'manufactory')?.field_id;
     const valueField = fields.find(f => f.name.toLowerCase() === 'value')?.field_id;
 
@@ -440,6 +449,7 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
       return { success: false, message: 'Không tìm thấy cột Manufactory hoặc Value phù hợp để tạo biểu đồ' };
     }
 
+    // Tính tổng và phần trăm
     const dataMap = new Map();
     rows.forEach(row => {
       const fields = row.fields || {};
@@ -456,6 +466,7 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
       values.push((value / total * 100).toFixed(2));
     });
 
+    // Tạo pie chart bằng QuickChart
     const chart = new QuickChart();
     chart.setConfig({
       type: 'pie',
@@ -502,6 +513,7 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
   }
 }
 
+// Thêm hàm gửi tin nhắn với hình ảnh
 async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   try {
     const response = await axios.post(
@@ -515,6 +527,7 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
     );
     console.log('[SendChart] Đã gửi biểu đồ đến group:', chatId, 'Response:', response.data);
 
+    // Gửi tin nhắn văn bản kèm theo
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
       {
@@ -529,6 +542,7 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   }
 }
 
+// Hàm tải và upload hình ảnh lên Lark
 async function uploadImageToLark(imageUrl, token) {
   try {
     const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
@@ -550,6 +564,7 @@ async function uploadImageToLark(imageUrl, token) {
   }
 }
 
+// Xử lý tín hiệu dừng
 process.on('SIGTERM', () => {
   console.log('[Server] Nhận tín hiệu SIGTERM, đang tắt...');
   pendingTasks.forEach((task, messageId) => replyToLark(messageId, 'Xử lý bị gián đoạn.', task.mentionUserId, task.mentionUserName));
@@ -561,14 +576,14 @@ setInterval(() => {
   console.log('[Memory] Đã xóa bộ nhớ');
 }, 2 * 60 * 60 * 1000);
 
-// Xử lý webhook (giữ nguyên chức năng gốc và thêm hỗ trợ Automation)
+// Xử lý webhook cũ (giữ nguyên chức năng gốc)
 app.post('/webhook', async (req, res) => {
   try {
-    // Log chi tiết dữ liệu thô
     console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
-    console.log('[Webhook Debug] Raw Buffer (Hex):', Buffer.from(req.body).toString('hex'));
-    const bodyRaw = req.body.toString('utf8');
-    console.log('[Webhook Debug] Raw Buffer:', bodyRaw);
+    console.log('[Webhook Debug] Raw Buffer (Hex):', Buffer.from(req.body).toString('hex')); // Log hex để kiểm tra dữ liệu thô
+    console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8'));
+    let bodyRaw = req.body.toString('utf8');
+    console.log('[Webhook Debug] Parsed Body:', bodyRaw);
     console.log('[Webhook Debug] All Headers:', JSON.stringify(req.headers, null, 2));
 
     const signature = req.headers['x-lark-signature'];
@@ -577,38 +592,46 @@ app.post('/webhook', async (req, res) => {
 
     // Tạm thời bỏ qua kiểm tra chữ ký để debug
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
-      console.warn('[Webhook] Chữ ký không hợp lệ hoặc không kiểm tra được. Request Body:', bodyRaw);
+      console.warn('[Webhook] Bỏ qua kiểm tra chữ ký để debug. Kiểm tra LARK_ENCRYPT_KEY sau. Request Body:', bodyRaw);
       // return res.status(401).send('Chữ ký không hợp lệ');
-      console.log('[Webhook] Bỏ qua kiểm tra chữ ký để test payload');
     } else {
       console.log('[VerifySignature] Chữ ký hợp lệ, tiếp tục xử lý');
     }
 
     // Thử parse body ngay cả khi rỗng
-    let eventData = {};
+    let decryptedData = {};
     try {
-      eventData = bodyRaw ? JSON.parse(bodyRaw) : {};
-      console.log('[Webhook Debug] Parsed Event Data:', JSON.stringify(eventData));
+      const { encrypt } = bodyRaw ? JSON.parse(bodyRaw) : {};
+      if (encrypt) {
+        decryptedData = decryptMessage(encrypt);
+        console.log('[Webhook Debug] Decrypted Data:', JSON.stringify(decryptedData));
+      } else {
+        console.error('[Webhook Debug] Không tìm thấy trường encrypt trong body:', bodyRaw);
+      }
     } catch (parseError) {
       console.error('[Webhook Debug] Lỗi khi parse body:', parseError.message, 'Raw Body:', bodyRaw);
-      return res.status(400).send('Dữ liệu không hợp lệ');
     }
 
-    // Xử lý url_verification
-    if (eventData.header && eventData.header.event_type === 'url_verification') {
-      console.log('[Webhook] Xử lý url_verification, challenge:', eventData.event.challenge);
-      return res.json({ challenge: eventData.event.challenge });
+    if (decryptedData.header && decryptedData.header.event_type === 'url_verification') {
+      return res.json({ challenge: decryptedData.event.challenge });
     }
 
-    // Xử lý im.message.receive_v1 (tin nhắn chat)
-    if (eventData.header && eventData.header.event_type === 'im.message.receive_v1') {
-      const senderId = eventData.event.sender.sender_id.open_id;
-      const message = eventData.event.message;
+    // Logging chat_id từ sự kiện nếu có
+    if (decryptedData.event && decryptedData.event.chat_id) {
+      console.log('[Chat ID Debug] Chat ID từ sự kiện:', decryptedData.event.chat_id);
+    }
+
+    if (decryptedData.header && decryptedData.header.event_type === 'im.message.receive_v1') {
+      const senderId = decryptedData.event.sender.sender_id.open_id;
+      const message = decryptedData.event.message;
       const messageId = message.message_id;
       const chatId = message.chat_id;
       const messageType = message.message_type;
       const parentId = message.parent_id;
       const mentions = message.mentions || [];
+
+      // Logging chat_id từ tin nhắn
+      console.log('[Message Debug] Chat ID từ tin nhắn:', chatId);
 
       if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
@@ -834,23 +857,54 @@ app.post('/webhook', async (req, res) => {
         );
       }
     }
+  } catch (e) {
+    console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', req.body.toString('utf8') || 'Không có dữ liệu', 'Stack:', e.stack);
+    res.status(500).send('Lỗi máy chủ nội bộ');
+  }
+});
 
-    // Xử lý bitable.record.updated từ Automation (test tạm thời)
-    if (eventData.event_type === 'bitable.record.updated') {
-      console.log('[Webhook] Xử lý bitable.record.updated:', JSON.stringify(eventData));
-      const baseId = eventData.app_id;
-      const tableId = eventData.table_id;
-      const updateDate = eventData.fields['Update Date'] || 'Không xác định';
+// Xử lý webhook mới cho Automation
+app.post('/webhook-base', async (req, res) => {
+  try {
+    console.log('[Webhook-Base Debug] Raw Body as String:', req.body.toString());
+    console.log('[Webhook-Base Debug] All Headers:', JSON.stringify(req.headers, null, 2));
+
+    const signature = req.headers['x-lark-signature'];
+    const timestamp = req.headers['x-lark-request-timestamp'];
+    const nonce = req.headers['x-lark-request-nonce'];
+    const bodyRaw = JSON.stringify(req.body);
+
+    // Kiểm tra chữ ký nếu có
+    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      console.warn('[Webhook-Base] Chữ ký không hợp lệ hoặc không kiểm tra được. Request Body:', bodyRaw);
+      return res.status(401).send('Chữ ký không hợp lệ');
+    }
+    console.log('[Webhook-Base] Chữ ký hợp lệ, tiếp tục xử lý');
+
+    if (req.body.event_type === 'url_verification') {
+      return res.json({ challenge: req.body.event.challenge });
+    }
+
+    if (req.body.event_type === 'bitable.record.updated') {
+      const event = req.body;
+      const baseId = event.app_id; // Base ID: PjuWbiJLeaOzBMskS4ulh9Bwg9d
+      const tableId = event.table_id; // Table ID: tbl61rgzOwS8viB2
+      const updateDate = event.fields['Update Date'];
+
+      if (!updateDate || updateDate.includes('{{')) {
+        console.warn('[Webhook-Base] Update Date không hợp lệ hoặc chứa placeholder ({{...}}), bỏ qua. Payload:', JSON.stringify(event.fields));
+        return res.sendStatus(200);
+      }
 
       const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
       if (groupChatIds.length === 0) {
-        console.error('[Webhook] LARK_GROUP_CHAT_IDS chưa được thiết lập hoặc rỗng');
+        console.error('[Webhook-Base] LARK_GROUP_CHAT_IDS chưa được thiết lập hoặc rỗng');
         return res.status(400).send('Thiếu group chat IDs');
       }
 
       const token = await getAppAccessToken();
       for (const chatId of groupChatIds) {
-        console.log('[Webhook] Xử lý gửi đến group:', chatId);
+        console.log('[Webhook-Base] Xử lý gửi đến group:', chatId);
         const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
 
         if (success) {
@@ -863,24 +917,22 @@ app.post('/webhook', async (req, res) => {
       return res.sendStatus(200);
     }
 
+    console.warn('[Webhook-Base] Loại sự kiện không được hỗ trợ:', req.body.event_type);
+    return res.status(400).send('Loại sự kiện không được hỗ trợ');
   } catch (e) {
-    console.error('[Webhook Handler Error] Nguyên nhân:', e.message, 'Request Body:', bodyRaw || 'Không có dữ liệu', 'Stack:', e.stack);
+    console.error('[Webhook-Base Handler Error] Nguyên nhân:', e.message, 'Request Body:', JSON.stringify(req.body) || 'Không có dữ liệu', 'Stack:', e.stack);
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
 
-// Tạm thời bỏ /webhook-base để test với /webhook
-// app.post('/webhook-base', async (req, res) => {
-//   // Logic cũ của /webhook-base sẽ được tích hợp vào /webhook tạm thời
-//   res.status(404).send('Endpoint /webhook-base tạm thời không sử dụng');
-// });
-
+// Gọi hàm logBotOpenId khi server khởi động
 logBotOpenId().then(() => {
   app.listen(port, () => {
     console.log(`Máy chủ đang chạy trên cổng ${port}`);
   });
 });
 
+// Xóa file trong pendingFiles sau 5 phút nếu không có reply
 setInterval(() => {
   const now = Date.now();
   for (const [chatId, file] of pendingFiles) {
