@@ -1,3 +1,4 @@
+require('web-streams-polyfill'); // Khởi tạo polyfill cho Web API
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
