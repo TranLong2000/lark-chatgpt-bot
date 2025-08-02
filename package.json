@@ -17,12 +17,11 @@
     "mammoth": "^1.6.0",
     "xlsx": "^0.18.5",
     "tesseract.js": "^4.0.2",
-    "node-fetch": "^2.6.7",
     "form-data": "^4.0.0",
     "canvas": "^2.11.2",
     "moment-timezone": "^0.5.43",
     "quickchart-js": "^2.0.0",
     "cheerio": "^1.0.0-rc.12",
-    "web-streams-polyfill": "^3.2.1"
+    "undici": "~4.26.5"
   }
 }
