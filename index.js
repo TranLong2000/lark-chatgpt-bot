@@ -1,4 +1,3 @@
-require('web-streams-polyfill'); // Khởi tạo polyfill cho Web API
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
@@ -10,7 +9,7 @@ const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
 const moment = require('moment-timezone');
 const QuickChart = require('quickchart-js');
-const cheerio = require('cheerio'); // Thêm thư viện cheerio để parse HTML
+const cheerio = require('cheerio');
 require('dotenv').config();
 
 const app = express();
@@ -29,10 +28,9 @@ const SHEET_MAPPINGS = {
   'PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
 };
 
-// Thêm biến toàn cục để lưu trữ dữ liệu HTML
-let reportHtml = '';
+// Thêm Map để lưu dữ liệu tạm với timestamp (hết hạn sau 1 tiếng = 3600000ms)
+const tempDataStore = new Map();
 
-// Giữ nguyên các biến khác
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
 const pendingTasks = new Map();
@@ -48,13 +46,26 @@ app.use('/webhook-base', express.json({ limit: '10mb', timeout: 60000 }));
 
 // Giữ nguyên các function verifySignature, decryptMessage, getUserInfo, replyToLark, extractFileContent, extractImageContent, getAppAccessToken, logBotOpenId, getTableMeta, getAllRows, getSheetData, updateConversationMemory, analyzeQueryAndProcessData, processBaseData, processSheetData, createPieChartFromBaseData, sendChartToGroup, uploadImageToLark
 
-// Thêm function mới để phân tích HTML và trả lời
-async function analyzeReportHtml(userMessage, token) {
-  if (!reportHtml) {
-    return { result: 'Chưa có dữ liệu báo cáo để phân tích.' };
+// Thêm function để phân tích dữ liệu tạm và trả lời
+async function analyzeTempData(userMessage, token) {
+  const now = Date.now();
+  let validData = null;
+
+  // Lọc dữ liệu còn hiệu lực (trong 1 tiếng)
+  for (const [key, { data, timestamp }] of tempDataStore) {
+    if (now - timestamp < 3600000) {
+      validData = data; // Lấy dữ liệu đầu tiên còn hiệu lực (có thể mở rộng để lấy nhiều dữ liệu)
+      break;
+    } else {
+      tempDataStore.delete(key); // Xóa dữ liệu quá hạn
+    }
   }
 
-  const $ = cheerio.load(reportHtml);
+  if (!validData) {
+    return { result: 'Không có dữ liệu tạm nào còn hiệu lực (hết hạn sau 1 tiếng).' };
+  }
+
+  const $ = cheerio.load(validData);
   let response = 'Không hiểu yêu cầu, vui lòng kiểm tra lại cú pháp.';
 
   if (userMessage.toLowerCase().includes('hiển thị bảng 1')) {
@@ -66,7 +77,7 @@ async function analyzeReportHtml(userMessage, token) {
       });
       response = `Nội dung bảng 1:\n${tableContent}`;
     } else {
-      response = 'Không tìm thấy bảng 1 trong báo cáo.';
+      response = 'Không tìm thấy bảng 1 trong dữ liệu tạm.';
     }
   } else if (userMessage.toLowerCase().includes('tổng số liệu')) {
     const numbers = $('td').text().match(/\d+/g); // Trích xuất số từ các ô td
@@ -81,7 +92,7 @@ async function analyzeReportHtml(userMessage, token) {
     const analysisPrompt = `
       Bạn là một trợ lý AI chuyên phân tích dữ liệu HTML. Dựa trên câu hỏi sau và nội dung HTML dưới đây:
       - Câu hỏi: "${userMessage}"
-      - Nội dung HTML: ${reportHtml.substring(0, 1000)}... (đoạn đầu)
+      - Nội dung HTML: ${validData.substring(0, 1000)}... (đoạn đầu)
       Hãy:
       1. Xác định thông tin liên quan từ HTML.
       2. Trả lời dưới dạng JSON: { "result": string } với kết quả hoặc thông báo nếu không có dữ liệu.
@@ -112,23 +123,23 @@ async function analyzeReportHtml(userMessage, token) {
       const analysis = JSON.parse(aiContent);
       response = analysis.result;
     } catch (parseError) {
-      console.error('[AnalyzeReportHtml] Phân tích AI thất bại:', parseError.message);
+      console.error('[AnalyzeTempData] Phân tích AI thất bại:', parseError.message);
     }
   }
 
   return { result: response };
 }
 
-// Thêm xử lý cho REPORT trong processBaseData
-async function processReportData(messageId, userMessage, token, mentionUserId, mentionUserName) {
+// Thêm function để xử lý dữ liệu tạm
+async function processTempData(messageId, userMessage, token, mentionUserId, mentionUserName) {
   try {
-    const { result } = await analyzeReportHtml(userMessage, token);
+    const { result } = await analyzeTempData(userMessage, token);
     const chatId = pendingTasks.get(messageId)?.chatId;
     updateConversationMemory(chatId, 'user', userMessage);
     updateConversationMemory(chatId, 'assistant', result);
     await replyToLark(messageId, result, mentionUserId, mentionUserName);
   } catch (e) {
-    console.error('[Report API Error] Nguyên nhân:', e.message, 'Stack:', e.stack);
+    console.error('[TempData API Error] Nguyên nhân:', e.message, 'Stack:', e.stack);
     await replyToLark(
       messageId,
       'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
@@ -140,7 +151,7 @@ async function processReportData(messageId, userMessage, token, mentionUserId, m
   }
 }
 
-// Cập nhật /webhook để nhận dữ liệu HTML từ Python
+// Cập nhật /webhook để lưu dữ liệu tạm
 app.post('/webhook', async (req, res) => {
   try {
     console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
@@ -154,11 +165,12 @@ app.post('/webhook', async (req, res) => {
     const timestamp = req.headers['x-lark-request-timestamp'];
     const nonce = req.headers['x-lark-request-nonce'];
 
-    // Kiểm tra chữ ký cho sự kiện Lark, bỏ qua nếu là dữ liệu từ Python
+    // Kiểm tra nếu là dữ liệu từ Python (bỏ qua chữ ký)
     if (req.headers['user-agent'] && req.headers['user-agent'].includes('Python')) {
-      console.log('[Webhook] Nhận dữ liệu từ Python, bỏ qua kiểm tra chữ ký');
-      reportHtml = bodyRaw; // Lưu HTML từ Python
-      return res.status(200).send('Dữ liệu báo cáo đã được nhận');
+      console.log('[Webhook] Nhận dữ liệu từ Python, lưu vào bộ nhớ tạm');
+      const dataKey = `report_${Date.now()}`; // Tạo key duy nhất dựa trên timestamp
+      tempDataStore.set(dataKey, { data: bodyRaw, timestamp: Date.now() });
+      return res.status(200).send('Dữ liệu báo cáo đã được lưu tạm thời trong 1 tiếng');
     }
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
@@ -251,9 +263,9 @@ app.post('/webhook', async (req, res) => {
         if (reportMatch) {
           const reportName = reportMatch[1].toUpperCase();
           if (reportName === 'REPORT') {
-            console.log('[Webhook] Triggering processReportData for REPORT');
+            console.log('[Webhook] Triggering processTempData for REPORT');
             pendingTasks.set(messageId, { chatId, userMessage, mentionUserId, mentionUserName });
-            await processReportData(messageId, userMessage, token, mentionUserId, mentionUserName);
+            await processTempData(messageId, userMessage, token, mentionUserId, mentionUserName);
           } else {
             const reportUrl = BASE_MAPPINGS[reportName];
             if (reportUrl) {
@@ -432,10 +444,66 @@ app.post('/webhook', async (req, res) => {
 
 // Giữ nguyên /webhook-base
 app.post('/webhook-base', async (req, res) => {
-  // ... (giữ nguyên code hiện tại)
+  try {
+    console.log('[Webhook-Base Debug] Raw Body as String:', req.body.toString());
+    console.log('[Webhook-Base Debug] All Headers:', JSON.stringify(req.headers, null, 2));
+
+    const signature = req.headers['x-lark-signature'];
+    const timestamp = req.headers['x-lark-request-timestamp'];
+    const nonce = req.headers['x-lark-request-nonce'];
+    const bodyRaw = JSON.stringify(req.body);
+
+    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      console.warn('[Webhook-Base] Chữ ký không hợp lệ hoặc không kiểm tra được. Request Body:', bodyRaw);
+      return res.status(401).send('Chữ ký không hợp lệ');
+    }
+    console.log('[Webhook-Base] Chữ ký hợp lệ, tiếp tục xử lý');
+
+    if (req.body.event_type === 'url_verification') {
+      return res.json({ challenge: req.body.event.challenge });
+    }
+
+    if (req.body.event_type === 'bitable.record.updated') {
+      const event = req.body;
+      const baseId = event.app_id;
+      const tableId = event.table_id;
+      const updateDate = event.fields['Update Date'];
+
+      if (!updateDate || updateDate.includes('{{')) {
+        console.warn('[Webhook-Base] Update Date không hợp lệ hoặc chứa placeholder ({{...}}), bỏ qua. Payload:', JSON.stringify(event.fields));
+        return res.sendStatus(200);
+      }
+
+      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
+      if (groupChatIds.length === 0) {
+        console.error('[Webhook-Base] LARK_GROUP_CHAT_IDS chưa được thiết lập hoặc rỗng');
+        return res.status(400).send('Thiếu group chat IDs');
+      }
+
+      const token = await getAppAccessToken();
+      for (const chatId of groupChatIds) {
+        console.log('[Webhook-Base] Xử lý gửi đến group:', chatId);
+        const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
+
+        if (success) {
+          const messageText = `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})`;
+          await sendChartToGroup(token, chatId, chartUrl, messageText);
+        } else {
+          await sendChartToGroup(token, chatId, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
+        }
+      }
+      return res.sendStatus(200);
+    }
+
+    console.warn('[Webhook-Base] Loại sự kiện không được hỗ trợ:', req.body.event_type);
+    return res.status(400).send('Loại sự kiện không được hỗ trợ');
+  } catch (e) {
+    console.error('[Webhook-Base Handler Error] Nguyên nhân:', e.message, 'Request Body:', JSON.stringify(req.body) || 'Không có dữ liệu', 'Stack:', e.stack);
+    res.status(500).send('Lỗi máy chủ nội bộ');
+  }
 });
 
-// Giữ nguyên các phần còn lại (process.on, setInterval, logBotOpenId)
+// Giữ nguyên các phần còn lại
 process.on('SIGTERM', () => {
   console.log('[Server] Nhận tín hiệu SIGTERM, đang tắt...');
   pendingTasks.forEach((task, messageId) => replyToLark(messageId, 'Xử lý bị gián đoạn.', task.mentionUserId, task.mentionUserName));
@@ -459,6 +527,13 @@ setInterval(() => {
     if (now - file.timestamp > 5 * 60 * 1000) {
       console.log('[Cleanup] Xóa file từ pendingFiles do hết thời gian:', chatId, file.fileName);
       pendingFiles.delete(chatId);
+    }
+  }
+  // Xóa dữ liệu tạm quá hạn (1 tiếng)
+  for (const [key, { timestamp }] of tempDataStore) {
+    if (now - timestamp > 3600000) {
+      console.log('[Cleanup] Xóa dữ liệu tạm do hết thời gian:', key);
+      tempDataStore.delete(key);
     }
   }
 }, 60 * 1000);
