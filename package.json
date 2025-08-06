@@ -10,6 +10,6 @@
   "dependencies": {
     "express": "^4.18.4",
     "cheerio": "^1.0.0-rc.12",
-    "axios": "^0.27.2"  // Phiên bản cũ, tránh undici mới
+    "axios": "^0.27.2"
   }
 }
