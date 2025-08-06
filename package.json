@@ -4,12 +4,23 @@
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node index.js",
-    "test": "node index.js"
+    "start": "node index.js"
   },
   "dependencies": {
+    "axios": "^1.6.8",
+    "body-parser": "^1.20.2",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.3.1",
     "express": "^4.18.4",
-    "cheerio": "^1.0.0-rc.12",
-    "node-fetch": "^2.6.7"
+    "openai": "^4.39.2",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.6.0",
+    "xlsx": "^0.18.5",
+    "tesseract.js": "^4.0.2",
+    "node-fetch": "^2.6.7",
+    "form-data": "^4.0.0",
+    "canvas": "^2.11.2",
+    "moment-timezone": "^0.5.43",
+    "quickchart-js": "^2.0.0"
   }
 }
