@@ -3,12 +3,6 @@ const crypto = require('crypto');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
-const pdfParse = require('pdf-parse');
-const mammoth = require('mammoth');
-const xlsx = require('xlsx');
-const Tesseract = require('tesseract.js');
-const moment = require('moment-timezone');
-const QuickChart = require('quickchart-js');
 const cheerio = require('cheerio');
 require('dotenv').config();
 
