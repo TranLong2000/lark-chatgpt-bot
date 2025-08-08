@@ -27,6 +27,12 @@ const SHEET_MAPPINGS = {
   'PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
 };
 
+// Khởi tạo biến lưu trữ giá trị B2
+let lastB2Value = null;
+const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
+const SHEET_ID = 'hZ0ZAX';
+const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
+
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
 const pendingTasks = new Map();
@@ -36,10 +42,7 @@ if (!fs.existsSync('temp_files')) {
   fs.mkdirSync('temp_files');
 }
 
-// Sử dụng express.raw với limit và timeout tăng cho /webhook
 app.use('/webhook', express.raw({ type: '*/*', limit: '10mb', timeout: 60000 }));
-
-// Sử dụng express.json cho /webhook-base
 app.use('/webhook-base', express.json({ limit: '10mb', timeout: 60000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
@@ -197,7 +200,7 @@ async function getTableMeta(baseId, tableId, token) {
     }));
   } catch (err) {
     console.warn('[getTableMeta Error] Nguyên nhân:', err.response?.data || err.message, 'Status:', err.response?.status);
-    return []; // Fallback với log cảnh báo
+    return [];
   }
 }
 
@@ -231,7 +234,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
     }
   } while (pageToken && rows.length < 100);
   console.log('[getAllRows] Tổng số dòng lấy được:', rows.length, 'Dữ liệu mẫu:', JSON.stringify(rows.slice(0, 5)));
-  global.lastRows = { baseId, tableId, rows }; // Lưu cache
+  global.lastRows = { baseId, tableId, rows };
   return rows;
 }
 
@@ -247,6 +250,61 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
   }
 }
 
+async function getCellB2Value(token) {
+  try {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2:B2`;
+    console.log('[getCellB2Value] Gọi API với URL:', url);
+    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
+    const values = resp.data.data.valueRange.values;
+    if (values && values[0] && values[0][0]) {
+      return values[0][0].toString().trim();
+    }
+    return null;
+  } catch (err) {
+    console.error('[getCellB2Value Error]', err?.response?.data || err.message);
+    return null;
+  }
+}
+
+async function sendMessageToGroup(token, chatId, messageText) {
+  try {
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
+      {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text: messageText })
+      },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    console.log('[sendMessageToGroup] Đã gửi tin nhắn đến group:', chatId, 'Nội dung:', messageText);
+  } catch (err) {
+    console.error('[sendMessageToGroup Error] Group:', chatId, 'Nguyên nhân:', err?.response?.data || err.message);
+  }
+}
+
+async function checkB2ValueChange() {
+  try {
+    const token = await getAppAccessToken();
+    const currentB2Value = await getCellB2Value(token);
+
+    console.log('[checkB2ValueChange] Giá trị B2 hiện tại:', currentB2Value, 'Giá trị trước đó:', lastB2Value);
+
+    if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
+      const messageText = `Giá trị ô B2 đã thay đổi từ "${lastB2Value}" thành "${currentB2Value}"`;
+      for (const chatId of GROUP_CHAT_IDS) {
+        await sendMessageToGroup(token, chatId, messageText);
+      }
+    } else if (lastB2Value === null && currentB2Value !== null) {
+      console.log('[checkB2ValueChange] Khởi tạo giá trị B2 ban đầu:', currentB2Value);
+    }
+
+    lastB2Value = currentB2Value;
+  } catch (err) {
+    console.error('[checkB2ValueChange Error]', err.message);
+  }
+}
+
 function updateConversationMemory(chatId, role, content) {
   if (!conversationMemory.has(chatId)) {
     conversationMemory.set(chatId, []);
@@ -258,12 +316,10 @@ function updateConversationMemory(chatId, role, content) {
 
 async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
   try {
-    // Lấy metadata của bảng để xác định cột
     const fields = await getTableMeta(baseId, tableId, token);
     const fieldNames = fields.length > 0 ? fields.map(f => f.name) : [];
     console.log('[Debug] Các cột trong bảng:', fieldNames);
 
-    // Lấy tất cả dữ liệu từ Base
     const rows = await getAllRows(baseId, tableId, token);
     const allRows = rows.map(row => row.fields || {});
 
@@ -278,7 +334,6 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       return { result: 'Không có hàng hợp lệ' };
     }
 
-    // Lấy hàng tiêu đề (dòng đầu tiên) làm tiêu chí xác định cột
     const headerRow = validRows[0];
     const columnMapping = {};
     if (headerRow) {
@@ -288,7 +343,6 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
     }
     console.log('[Debug] Ánh xạ cột:', columnMapping);
 
-    // Gửi câu hỏi và dữ liệu cột sang OpenRouter để phân tích
     const columnData = {};
     Object.keys(columnMapping).forEach(fieldId => {
       columnData[columnMapping[fieldId]] = validRows.map(row => row[fieldId] ? row[fieldId].toString().trim() : null);
@@ -372,7 +426,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
     }
 
     const chatId = pendingTasks.get(messageId)?.chatId;
-    const headers = sheetData[0] || []; // Dòng đầu tiên là tiêu đề
+    const headers = sheetData[0] || [];
     const rows = sheetData.slice(1).map(row => row.map(cell => cell || ''));
 
     const columnData = {};
@@ -434,14 +488,11 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
   }
 }
 
-// Thêm hàm tạo biểu đồ pie chart
 async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
   try {
-    // Lấy dữ liệu từ Base
     const rows = await getAllRows(baseId, tableId, token);
     const fields = await getTableMeta(baseId, tableId, token);
     
-    // Xác định cột Manufactory và Value
     const categoryField = fields.find(f => f.name.toLowerCase() === 'manufactory')?.field_id;
     const valueField = fields.find(f => f.name.toLowerCase() === 'value')?.field_id;
 
@@ -449,7 +500,6 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
       return { success: false, message: 'Không tìm thấy cột Manufactory hoặc Value phù hợp để tạo biểu đồ' };
     }
 
-    // Tính tổng và phần trăm
     const dataMap = new Map();
     rows.forEach(row => {
       const fields = row.fields || {};
@@ -466,7 +516,6 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
       values.push((value / total * 100).toFixed(2));
     });
 
-    // Tạo pie chart bằng QuickChart
     const chart = new QuickChart();
     chart.setConfig({
       type: 'pie',
@@ -513,7 +562,6 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
   }
 }
 
-// Thêm hàm gửi tin nhắn với hình ảnh
 async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   try {
     const response = await axios.post(
@@ -527,7 +575,6 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
     );
     console.log('[SendChart] Đã gửi biểu đồ đến group:', chatId, 'Response:', response.data);
 
-    // Gửi tin nhắn văn bản kèm theo
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
       {
@@ -542,7 +589,6 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   }
 }
 
-// Hàm tải và upload hình ảnh lên Lark
 async function uploadImageToLark(imageUrl, token) {
   try {
     const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
@@ -564,7 +610,6 @@ async function uploadImageToLark(imageUrl, token) {
   }
 }
 
-// Xử lý tín hiệu dừng
 process.on('SIGTERM', () => {
   console.log('[Server] Nhận tín hiệu SIGTERM, đang tắt...');
   pendingTasks.forEach((task, messageId) => replyToLark(messageId, 'Xử lý bị gián đoạn.', task.mentionUserId, task.mentionUserName));
@@ -576,11 +621,10 @@ setInterval(() => {
   console.log('[Memory] Đã xóa bộ nhớ');
 }, 2 * 60 * 60 * 1000);
 
-// Xử lý webhook cũ (giữ nguyên chức năng gốc)
 app.post('/webhook', async (req, res) => {
   try {
     console.log('[Webhook Debug] Raw Buffer Length:', req.body.length);
-    console.log('[Webhook Debug] Raw Buffer (Hex):', Buffer.from(req.body).toString('hex')); // Log hex để kiểm tra dữ liệu thô
+    console.log('[Webhook Debug] Raw Buffer (Hex):', Buffer.from(req.body).toString('hex'));
     console.log('[Webhook Debug] Raw Buffer:', req.body.toString('utf8'));
     let bodyRaw = req.body.toString('utf8');
     console.log('[Webhook Debug] Parsed Body:', bodyRaw);
@@ -590,15 +634,12 @@ app.post('/webhook', async (req, res) => {
     const timestamp = req.headers['x-lark-request-timestamp'];
     const nonce = req.headers['x-lark-request-nonce'];
 
-    // Tạm thời bỏ qua kiểm tra chữ ký để debug
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
       console.warn('[Webhook] Bỏ qua kiểm tra chữ ký để debug. Kiểm tra LARK_ENCRYPT_KEY sau. Request Body:', bodyRaw);
-      // return res.status(401).send('Chữ ký không hợp lệ');
     } else {
       console.log('[VerifySignature] Chữ ký hợp lệ, tiếp tục xử lý');
     }
 
-    // Thử parse body ngay cả khi rỗng
     let decryptedData = {};
     try {
       const { encrypt } = bodyRaw ? JSON.parse(bodyRaw) : {};
@@ -616,7 +657,6 @@ app.post('/webhook', async (req, res) => {
       return res.json({ challenge: decryptedData.event.challenge });
     }
 
-    // Logging chat_id từ sự kiện nếu có
     if (decryptedData.event && decryptedData.event.chat_id) {
       console.log('[Chat ID Debug] Chat ID từ sự kiện:', decryptedData.event.chat_id);
     }
@@ -630,8 +670,8 @@ app.post('/webhook', async (req, res) => {
       const parentId = message.parent_id;
       const mentions = message.mentions || [];
 
-      // Logging chat_id từ tin nhắn
-      console.log('[Message Debug] Chat ID từ tin nhắn:', chatId);
+      console.log('[Message Debug] chatId:', chatId, 'messageId:', messageId, 'parentId:', parentId, 'messageType:', messageType, 'Full Message:', JSON.stringify(message));
+      console.log('[Mentions Debug] Mentions:', JSON.stringify(mentions, null, 2));
 
       if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
@@ -648,9 +688,6 @@ app.post('/webhook', async (req, res) => {
       } catch (err) {
         console.error('[Parse Content Error] Nguyên nhân:', err.message, 'Content:', message.content);
       }
-
-      console.log('[Message Debug] chatId:', chatId, 'messageId:', messageId, 'parentId:', parentId, 'messageType:', messageType, 'Full Message:', JSON.stringify(message));
-      console.log('[Mentions Debug] Mentions:', JSON.stringify(mentions, null, 2));
 
       const hasAllMention = mentions.some(mention => mention.key === '@_all');
       if (hasAllMention && !isBotMentioned) {
@@ -863,7 +900,6 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Xử lý webhook mới cho Automation
 app.post('/webhook-base', async (req, res) => {
   try {
     console.log('[Webhook-Base Debug] Raw Body as String:', req.body.toString());
@@ -874,7 +910,6 @@ app.post('/webhook-base', async (req, res) => {
     const nonce = req.headers['x-lark-request-nonce'];
     const bodyRaw = JSON.stringify(req.body);
 
-    // Kiểm tra chữ ký nếu có
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
       console.warn('[Webhook-Base] Chữ ký không hợp lệ hoặc không kiểm tra được. Request Body:', bodyRaw);
       return res.status(401).send('Chữ ký không hợp lệ');
@@ -887,8 +922,8 @@ app.post('/webhook-base', async (req, res) => {
 
     if (req.body.event_type === 'bitable.record.updated') {
       const event = req.body;
-      const baseId = event.app_id; // Base ID: PjuWbiJLeaOzBMskS4ulh9Bwg9d
-      const tableId = event.table_id; // Table ID: tbl61rgzOwS8viB2
+      const baseId = event.app_id;
+      const tableId = event.table_id;
       const updateDate = event.fields['Update Date'];
 
       if (!updateDate || updateDate.includes('{{')) {
@@ -925,14 +960,14 @@ app.post('/webhook-base', async (req, res) => {
   }
 });
 
-// Gọi hàm logBotOpenId khi server khởi động
 logBotOpenId().then(() => {
   app.listen(port, () => {
     console.log(`Máy chủ đang chạy trên cổng ${port}`);
+    checkB2ValueChange(); // Chạy lần đầu khi khởi động
+    setInterval(checkB2ValueChange, 5 * 60 * 1000); // Kiểm tra mỗi 5 phút
   });
 });
 
-// Xóa file trong pendingFiles sau 5 phút nếu không có reply
 setInterval(() => {
   const now = Date.now();
   for (const [chatId, file] of pendingFiles) {
