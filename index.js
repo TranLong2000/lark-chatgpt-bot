@@ -250,7 +250,7 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
 
 async function getCellB2Value(token) {
   try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2:B2`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B3:B3`;
     console.log('[getCellB2Value] Gọi API với URL:', url, 'Token:', token);
     const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
     console.log('[getCellB2Value] Phản hồi đầy đủ:', JSON.stringify(resp.data));
