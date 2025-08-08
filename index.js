@@ -14,6 +14,7 @@ require('dotenv').config();
 const app = express();
 const port = process.env.PORT || 8080;
 
+// Cập nhật ánh xạ Base
 const BASE_MAPPINGS = {
   'PUR': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
   'SALE': 'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tblClioOV3nPN6jM&view=vew7RMyPed',
@@ -26,6 +27,7 @@ const SHEET_MAPPINGS = {
   'PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
 };
 
+// Khởi tạo biến lưu trữ giá trị B2
 let lastB2Value = null;
 const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = 'hZ0ZAX';
@@ -250,17 +252,16 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
 
 async function getCellB2Value(token) {
   try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2:B2?valueRenderOption=FORMATTED_VALUE`;
-    console.log('[getCellB2Value] Gọi API với URL:', url, 'Token:', token);
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2:B2`;
+    console.log('[getCellB2Value] Gọi API với URL:', url);
     const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
     const values = resp.data.data.valueRange.values;
-    console.log('[getCellB2Value] Dữ liệu nhận được:', values);
     if (values && values[0] && values[0][0]) {
       return values[0][0].toString().trim();
     }
     return null;
   } catch (err) {
-    console.error('[getCellB2Value Error]', JSON.stringify(err?.response?.data || err.message), 'Status:', err?.response?.status);
+    console.error('[getCellB2Value Error]', err?.response?.data || err.message);
     return null;
   }
 }
@@ -290,7 +291,7 @@ async function checkB2ValueChange() {
     console.log('[checkB2ValueChange] Giá trị B2 hiện tại:', currentB2Value, 'Giá trị trước đó:', lastB2Value);
 
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-      const messageText = 'Đã đổ số';
+      const messageText = `Giá trị ô B2 đã thay đổi từ "${lastB2Value}" thành "${currentB2Value}"`;
       for (const chatId of GROUP_CHAT_IDS) {
         await sendMessageToGroup(token, chatId, messageText);
       }
@@ -962,8 +963,8 @@ app.post('/webhook-base', async (req, res) => {
 logBotOpenId().then(() => {
   app.listen(port, () => {
     console.log(`Máy chủ đang chạy trên cổng ${port}`);
-    checkB2ValueChange();
-    setInterval(checkB2ValueChange, 5 * 60 * 1000);
+    checkB2ValueChange(); // Chạy lần đầu khi khởi động
+    setInterval(checkB2ValueChange, 5 * 60 * 1000); // Kiểm tra mỗi 5 phút
   });
 });
 
