@@ -250,14 +250,33 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
 
 async function getCellB2Value(token) {
   try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2:B2?valueRenderOption=FORMATTED_VALUE`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2:B2`;
     console.log('[getCellB2Value] Gọi API với URL:', url, 'Token:', token);
     const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
     console.log('[getCellB2Value] Phản hồi đầy đủ:', JSON.stringify(resp.data));
     const values = resp.data.data.valueRange.values;
     console.log('[getCellB2Value] Dữ liệu nhận được:', values);
     if (values && values[0] && values[0][0]) {
-      return values[0][0].toString().trim();
+      const cellValue = values[0][0].toString().trim();
+      // Kiểm tra nếu giá trị là công thức (bắt đầu bằng '=') và tham chiếu đến ô khác
+      if (cellValue.startsWith('=')) {
+        const match = cellValue.match(/='([^']+)'!([A-Z]+)(\d+)/); // Ví dụ: ='Raw data'!AI2
+        if (match) {
+          const sheetName = match[1];
+          const column = match[2];
+          const row = match[3];
+          const refUrl = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${sheetName}!${column}${row}:${column}${row}`;
+          console.log('[getCellB2Value] Gọi API tham chiếu đến:', refUrl);
+          const refResp = await axios.get(refUrl, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
+          console.log('[getCellB2Value] Phản hồi từ ô tham chiếu:', JSON.stringify(refResp.data));
+          const refValues = refResp.data.data.valueRange.values;
+          if (refValues && refValues[0] && refValues[0][0]) {
+            return refValues[0][0].toString().trim();
+          }
+        }
+        return null; // Nếu không thể phân tích công thức, trả về null
+      }
+      return cellValue; // Trả về giá trị tĩnh hoặc công thức không hợp lệ
     }
     return null;
   } catch (err) {
