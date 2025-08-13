@@ -257,13 +257,13 @@ async function checkB2ValueChange() {
     const currentB2Value = await getCellB2Value(token);
 
     if (currentB2Value !== null && (lastB2Value === null || currentB2Value !== lastB2Value)) {
-      const prompt = 'Khi giá trị B2 thay đổi, tự động gửi tin nhắn "Đã đổ số" đến nhóm chat. Định dạng JSON cho API Lark: { "text": "nội dung" }';
+      const prompt = 'Khi giá trị B2 thay đổi, tự động gửi tin nhắn "Đã đổ số" đến nhóm chat. Định dạng JSON cho API Lark: { "result": "nội dung" }';
       const aiResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
           model: 'deepseek/deepseek-r1-0528:free',
           messages: [
-            { role: 'system', content: 'Bạn là trợ lý AI tạo nội dung JSON cho API Lark. Chỉ trả về JSON hợp lệ.' },
+            { role: 'system', content: 'Bạn là trợ lý AI tạo nội dung JSON cho API. Chỉ trả về JSON hợp lệ.' },
             { role: 'user', content: prompt },
           ],
           stream: false,
@@ -277,9 +277,16 @@ async function checkB2ValueChange() {
         }
       );
 
-      const content = aiResponse.data.choices[0].message.content.trim();
+      let content = aiResponse.data.choices[0].message.content.trim();
+      let messageText;
+      try {
+        const parsedContent = JSON.parse(content);
+        messageText = parsedContent.result || 'Đã đổ số';
+      } catch (e) {
+        messageText = 'Đã đổ số'; // Fallback nếu parse thất bại
+      }
       for (const chatId of GROUP_CHAT_IDS) {
-        await sendMessageToGroup(token, chatId, JSON.parse(content).text);
+        await sendMessageToGroup(token, chatId, messageText);
       }
     }
 
