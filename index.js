@@ -250,7 +250,7 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
 
 async function getCellB2Value(token) {
   try {
-    const targetSheet = '48e2fd'; // Cập nhật tên sheet dựa trên link bạn cung cấp
+    const targetSheet = '48e2fd'; // Sử dụng sheet ID từ link bạn cung cấp
     const targetColumn = 'G'; // Cột chứa dữ liệu để tính tổng
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${targetSheet}!${targetColumn}:${targetColumn}`;
     console.log('[getCellB2Value] Gọi API với URL:', url, 'Token:', token);
@@ -978,4 +978,16 @@ logBotOpenId().then(() => {
   app.listen(port, () => {
     console.log(`Máy chủ đang chạy trên cổng ${port}`);
     checkB2ValueChange();
-    setInterval(checkB2ValueChange,
+    setInterval(checkB2ValueChange, 5 * 60 * 1000);
+  });
+});
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [chatId, file] of pendingFiles) {
+    if (now - file.timestamp > 5 * 60 * 1000) {
+      console.log('[Cleanup] Xóa file từ pendingFiles do hết thời gian:', chatId, file.fileName);
+      pendingFiles.delete(chatId);
+    }
+  }
+}, 60 * 1000);
