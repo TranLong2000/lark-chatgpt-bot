@@ -250,33 +250,24 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
 
 async function getCellB2Value(token) {
   try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2:B2`;
+    const targetSheet = '48e2fd'; // Cập nhật tên sheet dựa trên link bạn cung cấp
+    const targetColumn = 'G'; // Cột chứa dữ liệu để tính tổng
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${targetSheet}!${targetColumn}:${targetColumn}`;
     console.log('[getCellB2Value] Gọi API với URL:', url, 'Token:', token);
     const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
     console.log('[getCellB2Value] Phản hồi đầy đủ:', JSON.stringify(resp.data));
-    const values = resp.data.data.valueRange.values;
+    const values = resp.data.data.valueRange.values || [];
     console.log('[getCellB2Value] Dữ liệu nhận được:', values);
-    if (values && values[0] && values[0][0]) {
-      const cellValue = values[0][0].toString().trim();
-      // Kiểm tra nếu giá trị là công thức (bắt đầu bằng '=') và tham chiếu đến ô khác
-      if (cellValue.startsWith('=')) {
-        const match = cellValue.match(/='([^']+)'!([A-Z]+)(\d+)/); // Ví dụ: ='Raw data'!AI2
-        if (match) {
-          const sheetName = match[1];
-          const column = match[2];
-          const row = match[3];
-          const refUrl = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${sheetName}!${column}${row}:${column}${row}`;
-          console.log('[getCellB2Value] Gọi API tham chiếu đến:', refUrl);
-          const refResp = await axios.get(refUrl, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
-          console.log('[getCellB2Value] Phản hồi từ ô tham chiếu:', JSON.stringify(refResp.data));
-          const refValues = refResp.data.data.valueRange.values;
-          if (refValues && refValues[0] && refValues[0][0]) {
-            return refValues[0][0].toString().trim();
-          }
-        }
-        return null; // Nếu không thể phân tích công thức, trả về null
-      }
-      return cellValue; // Trả về giá trị tĩnh hoặc công thức không hợp lệ
+
+    // Tính tổng các giá trị số trong cột G, bỏ qua ô trống hoặc không phải số
+    const sum = values.reduce((acc, row) => {
+      const value = row[0];
+      const num = parseFloat(value);
+      return isNaN(num) ? acc : acc + num;
+    }, 0);
+
+    if (sum || sum === 0) {
+      return sum.toString();
     }
     return null;
   } catch (err) {
@@ -987,16 +978,4 @@ logBotOpenId().then(() => {
   app.listen(port, () => {
     console.log(`Máy chủ đang chạy trên cổng ${port}`);
     checkB2ValueChange();
-    setInterval(checkB2ValueChange, 5 * 60 * 1000);
-  });
-});
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [chatId, file] of pendingFiles) {
-    if (now - file.timestamp > 5 * 60 * 1000) {
-      console.log('[Cleanup] Xóa file từ pendingFiles do hết thời gian:', chatId, file.fileName);
-      pendingFiles.delete(chatId);
-    }
-  }
-}, 60 * 1000);
+    setInterval(checkB2ValueChange,
