@@ -257,9 +257,29 @@ async function checkB2ValueChange() {
     const currentB2Value = await getCellB2Value(token);
 
     if (currentB2Value !== null && (lastB2Value === null || currentB2Value !== lastB2Value)) {
-      const messageText = 'Đã đổ số. Giá trị mới: ' + currentB2Value;
+      const prompt = 'Khi giá trị B2 thay đổi, tự động gửi tin nhắn "Đã đổ số" đến nhóm chat. Định dạng JSON cho API Lark: { "text": "nội dung" }';
+      const aiResponse = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: 'deepseek/deepseek-r1-0528:free',
+          messages: [
+            { role: 'system', content: 'Bạn là trợ lý AI tạo nội dung JSON cho API Lark. Chỉ trả về JSON hợp lệ.' },
+            { role: 'user', content: prompt },
+          ],
+          stream: false,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }
+      );
+
+      const content = aiResponse.data.choices[0].message.content.trim();
       for (const chatId of GROUP_CHAT_IDS) {
-        await sendMessageToGroup(token, chatId, messageText);
+        await sendMessageToGroup(token, chatId, JSON.parse(content).text);
       }
     }
 
@@ -547,7 +567,7 @@ app.post('/webhook', async (req, res) => {
     let bodyRaw = req.body.toString('utf8');
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
-    const nonce = req.headers['x-lark-request-nonce';
+    const nonce = req.headers['x-lark-request-nonce'];
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) return res.status(401).send('Chữ ký không hợp lệ');
 
