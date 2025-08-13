@@ -238,7 +238,7 @@ async function sendMessageToGroup(token, chatId, messageText) {
     const payload = {
       receive_id: chatId,
       msg_type: 'text',
-      content: JSON.stringify({ text: messageText })
+      content: { text: messageText }
     };
     console.log('[Debug] Dữ liệu gửi:', payload);
     await axios.post(
