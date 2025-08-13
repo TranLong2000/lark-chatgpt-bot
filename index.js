@@ -240,6 +240,7 @@ async function sendMessageToGroup(token, chatId, messageText) {
       msg_type: 'text',
       content: JSON.stringify({ text: messageText })
     };
+    console.log('[Debug] Dữ liệu gửi:', payload);
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
       payload,
@@ -477,17 +478,34 @@ async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
 
 async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   try {
-    const response = await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
-      { receive_id: chatId, msg_type: 'image', content: JSON.stringify({ image_key: await uploadImageToLark(chartUrl, token) }) },
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-    );
-
+    const payload = chartUrl ? {
+      receive_id: chatId,
+      msg_type: 'image',
+      content: JSON.stringify({ image_key: await uploadImageToLark(chartUrl, token) })
+    } : {
+      receive_id: chatId,
+      msg_type: 'text',
+      content: JSON.stringify({ text: messageText || 'Không có biểu đồ để gửi' })
+    };
+    console.log('[Debug] Dữ liệu gửi:', payload);
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
-      { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) },
+      payload,
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
+    if (messageText && chartUrl) {
+      const textPayload = {
+        receive_id: chatId,
+        msg_type: 'text',
+        content: JSON.stringify({ text: messageText })
+      };
+      console.log('[Debug] Dữ liệu gửi (text):', textPayload);
+      await axios.post(
+        `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
+        textPayload,
+        { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+      );
+    }
   } catch (err) {
     console.error('[SendChart Error] Group:', chatId, 'Nguyên nhân:', err?.response?.data || err.message);
   }
