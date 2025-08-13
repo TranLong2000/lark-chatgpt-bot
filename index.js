@@ -235,10 +235,31 @@ async function getCellB2Value(token) {
 
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
+    const prompt = `Tạo nội dung tin nhắn cho API Lark với text: "${messageText}". Định dạng dưới dạng JSON { "text": "nội dung" }`;
+    const aiResponse = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn là trợ lý AI tạo nội dung JSON cho API Lark. Chỉ trả về JSON hợp lệ.' },
+          { role: 'user', content: prompt },
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
+
+    const content = aiResponse.data.choices[0].message.content.trim();
     const payload = {
       receive_id: chatId,
       msg_type: 'text',
-      content: { text: messageText }
+      content: content
     };
     console.log('[Debug] Dữ liệu gửi:', payload);
     await axios.post(
