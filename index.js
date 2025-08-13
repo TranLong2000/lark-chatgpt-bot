@@ -45,10 +45,7 @@ app.use('/webhook-base', express.json({ limit: '10mb', timeout: 60000 }));
 
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
-  if (!encryptKey) {
-    console.error('[VerifySignature] LARK_ENCRYPT_KEY chưa được thiết lập');
-    return false;
-  }
+  if (!encryptKey) return false;
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
   const hash = crypto.createHash('sha256').update(raw, 'utf8').digest('hex');
   return hash === signature;
@@ -72,8 +69,7 @@ async function getUserInfo(openId, token) {
     const response = await axios.get(`${process.env.LARK_DOMAIN}/open-apis/contact/v3/users/${openId}?user_id_type=open_id`, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     });
-    const user = response.data.data.user;
-    return user.name || `User_${openId.slice(-4)}`;
+    return response.data.data.user.name || `User_${openId.slice(-4)}`;
   } catch (err) {
     return `User_${openId.slice(-4)}`;
   }
@@ -135,16 +131,6 @@ async function extractFileContent(fileUrl, fileType) {
   }
 }
 
-async function extractImageContent(imageData) {
-  try {
-    const result = await Tesseract.recognize(imageData, 'eng+vie');
-    return result.data.text.trim();
-  } catch (err) {
-    console.error('[ExtractImageContent Error] Nguyên nhân:', err.message);
-    return `Lỗi khi trích xuất nội dung hình ảnh: ${err.message}`;
-  }
-}
-
 async function getAppAccessToken() {
   try {
     const resp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
@@ -166,6 +152,7 @@ async function logBotOpenId() {
       timeout: 20000,
     });
     const botOpenId = response.data.bot.open_id;
+    console.log('[Bot Info] BOT_OPEN_ID:', botOpenId);
     return botOpenId;
   } catch (err) {
     console.error('[LogBotOpenId Error]', err?.response?.data || err.message);
@@ -268,16 +255,11 @@ async function checkB2ValueChange() {
     const token = await getAppAccessToken();
     const currentB2Value = await getCellB2Value(token);
 
-    console.log('[checkB2ValueChange] Giá trị B2 hiện tại:', currentB2Value, 'Giá trị trước đó:', lastB2Value);
-
     if (currentB2Value !== null && (lastB2Value === null || currentB2Value !== lastB2Value)) {
       const messageText = 'Đã đổ số. Giá trị mới: ' + currentB2Value;
       for (const chatId of GROUP_CHAT_IDS) {
         await sendMessageToGroup(token, chatId, messageText);
       }
-      console.log('[checkB2ValueChange] Đã gửi thông báo thay đổi giá trị:', currentB2Value);
-    } else if (currentB2Value === null) {
-      console.log('[checkB2ValueChange] Ô B2 hiện tại trống hoặc không đọc được');
     }
 
     lastB2Value = currentB2Value;
@@ -770,14 +752,14 @@ app.post('/webhook-base', async (req, res) => {
       const tableId = event.table_id;
       const updateDate = event.fields['Update Date'];
 
-      if (!updateDate || updateDate.includes('{{'))) return res.sendStatus(200);
+      if (!updateDate || updateDate.includes('{{')) return res.sendStatus(200);
 
       const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
       if (groupChatIds.length === 0) return res.status(400).send('Thiếu group chat IDs');
 
       const token = await getAppAccessToken();
       for (const chatId of groupChatIds) {
-        const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
+        const { success, chartUrl, message } = await createPieChartFromBaseId, tableId, token, chatId);
 
         if (success) {
           await sendChartToGroup(token, chatId, chartUrl, `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})`);
@@ -807,7 +789,6 @@ setInterval(() => {
   const now = Date.now();
   for (const [chatId, file] of pendingFiles) {
     if (now - file.timestamp > 5 * 60 * 1000) {
-      console.log('[Cleanup] Xóa file từ pendingFiles do hết thời gian:', chatId, file.fileName);
       pendingFiles.delete(chatId);
     }
   }
