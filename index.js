@@ -759,7 +759,7 @@ app.post('/webhook-base', async (req, res) => {
 
       const token = await getAppAccessToken();
       for (const chatId of groupChatIds) {
-        const { success, chartUrl, message } = await createPieChartFromBaseId, tableId, token, chatId);
+        const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
 
         if (success) {
           await sendChartToGroup(token, chatId, chartUrl, `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})`);
