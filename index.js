@@ -242,7 +242,7 @@ async function checkB2ValueChange() {
     console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
 
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-      let messageText = `Tổng cột G hiện tại: ${currentB2Value}`;
+      let messageText = `Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
 
       const analysisPrompt = `
         Bạn là một trợ lý AI. Dựa trên thông tin sau:
