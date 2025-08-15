@@ -767,8 +767,8 @@ app.post('/webhook-base', async (req, res) => {
 });
 
 app.listen(port, () => {
-  checkB2ValueChange();
-  setInterval(checkB2ValueChange, 5 * 60 * 1000);
+  lastInventorySum();
+  setInterval(lastInventorySum, 5 * 60 * 1000);
 });
 
 setInterval(() => {
