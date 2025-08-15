@@ -250,35 +250,22 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
 
 async function getCellB2Value(token) {
   try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2:B2`;
+    const targetSheet = '48e2fd';
+    const targetColumn = 'G';
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${targetSheet}!${targetColumn}:${targetColumn}`;
     console.log('[getCellB2Value] Gọi API với URL:', url, 'Token:', token);
     const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
     console.log('[getCellB2Value] Phản hồi đầy đủ:', JSON.stringify(resp.data));
-    const values = resp.data.data.valueRange.values;
-    console.log('[getCellB2Value] Dữ liệu nhận được:', values);
-    if (values && values[0] && values[0][0]) {
-      const cellValue = values[0][0].toString().trim();
-      // Kiểm tra nếu giá trị là công thức (bắt đầu bằng '=') và tham chiếu đến ô khác
-      if (cellValue.startsWith('=')) {
-        const match = cellValue.match(/='([^']+)'!([A-Z]+)(\d+)/); // Ví dụ: ='Raw data'!AI2
-        if (match) {
-          const sheetName = match[1];
-          const column = match[2];
-          const row = match[3];
-          const refUrl = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${sheetName}!${column}${row}:${column}${row}`;
-          console.log('[getCellB2Value] Gọi API tham chiếu đến:', refUrl);
-          const refResp = await axios.get(refUrl, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
-          console.log('[getCellB2Value] Phản hồi từ ô tham chiếu:', JSON.stringify(refResp.data));
-          const refValues = refResp.data.data.valueRange.values;
-          if (refValues && refValues[0] && refValues[0][0]) {
-            return refValues[0][0].toString().trim();
-          }
-        }
-        return null; // Nếu không thể phân tích công thức, trả về null
-      }
-      return cellValue; // Trả về giá trị tĩnh hoặc công thức không hợp lệ
-    }
-    return null;
+    const values = resp.data.data.valueRange.values || [];
+
+    const sum = values.reduce((acc, row) => {
+      const value = row[0];
+      const num = parseFloat(value);
+      return isNaN(num) ? acc : acc + num;
+    }, 0);
+
+    console.log('[getCellB2Value] Tổng cột G:', sum);
+    return sum || sum === 0 ? sum.toString() : null;
   } catch (err) {
     console.error('[getCellB2Value Error]', JSON.stringify(err?.response?.data || err.message), 'Status:', err?.response?.status);
     return null;
@@ -309,17 +296,49 @@ async function checkB2ValueChange() {
     const token = await getAppAccessToken();
     const currentB2Value = await getCellB2Value(token);
 
-    console.log('[checkB2ValueChange] Giá trị B2 hiện tại:', currentB2Value, 'Giá trị trước đó:', lastB2Value);
+    console.log('[checkB2ValueChange] Giá trị cột G hiện tại:', currentB2Value, 'Giá trị trước đó:', lastB2Value);
 
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-      const messageText = 'Đã đổ số';
+      const messageText = `Tổng cột G hiện tại: ${currentB2Value}`;
+      const analysisPrompt = `
+        Bạn là một trợ lý AI. Dựa trên thông tin sau:
+        - Tổng cột G: ${currentB2Value}
+        Hãy phân tích và trả lời ngắn gọn dưới dạng JSON: { "result": string }.
+      `;
+      const aiResponse = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: 'deepseek/deepseek-r1-0528:free',
+          messages: [
+            { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích dữ liệu với ít token nhất. Luôn trả lời dưới dạng JSON hợp lệ.' },
+            { role: 'user', content: analysisPrompt },
+          ],
+          stream: false,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }
+      );
+      const aiContent = aiResponse.data.choices[0].message.content.trim();
+      let analysis;
+      try {
+        analysis = JSON.parse(aiContent);
+        messageText += `. ${analysis.result}`;
+      } catch (parseError) {
+        console.error('[AI Parse Error]', parseError.message);
+      }
+
       for (const chatId of GROUP_CHAT_IDS) {
         await sendMessageToGroup(token, chatId, messageText);
       }
     } else if (lastB2Value === null && currentB2Value !== null) {
-      console.log('[checkB2ValueChange] Khởi tạo giá trị B2 ban đầu:', currentB2Value);
+      console.log('[checkB2ValueChange] Khởi tạo giá trị cột G ban đầu:', currentB2Value);
     } else if (currentB2Value === null) {
-      console.log('[checkB2ValueChange] Ô B2 hiện tại trống hoặc không đọc được');
+      console.log('[checkB2ValueChange] Cột G hiện tại trống hoặc không đọc được');
     }
 
     lastB2Value = currentB2Value;
