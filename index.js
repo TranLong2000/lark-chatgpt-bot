@@ -1,4 +1,3 @@
-// index.js (đã sửa, đầy đủ)
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
@@ -10,7 +9,6 @@ const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
 const moment = require('moment-timezone');
 const QuickChart = require('quickchart-js');
-const FormData = require('form-data');
 require('dotenv').config();
 
 const app = express();
@@ -28,10 +26,9 @@ const SHEET_MAPPINGS = {
   'PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
 };
 
-const SHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
+let lastB2Value = null;
+const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = '48e2fd';
-const APP_ID = process.env.LARK_APP_ID;
-const APP_SECRET = process.env.LARK_APP_SECRET;
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
 const BOT_OPEN_ID = 'ou_28e2a5e298050b5f08899314b2d49300';
 
@@ -56,21 +53,16 @@ function verifySignature(timestamp, nonce, body, signature) {
 }
 
 function decryptMessage(encrypt) {
-  try {
-    const key = Buffer.from(process.env.LARK_ENCRYPT_KEY || '', 'utf-8');
-    const aesKey = crypto.createHash('sha256').update(key).digest();
-    const data = Buffer.from(encrypt, 'base64');
-    const iv = data.slice(0, 16);
-    const encryptedText = data.slice(16);
+  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
+  const aesKey = crypto.createHash('sha256').update(key).digest();
+  const data = Buffer.from(encrypt, 'base64');
+  const iv = data.slice(0, 16);
+  const encryptedText = data.slice(16);
 
-    const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
-    let decrypted = decipher.update(encryptedText);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    return JSON.parse(decrypted.toString('utf8'));
-  } catch (e) {
-    console.log('decryptMessage error', e.message || e);
-    return null;
-  }
+  const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
+  let decrypted = decipher.update(encryptedText);
+  decrypted = Buffer.concat([decrypted, decipher.final()]);
+  return JSON.parse(decrypted.toString());
 }
 
 async function getUserInfo(openId, token) {
@@ -86,9 +78,14 @@ async function getUserInfo(openId, token) {
 
 async function replyToLark(messageId, content, mentionUserId = null, mentionUserName = null) {
   try {
-    const token = await getAppAccessToken();
+    const tokenResp = await axios.post(`${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
+      app_id: process.env.LARK_APP_ID,
+      app_secret: process.env.LARK_APP_SECRET,
+    });
+    const token = tokenResp.data.app_access_token;
+
     let messageContent;
-    const msgType = 'text';
+    let msgType = 'text';
     if (mentionUserId && mentionUserName && mentionUserId !== BOT_OPEN_ID) {
       messageContent = { text: `${content} <at user_id="${mentionUserId}">${mentionUserName}</at>` };
     } else {
@@ -98,11 +95,9 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${messageId}/reply`,
       { msg_type: msgType, content: JSON.stringify(messageContent) },
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
-  } catch (err) {
-    console.log('replyToLark error:', err.response?.data || err.message);
-  }
+  } catch {}
 }
 
 async function extractFileContent(fileUrl, fileType) {
@@ -114,23 +109,22 @@ async function extractFileContent(fileUrl, fileType) {
       const data = await pdfParse(buffer);
       return data.text.trim();
     }
-    if (fileType === 'docx' || fileType === 'doc') {
+    if (fileType === 'docx') {
       const result = await mammoth.extractRawText({ buffer });
-      return (result.value || '').trim();
+      return result.value.trim();
     }
-    if (fileType === 'xlsx' || fileType === 'xls') {
+    if (fileType === 'xlsx') {
       const workbook = xlsx.read(buffer, { type: 'buffer' });
       const sheetName = workbook.SheetNames[0];
       const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
       return sheet.map(row => row.join(', ')).join('; ');
     }
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes((fileType || '').toLowerCase())) {
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileType)) {
       const result = await Tesseract.recognize(buffer, 'eng+vie');
       return result.data.text.trim();
     }
     return 'Không hỗ trợ loại file này.';
-  } catch (e) {
-    console.log('extractFileContent error:', e.response?.data || e.message);
+  } catch {
     return 'Lỗi khi trích xuất nội dung file';
   }
 }
@@ -139,8 +133,7 @@ async function extractImageContent(imageData) {
   try {
     const result = await Tesseract.recognize(imageData, 'eng+vie');
     return result.data.text.trim();
-  } catch (e) {
-    console.log('extractImageContent error:', e.message);
+  } catch {
     return 'Lỗi khi trích xuất nội dung hình ảnh';
   }
 }
@@ -152,8 +145,7 @@ async function getAppAccessToken() {
       app_secret: process.env.LARK_APP_SECRET,
     }, { timeout: 20000 });
     return resp.data.app_access_token;
-  } catch (e) {
-    console.log('getAppAccessToken error:', e.response?.data || e.message);
+  } catch {
     throw new Error('Lỗi lấy token');
   }
 }
@@ -200,13 +192,341 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
   try {
     const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
     return resp.data.data.valueRange.values || [];
-  } catch (e) {
-    console.log('getSheetData error:', e.response?.data || e.message);
+  } catch {
     return [];
   }
 }
 
-// upload image util
+async function getCellB2Value(token) {
+  try {
+    const targetColumn = 'G';
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${targetColumn}:${targetColumn}`;
+    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
+    const values = resp.data.data.valueRange.values || [];
+
+    const sum = values.reduce((acc, row) => {
+      const value = row[0];
+      const num = parseFloat(value);
+      return isNaN(num) ? acc : acc + num;
+    }, 0);
+
+    return sum || sum === 0 ? sum.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function sendMessageToGroup(token, chatId, messageText) {
+  try {
+    const payload = {
+      receive_id: chatId,
+      msg_type: 'text',
+      content: JSON.stringify({ text: messageText })
+    };
+    console.log('Gửi API tới BOT:', { chatId, messageText });
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+  } catch (err) {
+    console.log('Lỗi gửi tin nhắn:', err.message);
+  }
+}
+
+async function checkB2ValueChange() {
+  try {
+    const token = await getAppAccessToken();
+    const currentB2Value = await getCellB2Value(token);
+
+    console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
+
+    // Nếu B2 thay đổi → gửi thông báo 1 lần
+    if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
+      const notifyText = `📢 Đã đổ số mới: ${currentB2Value} thùng`;
+      for (const chatId of GROUP_CHAT_IDS) {
+        await sendGroupMessage(token, chatId, notifyText);
+      }
+
+      console.log('🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...');
+
+      // --- Bắt đầu xử lý dữ liệu ---
+      const rows = await getAllSheetRows(token, SPREADSHEET_TOKEN, SHEET_ID);
+
+      // Giả sử cấu trúc dữ liệu: mỗi row là { 'Mã hàng': ..., '时间段内销量总计': ..., '昨日销量': ... }
+      const filtered = rows.filter(r => {
+        const sale = parseFloat(r['时间段内销量总计']) || 0;
+        return sale > 100;
+      });
+
+      // Tính tỷ lệ tăng/giảm so với hôm qua
+      const withRate = filtered.map(r => {
+        const today = parseFloat(r['时间段内销量总计']) || 0;
+        const yesterday = parseFloat(r['昨日销量']) || 0;
+        const rate = yesterday > 0 ? ((today - yesterday) / yesterday) * 100 : 0;
+        return { ...r, rate };
+      });
+
+      // Top 5 tăng
+      const topIncrease = [...withRate].sort((a, b) => b.rate - a.rate).slice(0, 5);
+
+      // Top 5 giảm
+      const topDecrease = [...withRate].sort((a, b) => a.rate - b.rate).slice(0, 5);
+
+      let analysisText = "📊 Phân tích biến động (lọc >100):\n";
+      analysisText += "🔺 Top 5 tăng:\n";
+      topIncrease.forEach((p, i) => {
+        analysisText += `${i + 1}. ${p['Mã hàng']}: ${p.rate.toFixed(2)}%\n`;
+      });
+
+      analysisText += "\n🔻 Top 5 giảm:\n";
+      topDecrease.forEach((p, i) => {
+        analysisText += `${i + 1}. ${p['Mã hàng']}: ${p.rate.toFixed(2)}%\n`;
+      });
+
+      for (const chatId of GROUP_CHAT_IDS) {
+        await sendGroupMessage(token, chatId, analysisText);
+      }
+    }
+
+    lastB2Value = currentB2Value;
+  } catch (err) {
+    console.log('Lỗi checkB2ValueChange:', err.message);
+  }
+}
+
+async function sendGroupMessage(token, chatId, text) {
+  try {
+    await axios.post(
+      `https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`,
+      {
+        receive_id: chatId,
+        content: JSON.stringify({ text }),
+        msg_type: 'text'
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+  } catch (err) {
+    console.log('Lỗi gửi tin nhắn nhóm:', err.response?.data || err.message);
+  }
+}
+
+function updateConversationMemory(chatId, role, content) {
+  if (!conversationMemory.has(chatId)) {
+    conversationMemory.set(chatId, []);
+  }
+  const mem = conversationMemory.get(chatId);
+  mem.push({ role, content });
+  if (mem.length > 10) mem.shift();
+}
+
+async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
+  try {
+    const fields = await getTableMeta(baseId, tableId, token);
+    const fieldNames = fields.length > 0 ? fields.map(f => f.name) : [];
+    const rows = await getAllRows(baseId, tableId, token);
+    const allRows = rows.map(row => row.fields || {});
+
+    if (!allRows || allRows.length === 0) return { result: 'Không có dữ liệu trong Base' };
+    const validRows = allRows.filter(row => row && typeof row === 'object');
+    if (validRows.length === 0) return { result: 'Không có hàng hợp lệ' };
+
+    const headerRow = validRows[0];
+    const columnMapping = {};
+    if (headerRow) {
+      Object.keys(headerRow).forEach((fieldId, index) => {
+        columnMapping[fieldId] = fieldNames[index] || fieldId;
+      });
+    }
+
+    const columnData = {};
+    Object.keys(columnMapping).forEach(fieldId => {
+      columnData[columnMapping[fieldId]] = validRows.map(row => row[fieldId] ? row[fieldId].toString().trim() : null);
+    });
+
+    const analysisPrompt = `
+      Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng. Dựa trên câu hỏi sau và dữ liệu cột dưới đây:
+      - Câu hỏi: "${userMessage}"
+      - Dữ liệu cột: ${JSON.stringify(columnData)}
+      Hãy:
+      1. Xác định cột liên quan và giá trị cần tính toán hoặc lọc.
+      2. Lọc hoặc tính toán dựa trên yêu cầu (tổng, trung bình, lọc theo điều kiện, v.v.).
+      3. Trả lời dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
+      Nếu không rõ, trả về: { "result": "Không hiểu yêu cầu, vui lòng kiểm tra lại cú pháp" }.
+    `;
+
+    const aiResponse = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng với ít token nhất. Luôn trả lời dưới dạng JSON hợp lệ.' },
+          { role: 'user', content: analysisPrompt },
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
+
+    const aiContent = aiResponse.data.choices[0].message.content.trim();
+    try {
+      return JSON.parse(aiContent);
+    } catch {
+      return { result: 'Lỗi khi phân tích câu hỏi, vui lòng kiểm tra lại cú pháp' };
+    }
+  } catch {
+    return { result: 'Lỗi khi xử lý, vui lòng liên hệ Admin Long' };
+  }
+}
+
+async function processBaseData(messageId, baseId, tableId, userMessage, token) {
+  try {
+    const { result } = await analyzeQueryAndProcessData(userMessage, baseId, tableId, token);
+    const chatId = pendingTasks.get(messageId)?.chatId;
+    updateConversationMemory(chatId, 'user', userMessage);
+    updateConversationMemory(chatId, 'assistant', result);
+    await replyToLark(messageId, result, pendingTasks.get(messageId)?.mentionUserId, pendingTasks.get(messageId)?.mentionUserName);
+  } catch {
+    await replyToLark(
+      messageId,
+      'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long',
+      pendingTasks.get(messageId)?.mentionUserId,
+      pendingTasks.get(messageId)?.mentionUserName
+    );
+  } finally {
+    pendingTasks.delete(messageId);
+  }
+}
+
+async function processSheetData(messageId, spreadsheetToken, userMessage, token, mentionUserId, mentionUserName) {
+  try {
+    const sheetData = await getSheetData(spreadsheetToken, token);
+    if (!sheetData || sheetData.length === 0) {
+      await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
+      return;
+    }
+
+    const chatId = pendingTasks.get(messageId)?.chatId;
+    const headers = sheetData[0] || [];
+    const rows = sheetData.slice(1).map(row => row.map(cell => cell || ''));
+
+    const columnData = {};
+    headers.forEach((header, index) => {
+      if (header) columnData[header] = rows.map(row => row[index] || null);
+    });
+
+    const analysisPrompt = `
+      Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng. Dựa trên câu hỏi sau và dữ liệu cột dưới đây:
+      - Câu hỏi: "${userMessage}"
+      - Dữ liệu cột: ${JSON.stringify(columnData)}
+      Hãy:
+      1. Xác định cột liên quan và giá trị cần tính toán hoặc lọc.
+      2. Lọc hoặc tính toán dựa trên yêu cầu (tổng, trung bình, lọc theo điều kiện, v.v.).
+      3. Trả lời dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
+      Nếu không rõ, trả về: { "result": "Không hiểu yêu cầu, vui lòng kiểm tra lại cú pháp" }.
+    `;
+
+    const aiResponse = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng với ít token nhất. Luôn trả lời dưới dạng JSON hợp lệ.' },
+          { role: 'user', content: analysisPrompt },
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
+
+    const aiContent = aiResponse.data.choices[0].message.content.trim();
+    try {
+      const analysis = JSON.parse(aiContent);
+      updateConversationMemory(chatId, 'user', userMessage);
+      updateConversationMemory(chatId, 'assistant', analysis.result);
+      await replyToLark(messageId, analysis.result, mentionUserId, mentionUserName);
+    } catch {
+      await replyToLark(messageId, 'Lỗi khi phân tích câu hỏi, vui lòng kiểm tra lại cú pháp', mentionUserId, mentionUserName);
+    }
+  } catch {
+    await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
+  } finally {
+    pendingTasks.delete(messageId);
+  }
+}
+
+async function createPieChartFromBaseData(baseId, tableId, token, groupChatId) {
+  try {
+    const rows = await getAllRows(baseId, tableId, token);
+    const fields = await getTableMeta(baseId, tableId, token);
+    
+    const categoryField = fields.find(f => f.name.toLowerCase() === 'manufactory')?.field_id;
+    const valueField = fields.find(f => f.name.toLowerCase() === 'value')?.field_id;
+
+    if (!categoryField || !valueField) return { success: false, message: 'Không tìm thấy cột Manufactory hoặc Value' };
+
+    const dataMap = new Map();
+    rows.forEach(row => {
+      const fields = row.fields || {};
+      const category = fields[categoryField] ? fields[categoryField].toString() : 'Unknown';
+      const value = parseFloat(fields[valueField]) || 0;
+      dataMap.set(category, (dataMap.get(category) || 0) + value);
+    });
+
+    const total = Array.from(dataMap.values()).reduce((a, b) => a + b, 0);
+    const labels = [];
+    const values = [];
+    dataMap.forEach((value, label) => {
+      labels.push(label);
+      values.push((value / total * 100).toFixed(2));
+    });
+
+    const chart = new QuickChart();
+    chart.setConfig({
+      type: 'pie',
+      data: { labels: labels, datasets: [{ data: values, backgroundColor: ['rgba(75, 192, 192, 0.2)', 'rgba(255, 99, 132, 0.2)', 'rgba(54, 162, 235, 0.2)', 'rgba(255, 206, 86, 0.2)', 'rgba(153, 102, 255, 0.2)', 'rgba(255, 159, 64, 0.2)'], borderColor: ['rgba(75, 192, 192, 1)', 'rgba(255, 99, 132, 1)', 'rgba(54, 162, 235, 1)', 'rgba(255, 206, 86, 1)', 'rgba(153, 102, 255, 1)', 'rgba(255, 159, 64, 1)'], borderWidth: 1 }] },
+      options: { title: { display: true, text: 'Biểu đồ % Manufactory' }, plugins: { legend: { position: 'right' } } }
+    });
+
+    const chartUrl = await chart.getShortUrl();
+    return { success: true, chartUrl };
+  } catch {
+    return { success: false, message: 'Lỗi khi tạo biểu đồ' };
+  }
+}
+
+async function sendChartToGroup(token, chatId, chartUrl, messageText) {
+  try {
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
+      { receive_id: chatId, msg_type: 'image', content: JSON.stringify({ image_key: await uploadImageToLark(chartUrl, token) }) },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
+      { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+  } catch {}
+}
+
 async function uploadImageToLark(imageUrl, token) {
   try {
     const response = await axios.get(imageUrl, { responseType: 'arraybuffer' });
@@ -217,174 +537,22 @@ async function uploadImageToLark(imageUrl, token) {
     const uploadResp = await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/images`,
       formData,
-      { headers: { Authorization: `Bearer ${token}`, ...formData.getHeaders() }, timeout: 30000 }
+      { headers: { Authorization: `Bearer ${token}`, ...formData.getHeaders() } }
     );
     return uploadResp.data.data.image_key;
-  } catch (e) {
-    console.log('uploadImageToLark error:', e.response?.data || e.message);
+  } catch {
     throw new Error('Lỗi upload ảnh');
   }
 }
 
-async function sendChartToGroup(token, chatId, chartUrl, messageText) {
-  try {
-    const imageKey = await uploadImageToLark(chartUrl, token);
-    await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
-      { receive_id: chatId, msg_type: 'image', content: JSON.stringify({ image_key: imageKey }) },
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-    );
-    await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
-      { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) },
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-    );
-  } catch (e) {
-    console.log('sendChartToGroup error:', e.response?.data || e.message);
-  }
-}
+process.on('SIGTERM', () => {
+  pendingTasks.forEach((task, messageId) => replyToLark(messageId, 'Xử lý bị gián đoạn.', task.mentionUserId, task.mentionUserName));
+  process.exit(0);
+});
 
-// ====== LẤY TENANT ACCESS TOKEN ======
-async function getTenantAccessToken() {
-  const res = await fetch("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      app_id: process.env.LARK_APP_ID,
-      app_secret: process.env.LARK_APP_SECRET
-    })
-  });
-
-  const data = await res.json();
-  if (!data.tenant_access_token) {
-    throw new Error(`❌ Không lấy được tenant_access_token: ${JSON.stringify(data)}`);
-  }
-  return data.tenant_access_token;
-}
-
-// ====== LẤY TOÀN BỘ DỮ LIỆU SHEET ======
-async function getAllSheetRows() {
-  if (!SHEET_TOKEN || !SHEET_ID) {
-    throw new Error("❌ SHEET_TOKEN hoặc SHEET_ID chưa được cấu hình.");
-  }
-
-  const tenantAccessToken = await getTenantAccessToken();
-  const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN}/values/${SHEET_ID}`;
-  
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      "Authorization": `Bearer ${tenantAccessToken}`,
-      "Content-Type": "application/json"
-    }
-  });
-
-  const text = await response.text();
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    throw new Error(`❌ API không trả về JSON. Nội dung trả về:\n${text}`);
-  }
-
-  if (data.code !== 0) {
-    throw new Error(`❌ API trả lỗi: ${JSON.stringify(data)}`);
-  }
-
-  if (!data.data || !data.data.valueRange || !data.data.valueRange.values) {
-    throw new Error(`❌ Không có dữ liệu trong sheet: ${JSON.stringify(data)}`);
-  }
-
-  return data.data.valueRange.values;
-}
-
-// ====== BIẾN LƯU TRẠNG THÁI ======
-let lastInventorySum = null;
-let hasSentDumpMessage = false;
-
-// ====== HÀM KIỂM TRA THAY ĐỔI TỒN KHO ======
-async function checkInventorySumChange() {
-  try {
-    const rows = await getAllSheetRows();
-    const header = rows[0];
-    const gIndex = header.findIndex(col => col.includes("实时可售库存") || col.includes("Số lượng tồn kho"));
-
-    if (gIndex === -1) {
-      console.error("❌ Không tìm thấy cột G (库存 hoặc Số lượng tồn kho).");
-      return;
-    }
-
-    // Tính tổng tồn kho
-    let sum = 0;
-    for (let i = 1; i < rows.length; i++) {
-      const val = parseFloat(rows[i][gIndex] || 0);
-      if (!isNaN(val)) sum += val;
-    }
-
-    console.log(`📊 Tổng tồn kho hiện tại: ${sum}`);
-
-    // Lần chạy đầu chỉ lưu giá trị
-    if (lastInventorySum === null) {
-      lastInventorySum = sum;
-      return;
-    }
-
-    // Nếu thay đổi
-    if (sum !== lastInventorySum && !hasSentDumpMessage) {
-      await sendGroupMessage("📢 Đã đổ số!");
-      hasSentDumpMessage = true;
-      lastInventorySum = sum;
-      return;
-    }
-
-    // Sau khi đã gửi thông báo, gửi thêm top biến động
-    if (hasSentDumpMessage) {
-      const differences = [];
-      for (let i = 1; i < rows.length; i++) {
-        const product = rows[i][0] || `SP-${i}`;
-        const currentVal = parseFloat(rows[i][gIndex] || 0);
-        const prevVal = 0; // TODO: Có thể lưu dữ liệu lần trước để so sánh chi tiết
-        const diff = currentVal - prevVal;
-        differences.push({ product, diff });
-      }
-
-      const top5 = differences.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 5);
-      let msg = "📈 Top 5 biến động tồn kho:\n";
-      top5.forEach(item => {
-        msg += `${item.product}: ${item.diff > 0 ? "+" : ""}${item.diff}\n`;
-      });
-
-      await sendGroupMessage(msg);
-      hasSentDumpMessage = false;
-    }
-  } catch (err) {
-    console.error("Lỗi checkInventorySumChange:", err.message);
-  }
-}
-
-// ====== GỬI TIN NHẮN VÀO NHÓM ======
-async function sendGroupMessage(text) {
-  const token = await getTenantAccessToken();
-  const res = await fetch("https://open.larksuite.com/open-apis/message/v4/send/", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      chat_id: GROUP_CHAT_ID,
-      msg_type: "text",
-      content: { text }
-    })
-  });
-
-  const result = await res.json();
-  if (result.code !== 0) {
-    console.error("❌ Lỗi gửi tin nhắn:", result);
-  }
-}
-
-module.exports = { checkInventorySumChange };
+setInterval(() => {
+  conversationMemory.clear();
+}, 2 * 60 * 60 * 1000);
 
 app.post('/webhook', async (req, res) => {
   try {
@@ -401,11 +569,11 @@ app.post('/webhook', async (req, res) => {
       if (encrypt) decryptedData = decryptMessage(encrypt);
     } catch {}
 
-    if (decryptedData && decryptedData.header && decryptedData.header.event_type === 'url_verification') {
+    if (decryptedData.header && decryptedData.header.event_type === 'url_verification') {
       return res.json({ challenge: decryptedData.event.challenge });
     }
 
-    if (decryptedData && decryptedData.header && decryptedData.header.event_type === 'im.message.receive_v1') {
+    if (decryptedData.header && decryptedData.header.event_type === 'im.message.receive_v1') {
       const senderId = decryptedData.event.sender.sender_id.open_id;
       const message = decryptedData.event.message;
       const messageId = message.message_id;
@@ -533,8 +701,7 @@ app.post('/webhook', async (req, res) => {
               await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
             }
             pendingFiles.delete(chatId);
-          } catch (e) {
-            console.log('Error processing post reply file:', e.response?.data || e.message || e);
+          } catch {
             await replyToLark(messageId, `Lỗi khi xử lý file ${pendingFile.fileName}.`, mentionUserId, mentionUserName);
             pendingFiles.delete(chatId);
           }
@@ -562,16 +729,14 @@ app.post('/webhook', async (req, res) => {
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage);
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-        } catch (e) {
-          console.log('Error text processing:', e.response?.data || e.message || e);
+        } catch {
           await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả, vui lòng liên hệ Admin Long', mentionUserId, mentionUserName);
         }
       } else {
         await replyToLark(messageId, 'Vui lòng sử dụng lệnh PUR, SALE, FIN, TEST kèm dấu phẩy và câu hỏi, hoặc gửi file/hình ảnh.', mentionUserId, mentionUserName);
       }
     }
-  } catch (e) {
-    console.log('Webhook processing error:', e.response?.data || e.message || e);
+  } catch {
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
@@ -615,16 +780,14 @@ app.post('/webhook-base', async (req, res) => {
     }
 
     return res.status(400).send('Loại sự kiện không được hỗ trợ');
-  } catch (e) {
-    console.log('webhook-base error:', e.response?.data || e.message || e);
+  } catch {
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
 
 app.listen(port, () => {
-  // start inventory checker
-  checkInventorySumChange();
-  setInterval(checkInventorySumChange, 5 * 60 * 1000);
+  checkB2ValueChange();
+  setInterval(checkB2ValueChange, 5 * 60 * 1000);
 });
 
 setInterval(() => {
