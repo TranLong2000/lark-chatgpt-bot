@@ -29,7 +29,7 @@ const SHEET_MAPPINGS = {
 let lastB2Value = null;
 const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = 'hZ0ZAX';
-const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
+const FIXED_GROUP_CHAT_ID = 'oc_3a916c77b8c7ab9438f7555ab66fd808'; // Cố định CHAT GROUP ID
 
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
@@ -238,16 +238,16 @@ async function sendMessageToGroup(token, chatId, messageText) {
     const payload = {
       receive_id: chatId,
       msg_type: 'text',
-      content: JSON.stringify({ text: messageText })
+      content: JSON.stringify({ text: messageText.replace(/[\n\r\t]/g, ' ').trim() })
     };
-    console.log('[Debug] Dữ liệu gửi:', payload);
+    console.log('[Debug] Dữ liệu gửi:', JSON.stringify(payload, null, 2));
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
       payload,
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 20000 }
     );
   } catch (err) {
-    console.error('[sendMessageToGroup Error] Group:', chatId, 'Nguyên nhân:', err?.response?.data || err.message);
+    console.error('[sendMessageToGroup Error] Group:', chatId, 'Nguyên nhân:', JSON.stringify(err.response?.data || err.message, null, 2));
   }
 }
 
@@ -283,26 +283,15 @@ async function checkB2ValueChange() {
         const parsedContent = JSON.parse(content);
         messageText = parsedContent.result || 'Đã đổ số';
       } catch (e) {
-        messageText = 'Đã đổ số'; // Fallback nếu parse thất bại
+        messageText = 'Đã đổ số';
       }
-      for (const chatId of GROUP_CHAT_IDS) {
-        await sendMessageToGroup(token, chatId, messageText);
-      }
+      await sendMessageToGroup(token, FIXED_GROUP_CHAT_ID, messageText);
     }
 
     lastB2Value = currentB2Value;
   } catch (err) {
     console.error('[checkB2ValueChange Error]', err.message);
   }
-}
-
-function updateConversationMemory(chatId, role, content) {
-  if (!conversationMemory.has(chatId)) {
-    conversationMemory.set(chatId, []);
-  }
-  const mem = conversationMemory.get(chatId);
-  mem.push({ role, content });
-  if (mem.length > 10) mem.shift();
 }
 
 async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
@@ -336,7 +325,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       Hãy:
       1. Xác định cột liên quan và giá trị cần tính toán hoặc lọc.
       2. Lọc hoặc tính toán dựa trên yêu cầu (tổng, trung bình, lọc theo điều kiện, v.v.).
-      3. Trả lời dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
+      3. Trả về dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
       Nếu không rõ, trả về: { "result": "Không hiểu yêu cầu, vui lòng kiểm tra lại cú pháp" }.
     `;
 
@@ -345,7 +334,7 @@ async function analyzeQueryAndProcessData(userMessage, baseId, tableId, token) {
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng với ít token nhất. Luôn trả lời dưới dạng JSON hợp lệ.' },
+          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng với ít token nhất. Luôn trả về JSON hợp lệ.' },
           { role: 'user', content: analysisPrompt },
         ],
         stream: false,
@@ -417,7 +406,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
       Hãy:
       1. Xác định cột liên quan và giá trị cần tính toán hoặc lọc.
       2. Lọc hoặc tính toán dựa trên yêu cầu (tổng, trung bình, lọc theo điều kiện, v.v.).
-      3. Trả lời dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
+      3. Trả về dưới dạng JSON: { "result": string } với kết quả tính toán hoặc thông báo nếu không có dữ liệu.
       Nếu không rõ, trả về: { "result": "Không hiểu yêu cầu, vui lòng kiểm tra lại cú pháp" }.
     `;
 
@@ -426,7 +415,7 @@ async function processSheetData(messageId, spreadsheetToken, userMessage, token,
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng với ít token nhất. Luôn trả lời dưới dạng JSON hợp lệ.' },
+          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích dữ liệu bảng với ít token nhất. Luôn trả về JSON hợp lệ.' },
           { role: 'user', content: analysisPrompt },
         ],
         stream: false,
@@ -512,9 +501,9 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
     } : {
       receive_id: chatId,
       msg_type: 'text',
-      content: JSON.stringify({ text: messageText || 'Không có biểu đồ để gửi' })
+      content: JSON.stringify({ text: messageText.replace(/[\n\r\t]/g, ' ').trim() })
     };
-    console.log('[Debug] Dữ liệu gửi:', payload);
+    console.log('[Debug] Dữ liệu gửi:', JSON.stringify(payload, null, 2));
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
       payload,
@@ -524,9 +513,9 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
       const textPayload = {
         receive_id: chatId,
         msg_type: 'text',
-        content: JSON.stringify({ text: messageText })
+        content: JSON.stringify({ text: messageText.replace(/[\n\r\t]/g, ' ').trim() })
       };
-      console.log('[Debug] Dữ liệu gửi (text):', textPayload);
+      console.log('[Debug] Dữ liệu gửi (text):', JSON.stringify(textPayload, null, 2));
       await axios.post(
         `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
         textPayload,
@@ -534,7 +523,7 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
       );
     }
   } catch (err) {
-    console.error('[SendChart Error] Group:', chatId, 'Nguyên nhân:', err?.response?.data || err.message);
+    console.error('[SendChart Error] Group:', chatId, 'Nguyên nhân:', JSON.stringify(err.response?.data || err.message, null, 2));
   }
 }
 
@@ -554,7 +543,7 @@ async function uploadImageToLark(imageUrl, token) {
     );
     return uploadResp.data.data.image_key;
   } catch (err) {
-    console.error('[UploadImage Error]', err?.response?.data || err.message);
+    console.error('[UploadImage Error]', JSON.stringify(err.response?.data || err.message, null, 2));
     throw err;
   }
 }
@@ -799,18 +788,13 @@ app.post('/webhook-base', async (req, res) => {
 
       if (!updateDate || updateDate.includes('{{')) return res.sendStatus(200);
 
-      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
-      if (groupChatIds.length === 0) return res.status(400).send('Thiếu group chat IDs');
-
       const token = await getAppAccessToken();
-      for (const chatId of groupChatIds) {
-        const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, chatId);
+      const { success, chartUrl, message } = await createPieChartFromBaseData(baseId, tableId, token, FIXED_GROUP_CHAT_ID);
 
-        if (success) {
-          await sendChartToGroup(token, chatId, chartUrl, `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})`);
-        } else {
-          await sendChartToGroup(token, chatId, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
-        }
+      if (success) {
+        await sendChartToGroup(token, FIXED_GROUP_CHAT_ID, chartUrl, `Biểu đồ % Manufactory đã được cập nhật (ngày ${updateDate})`);
+      } else {
+        await sendChartToGroup(token, FIXED_GROUP_CHAT_ID, null, message || 'Lỗi khi tạo biểu đồ từ dữ liệu Base');
       }
       return res.sendStatus(200);
     }
