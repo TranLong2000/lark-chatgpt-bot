@@ -60,7 +60,7 @@ function decryptMessage(encrypt) {
   const encryptedText = data.slice(16);
 
   const decipher = crypto.createDecipheriv('aes-256-cbc', aesKey, iv);
-  let decrypted = decipher.update(encryptedText);
+   decrypted = decipher.update(encryptedText);
   decrypted = Buffer.concat([decrypted, decipher.final()]);
   return JSON.parse(decrypted.toString());
 }
@@ -84,8 +84,8 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
     });
     const token = tokenResp.data.app_access_token;
 
-    let messageContent;
-    let msgType = 'text';
+     messageContent;
+     msgType = 'text';
     if (mentionUserId && mentionUserName && mentionUserId !== BOT_OPEN_ID) {
       messageContent = { text: `${content} <at user_id="${mentionUserId}">${mentionUserName}</at>` };
     } else {
@@ -100,20 +100,20 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
   } catch {}
 }
 
-async function extractFileContent(fileUrl, fileType) {
+async function extractFileContent(fileUrl, fiype) {
   try {
     const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 20000 });
     const buffer = Buffer.from(response.data);
 
-    if (fileType === 'pdf') {
+    if (fiype === 'pdf') {
       const data = await pdfParse(buffer);
       return data.text.trim();
     }
-    if (fileType === 'docx') {
+    if (fiype === 'docx') {
       const result = await mammoth.extractRawText({ buffer });
       return result.value.trim();
     }
-    if (fileType === 'xlsx') {
+    if (fiype === 'xlsx') {
       const workbook = xlsx.read(buffer, { type: 'buffer' });
       const sheetName = workbook.SheetNames[0];
       const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
@@ -304,7 +304,6 @@ async function processTopIncreaseDecrease(token) {
 }
 
 // Hàm "Đã đổ số"
-let lastB2Value = null;
 async function checkB2ValueChange() {
   try {
     const token = await getTenantAccessToken();
