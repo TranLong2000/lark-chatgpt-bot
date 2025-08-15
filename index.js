@@ -767,8 +767,8 @@ app.post('/webhook-base', async (req, res) => {
 });
 
 app.listen(port, () => {
-  lastInventorySum();
-  setInterval(lastInventorySum, 5 * 60 * 1000);
+  checkInventorySumChange();
+  setInterval(checkInventorySumChange, 5 * 60 * 1000);
 });
 
 setInterval(() => {
