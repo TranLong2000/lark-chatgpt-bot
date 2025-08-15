@@ -259,6 +259,40 @@ async function getTenantAccessToken() {
   return data.tenant_access_token;
 }
 
+async function getAllSheetRows() {
+    try {
+        const tenantAccessToken = await getTenantAccessToken();
+
+        const response = await fetch(
+            `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN}/sheets/${SHEET_ID}/values`,
+            {
+                method: "GET",
+                headers: {
+                    "Authorization": `Bearer ${tenantAccessToken}`,
+                    "Content-Type": "application/json"
+                }
+            }
+        );
+
+        const text = await response.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (err) {
+            throw new Error(`❌ API không trả về JSON. Nội dung trả về: ${text}`);
+        }
+
+        if (data.code !== 0) {
+            throw new Error(`❌ API trả lỗi: ${JSON.stringify(data)}`);
+        }
+
+        return data.data; // chứa toàn bộ giá trị của sheet
+    } catch (error) {
+        console.error("Lỗi getAllSheetRows:", error);
+        throw error;
+    }
+}
+
 let lastInventorySum = null;
 let hasSentDumpMessage = false;
 
