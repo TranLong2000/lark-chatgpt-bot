@@ -28,7 +28,7 @@ const SHEET_MAPPINGS = {
   'PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
 };
 
-const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
+const SHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = '48e2fd';
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
 const BOT_OPEN_ID = 'ou_28e2a5e298050b5f08899314b2d49300';
