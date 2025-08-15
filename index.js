@@ -241,12 +241,32 @@ async function checkB2ValueChange() {
 
     console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
 
+    // Chỉ chạy khi có thay đổi giá trị B2 và không phải lần đầu
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-      let messageText = `Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
+      console.log('🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...');
 
+      // 1. Lấy toàn bộ dữ liệu Sheet
+      const rows = await getAllSheetRows(token);
+
+      // 2. Lọc theo điều kiện "时间段内销量总计" > 100
+      const filteredRows = rows.filter(row => {
+        const saleValue = parseFloat(row['时间段内销量总计']) || 0;
+        return saleValue > 100;
+      });
+
+      console.log(`✅ Đã lọc ${filteredRows.length} mã hàng có tổng sale > 100`);
+
+      // 3. Nếu không có mã nào thì báo luôn
+      if (filteredRows.length === 0) {
+        await sendMessageToGroups(token, 'Không có mã hàng nào có tổng sale > 100');
+        lastB2Value = currentB2Value;
+        return;
+      }
+
+      // 4. Tạo prompt AI để phân tích
       const analysisPrompt = `
-        Bạn là một trợ lý AI. Dựa trên thông tin sau:
-        - Tổng cột G: ${currentB2Value}
+        Bạn là một trợ lý AI. Dựa trên danh sách sản phẩm sau:
+        ${JSON.stringify(filteredRows)}
         Hãy phân tích và trả lời ngắn gọn dưới dạng JSON: { "result": string }.
       `;
 
@@ -269,6 +289,8 @@ async function checkB2ValueChange() {
         }
       ).catch(err => console.log('Lỗi API phân tích:', err.message));
 
+      let messageText = `Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
+
       const aiContent = aiResponse?.data?.choices?.[0]?.message?.content?.trim();
       if (aiContent) {
         try {
@@ -281,31 +303,8 @@ async function checkB2ValueChange() {
         }
       }
 
-      // Gửi tin nhắn tới từng nhóm
-      for (const chatId of GROUP_CHAT_IDS) {
-        const sendBody = {
-          receive_id: chatId,
-          content: JSON.stringify({ text: messageText }), // JSON string content
-          msg_type: 'text'
-        };
-
-        console.log('Gửi API tới BOT:', { chatId, messageText });
-
-        try {
-          await axios.post(
-            `https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`,
-            sendBody,
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              }
-            }
-          );
-        } catch (err) {
-          console.log('Lỗi gửi tin nhắn nhóm:', err.response?.data || err.message);
-        }
-      }
+      // 5. Gửi tin nhắn kết quả
+      await sendMessageToGroups(token, messageText);
     }
 
     lastB2Value = currentB2Value;
@@ -313,6 +312,31 @@ async function checkB2ValueChange() {
     console.log('Lỗi checkB2ValueChange:', err.message);
   }
 }
+
+// Hàm gửi tin nhắn tới tất cả group
+async function sendMessageToGroups(token, text) {
+  for (const chatId of GROUP_CHAT_IDS) {
+    try {
+      await axios.post(
+        `https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`,
+        {
+          receive_id: chatId,
+          content: JSON.stringify({ text }),
+          msg_type: 'text'
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+    } catch (err) {
+      console.log('Lỗi gửi tin nhắn nhóm:', err.response?.data || err.message);
+    }
+  }
+}
+
 function updateConversationMemory(chatId, role, content) {
   if (!conversationMemory.has(chatId)) {
     conversationMemory.set(chatId, []);
