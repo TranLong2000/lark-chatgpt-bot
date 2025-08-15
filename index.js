@@ -30,6 +30,8 @@ const SHEET_MAPPINGS = {
 
 const SHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = '48e2fd';
+const APP_ID = process.env.LARK_APP_ID;
+const APP_SECRET = process.env.LARK_APP_SECRET;
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
 const BOT_OPEN_ID = 'ou_28e2a5e298050b5f08899314b2d49300';
 
