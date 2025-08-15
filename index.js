@@ -244,7 +244,7 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   }
 }
 
-// Lấy tenant access token
+// ====== LẤY TENANT ACCESS TOKEN ======
 async function getTenantAccessToken() {
   const res = await fetch("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
     method: "POST",
@@ -256,79 +256,59 @@ async function getTenantAccessToken() {
   });
 
   const data = await res.json();
+  if (!data.tenant_access_token) {
+    throw new Error(`❌ Không lấy được tenant_access_token: ${JSON.stringify(data)}`);
+  }
   return data.tenant_access_token;
 }
 
+// ====== LẤY TOÀN BỘ DỮ LIỆU SHEET ======
 async function getAllSheetRows() {
-    try {
-        const tenantAccessToken = await getTenantAccessToken();
+  if (!SHEET_TOKEN || !SHEET_ID) {
+    throw new Error("❌ SHEET_TOKEN hoặc SHEET_ID chưa được cấu hình.");
+  }
 
-        const response = await fetch(
-            `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN}/sheets/${SHEET_ID}/values`,
-            {
-                method: "GET",
-                headers: {
-                    "Authorization": `Bearer ${tenantAccessToken}`,
-                    "Content-Type": "application/json"
-                }
-            }
-        );
-
-        const text = await response.text();
-        let data;
-        try {
-            data = JSON.parse(text);
-        } catch (err) {
-            throw new Error(`❌ API không trả về JSON. Nội dung trả về: ${text}`);
-        }
-
-        if (data.code !== 0) {
-            throw new Error(`❌ API trả lỗi: ${JSON.stringify(data)}`);
-        }
-
-        return data.data; // chứa toàn bộ giá trị của sheet
-    } catch (error) {
-        console.error("Lỗi getAllSheetRows:", error);
-        throw error;
+  const tenantAccessToken = await getTenantAccessToken();
+  const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN}/values/${SHEET_ID}`;
+  
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${tenantAccessToken}`,
+      "Content-Type": "application/json"
     }
+  });
+
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`❌ API không trả về JSON. Nội dung trả về:\n${text}`);
+  }
+
+  if (data.code !== 0) {
+    throw new Error(`❌ API trả lỗi: ${JSON.stringify(data)}`);
+  }
+
+  if (!data.data || !data.data.valueRange || !data.data.valueRange.values) {
+    throw new Error(`❌ Không có dữ liệu trong sheet: ${JSON.stringify(data)}`);
+  }
+
+  return data.data.valueRange.values;
 }
 
+// ====== BIẾN LƯU TRẠNG THÁI ======
 let lastInventorySum = null;
 let hasSentDumpMessage = false;
 
+// ====== HÀM KIỂM TRA THAY ĐỔI TỒN KHO ======
 async function checkInventorySumChange() {
   try {
-    if (!SHEET_TOKEN || !SHEET_ID) {
-      console.error("❌ Bạn chưa khai báo SHEET_TOKEN và SHEET_ID");
-      return;
-    }
-
-    const token = await getTenantAccessToken();
-
-    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN}/values/${SHEET_ID}`;
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` }
-    });
-
-    const text = await res.text();
-
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (err) {
-      console.error("❌ API không trả về JSON. Nội dung trả về:", text);
-      return;
-    }
-
-    if (!data.data || !data.data.valueRange || !data.data.valueRange.values) {
-      console.error("❌ Không lấy được dữ liệu sheet:", data);
-      return;
-    }
-
-    const rows = data.data.valueRange.values;
+    const rows = await getAllSheetRows();
     const header = rows[0];
     const gIndex = header.findIndex(col => col.includes("实时可售库存") || col.includes("Số lượng tồn kho"));
+
     if (gIndex === -1) {
       console.error("❌ Không tìm thấy cột G (库存 hoặc Số lượng tồn kho).");
       return;
@@ -341,34 +321,34 @@ async function checkInventorySumChange() {
       if (!isNaN(val)) sum += val;
     }
 
-    console.log(`📊 Tổng tồn kho: ${sum}`);
+    console.log(`📊 Tổng tồn kho hiện tại: ${sum}`);
 
-    // So sánh thay đổi
+    // Lần chạy đầu chỉ lưu giá trị
     if (lastInventorySum === null) {
       lastInventorySum = sum;
       return;
     }
 
+    // Nếu thay đổi
     if (sum !== lastInventorySum && !hasSentDumpMessage) {
-      await sendGroupMessage("Đã đổ số 📢");
+      await sendGroupMessage("📢 Đã đổ số!");
       hasSentDumpMessage = true;
       lastInventorySum = sum;
       return;
     }
 
+    // Sau khi đã gửi thông báo, gửi thêm top biến động
     if (hasSentDumpMessage) {
-      // Lấy top 5 tăng giảm (so sánh với lần trước)
       const differences = [];
       for (let i = 1; i < rows.length; i++) {
         const product = rows[i][0] || `SP-${i}`;
         const currentVal = parseFloat(rows[i][gIndex] || 0);
-        const prevVal = 0; // chỗ này nếu cần lưu so sánh thì phải lưu prevRows
+        const prevVal = 0; // TODO: Có thể lưu dữ liệu lần trước để so sánh chi tiết
         const diff = currentVal - prevVal;
         differences.push({ product, diff });
       }
 
-      const sorted = differences.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
-      const top5 = sorted.slice(0, 5);
+      const top5 = differences.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, 5);
       let msg = "📈 Top 5 biến động tồn kho:\n";
       top5.forEach(item => {
         msg += `${item.product}: ${item.diff > 0 ? "+" : ""}${item.diff}\n`;
@@ -377,15 +357,15 @@ async function checkInventorySumChange() {
       await sendGroupMessage(msg);
       hasSentDumpMessage = false;
     }
-
   } catch (err) {
-    console.error("Lỗi checkInventorySumChange:", err);
+    console.error("Lỗi checkInventorySumChange:", err.message);
   }
 }
 
+// ====== GỬI TIN NHẮN VÀO NHÓM ======
 async function sendGroupMessage(text) {
   const token = await getTenantAccessToken();
-  await fetch("https://open.larksuite.com/open-apis/message/v4/send/", {
+  const res = await fetch("https://open.larksuite.com/open-apis/message/v4/send/", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -397,7 +377,14 @@ async function sendGroupMessage(text) {
       content: { text }
     })
   });
+
+  const result = await res.json();
+  if (result.code !== 0) {
+    console.error("❌ Lỗi gửi tin nhắn:", result);
+  }
 }
+
+module.exports = { checkInventorySumChange };
 
 app.post('/webhook', async (req, res) => {
   try {
