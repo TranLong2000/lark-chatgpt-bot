@@ -236,6 +236,8 @@ async function checkB2ValueChange() {
     const token = await getAppAccessToken();
     const currentB2Value = await getCellB2Value(token);
 
+    console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
+
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
       const messageText = `Tổng cột G hiện tại: ${currentB2Value}`;
       const analysisPrompt = `
@@ -260,8 +262,8 @@ async function checkB2ValueChange() {
           },
           timeout: 30000,
         }
-      );
-      const aiContent = aiResponse.data.choices[0].message.content.trim();
+      ).catch(err => console.log('Lỗi API phân tích:', err.message));
+      const aiContent = aiResponse?.data.choices[0]?.message.content.trim();
       let analysis;
       try {
         analysis = JSON.parse(aiContent);
@@ -271,14 +273,16 @@ async function checkB2ValueChange() {
       const mentionUserId = BOT_OPEN_ID;
       const mentionUserName = 'L-GPT';
       for (const chatId of GROUP_CHAT_IDS) {
-        await replyToLark(null, messageText, mentionUserId, mentionUserName);
+        await replyToLark(null, messageText, mentionUserId, mentionUserName).catch(err => console.log('Lỗi gửi API:', err.message));
       }
     } else if (lastB2Value === null && currentB2Value !== null) {
     } else if (currentB2Value === null) {
     }
 
     lastB2Value = currentB2Value;
-  } catch {}
+  } catch (err) {
+    console.log('Lỗi checkB2ValueChange:', err.message);
+  }
 }
 
 function updateConversationMemory(chatId, role, content) {
