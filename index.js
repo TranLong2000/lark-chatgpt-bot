@@ -223,6 +223,7 @@ async function sendMessageToGroup(token, chatId, messageText) {
       msg_type: 'text',
       content: JSON.stringify({ text: messageText })
     };
+    console.log('Gửi API tới BOT:', { chatId, messageText });
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
       payload,
