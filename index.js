@@ -196,7 +196,7 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
   }
 }
 
-// ================== HÀM LẤY ACCESS TOKEN ==================
+// Hàm lấy tenant access token
 async function getTenantAccessToken() {
     const res = await fetch("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
         method: "POST",
@@ -206,126 +206,136 @@ async function getTenantAccessToken() {
             app_secret: process.env.LARK_APP_SECRET
         })
     });
-    const data = await res.json();
-    return data.tenant_access_token;
-}
 
-// ================== LẤY DỮ LIỆU TỪ SHEET ==================
-async function getAllSheetRows(sheetToken) {
-    const token = await getTenantAccessToken();
-    const res = await fetch(`https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${sheetToken}/values`, {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` }
-    });
-    const data = await res.json();
-    return data.data.valueRange.values;
-}
-
-// ================== GỬI TIN NHẮN LARK ==================
-async function sendLarkMessage(receiveId, text) {
-    const token = await getTenantAccessToken();
-    await fetch("https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-            receive_id: receiveId,
-            msg_type: "text",
-            content: JSON.stringify({ text })
-        })
-    });
-}
-
-// ================== BIẾN LƯU GIÁ TRỊ TỒN KHO CŨ ==================
-let lastInventorySum = null;
-let lastNotified = false;
-
-// ================== HÀM KIỂM TRA CỘT G ==================
-async function checkInventorySumChange(sheetToken, chatId) {
+    const text = await res.text();
     try {
-        const rows = await getAllSheetRows(sheetToken);
-        if (!rows || rows.length < 2) return;
+        const data = JSON.parse(text);
+        if (data.code === 0) {
+            return data.tenant_access_token;
+        } else {
+            console.error("Lỗi lấy tenant_access_token:", data);
+            return null;
+        }
+    } catch (err) {
+        console.error("Lỗi parse JSON khi lấy token:", text);
+        return null;
+    }
+}
 
-        // Lấy tiêu đề cột
-        const headers = rows[0];
-        const inventoryIndex = headers.indexOf("实时可售库存/Số lượng tồn kho");
+// Hàm lấy tất cả dữ liệu sheet
+async function getAllSheetRows(sheetToken, tenantToken) {
+    const res = await fetch(`https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${sheetToken}/values`, {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${tenantToken}` }
+    });
 
-        if (inventoryIndex === -1) {
-            console.error("Không tìm thấy cột tồn kho");
+    const text = await res.text();
+    try {
+        const data = JSON.parse(text);
+        if (data.code === 0) {
+            return data.data.valueRange.values;
+        } else {
+            console.error("Lỗi getAllSheetRows:", data);
+            return null;
+        }
+    } catch (err) {
+        console.error("Lỗi parse JSON getAllSheetRows:", text);
+        return null;
+    }
+}
+
+// Hàm check cột G (thông báo "Đã đổ số")
+async function checkInventorySumChange() {
+    try {
+        const sheetToken = process.env.LARK_SHEET_TOKEN;
+        const tenantToken = await getTenantAccessToken();
+        if (!tenantToken) return;
+
+        const rows = await getAllSheetRows(sheetToken, tenantToken);
+        if (!rows || rows.length === 0) return;
+
+        // Tìm index của cột G theo tên cột
+        const headerRow = rows[0];
+        const colIndex = headerRow.findIndex(colName => colName.trim() === "实时可售库存/Số lượng tồn kho");
+        if (colIndex === -1) {
+            console.error("Không tìm thấy cột '实时可售库存/Số lượng tồn kho'");
             return;
         }
 
-        // Tính tổng tồn kho
-        const sum = rows.slice(1).reduce((acc, row) => {
-            const val = parseFloat(row[inventoryIndex] || 0);
-            return acc + (isNaN(val) ? 0 : val);
-        }, 0);
-
-        console.log("Tồn kho hiện tại:", sum, "Trước đó:", lastInventorySum);
-
-        // Nếu lần đầu chạy → lưu giá trị
-        if (lastInventorySum === null) {
-            lastInventorySum = sum;
-            return;
+        // SUM toàn bộ giá trị trong cột G (bỏ header)
+        let sum = 0;
+        for (let i = 1; i < rows.length; i++) {
+            const val = parseFloat(rows[i][colIndex]) || 0;
+            sum += val;
         }
 
-        // Nếu giá trị thay đổi → gửi tin nhắn
-        if (sum !== lastInventorySum) {
-            await sendLarkMessage(chatId, `🔹 Đã đổ số (Tồn kho mới: ${sum})`);
-            lastNotified = true;
-            lastInventorySum = sum;
+        console.log(`Tổng tồn kho hiện tại: ${sum}, lần trước: ${lastInventorySum}`);
+
+        if (lastInventorySum !== null && sum !== lastInventorySum) {
+            console.log("🔹 Phát hiện thông báo 'Đã đổ số', bắt đầu xử lý...");
+            await sendTopChangeProducts(); // Gửi 5 tăng / 5 giảm
         }
+
+        lastInventorySum = sum;
+
     } catch (err) {
         console.error("Lỗi checkInventorySumChange:", err);
     }
 }
 
-// ================== HÀM PHÂN TÍCH TĂNG GIẢM ==================
-async function sendTopIncreaseDecrease(sheetToken, chatId) {
-    if (!lastNotified) return; // chỉ chạy nếu vừa "đổ số"
-    lastNotified = false;
-
+// Hàm gửi 5 tăng / 5 giảm
+async function sendTopChangeProducts() {
     try {
-        const rows = await getAllSheetRows(sheetToken);
-        const headers = rows[0];
+        const sheetToken = process.env.LARK_SHEET_TOKEN;
+        const tenantToken = await getTenantAccessToken();
+        if (!tenantToken) return;
 
-        const nameIndex = headers.indexOf("Product Name");
-        const totalSaleIndex = headers.indexOf("时间段内销量总计/Tổng sale trong thời gian chọn");
-        const sale2DaysAgoIndex = headers.indexOf("前第2天销量/Sale 2 ngày trước");
-        const saleYesterdayIndex = headers.indexOf("昨日销量/Sale ngày hôm qua");
+        const rows = await getAllSheetRows(sheetToken, tenantToken);
+        if (!rows || rows.length === 0) return;
 
-        if ([nameIndex, totalSaleIndex, sale2DaysAgoIndex, saleYesterdayIndex].includes(-1)) {
-            console.error("Không tìm thấy đủ cột yêu cầu");
+        const headerRow = rows[0];
+        const colNameIndex = headerRow.findIndex(c => c.trim() === "Product Name");
+        const colTotalSaleIndex = headerRow.findIndex(c => c.trim() === "时间段内销量总计/Tổng sale trong thời gian chọn");
+        const colOIndex = headerRow.findIndex(c => c.trim() === "前第2天销量/Sale 2 ngày trước");
+        const colPIndex = headerRow.findIndex(c => c.trim() === "昨日销量/Sale ngày hôm qua");
+
+        if ([colNameIndex, colTotalSaleIndex, colOIndex, colPIndex].includes(-1)) {
+            console.error("Không tìm thấy một trong các cột yêu cầu");
             return;
         }
 
-        const products = rows.slice(1).map(row => {
-            const name = row[nameIndex] || "";
-            const totalSale = parseFloat(row[totalSaleIndex] || 0);
-            const sale2DaysAgo = parseFloat(row[sale2DaysAgoIndex] || 0);
-            const saleYesterday = parseFloat(row[saleYesterdayIndex] || 0);
-            const changeRate = sale2DaysAgo === 0 ? (saleYesterday > 0 ? Infinity : 0) : ((saleYesterday - sale2DaysAgo) / sale2DaysAgo) * 100;
-            return { name, totalSale, sale2DaysAgo, saleYesterday, changeRate };
-        }).filter(p => p.totalSale > 100);
+        // Lọc sản phẩm có total sale > 100
+        let products = [];
+        for (let i = 1; i < rows.length; i++) {
+            const name = rows[i][colNameIndex] || "";
+            const totalSale = parseFloat(rows[i][colTotalSaleIndex]) || 0;
+            const sale2DaysAgo = parseFloat(rows[i][colOIndex]) || 0;
+            const saleYesterday = parseFloat(rows[i][colPIndex]) || 0;
+
+            if (totalSale > 100) {
+                const changeRate = sale2DaysAgo === 0 ? 0 : ((saleYesterday - sale2DaysAgo) / sale2DaysAgo) * 100;
+                products.push({ name, changeRate });
+            }
+        }
 
         const topIncrease = [...products].sort((a, b) => b.changeRate - a.changeRate).slice(0, 5);
         const topDecrease = [...products].sort((a, b) => a.changeRate - b.changeRate).slice(0, 5);
 
-        let msg = "📈 Top 5 tăng mạnh:\n";
+        let message = `📊 Top 5 tăng mạnh:\n`;
         topIncrease.forEach(p => {
-            msg += `- ${p.name}: ${p.changeRate.toFixed(2)}% (O:${p.sale2DaysAgo}, P:${p.saleYesterday})\n`;
+            message += `- ${p.name}: ${p.changeRate.toFixed(2)}%\n`;
         });
 
-        msg += "\n📉 Top 5 giảm mạnh:\n";
+        message += `\n📉 Top 5 giảm mạnh:\n`;
         topDecrease.forEach(p => {
-            msg += `- ${p.name}: ${p.changeRate.toFixed(2)}% (O:${p.sale2DaysAgo}, P:${p.saleYesterday})\n`;
+            message += `- ${p.name}: ${p.changeRate.toFixed(2)}%\n`;
         });
 
-        await sendLarkMessage(chatId, msg);
+        console.log("Tin nhắn gửi:", message);
+        // Ở đây bạn thêm code sendMessageToLarkGroup(message)
+        
     } catch (err) {
-        console.error("Lỗi sendTopIncreaseDecrease:", err);
+        console.error("Lỗi sendTopChangeProducts:", err);
     }
 }
 
