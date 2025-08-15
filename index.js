@@ -226,6 +226,7 @@ async function getCellB2Value(token) {
       return isNaN(num) ? acc : acc + num;
     }, 0);
 
+    console.log('[getCellB2Value] Tổng cột G:', sum); // Thêm log tổng cột G
     return sum || sum === 0 ? sum.toString() : null;
   } catch (err) {
     console.error('[getCellB2Value Error]', err?.response?.data || err.message, 'Status:', err?.response?.status);
@@ -237,7 +238,7 @@ async function sendMessageToGroup(token, chatId, messageText) {
   try {
     const payload = {
       receive_id: chatId,
-      receive_id_type: 'chat_id', // Thêm trường này
+      receive_id_type: 'chat_id',
       msg_type: 'text',
       content: JSON.stringify({ text: messageText.replace(/[\n\r\t]/g, ' ').trim() })
     };
@@ -258,7 +259,8 @@ async function checkB2ValueChange() {
     const currentB2Value = await getCellB2Value(token);
 
     if (currentB2Value !== null && (lastB2Value === null || currentB2Value !== lastB2Value)) {
-      const prompt = 'Khi giá trị B2 thay đổi, tự động gửi tin nhắn "Đã đổ số" đến nhóm chat. Định dạng JSON cho API Lark: { "result": "nội dung" }';
+      console.log('[checkB2ValueChange] Giá trị thay đổi:', { last: lastB2Value, current: currentB2Value }); // Log thay đổi
+      const prompt = `Tổng cột G đã thay đổi thành ${currentB2Value}. Gửi tin nhắn "Đã đổ số" đến nhóm chat. Định dạng JSON cho API Lark: { "result": "nội dung" }`;
       const aiResponse = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         {
@@ -284,9 +286,12 @@ async function checkB2ValueChange() {
         const parsedContent = JSON.parse(content);
         messageText = parsedContent.result || 'Đã đổ số';
       } catch (e) {
+        console.error('[checkB2ValueChange] Lỗi parse JSON từ OpenRouter:', e.message);
         messageText = 'Đã đổ số';
       }
       await sendMessageToGroup(token, FIXED_GROUP_CHAT_ID, messageText);
+    } else {
+      console.log('[checkB2ValueChange] Không có thay đổi:', { last: lastB2Value, current: currentB2Value }); // Log khi không có thay đổi
     }
 
     lastB2Value = currentB2Value;
@@ -497,12 +502,12 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   try {
     const payload = chartUrl ? {
       receive_id: chatId,
-      receive_id_type: 'chat_id', // Thêm trường này
+      receive_id_type: 'chat_id',
       msg_type: 'image',
       content: JSON.stringify({ image_key: await uploadImageToLark(chartUrl, token) })
     } : {
       receive_id: chatId,
-      receive_id_type: 'chat_id', // Thêm trường này
+      receive_id_type: 'chat_id',
       msg_type: 'text',
       content: JSON.stringify({ text: messageText.replace(/[\n\r\t]/g, ' ').trim() })
     };
@@ -515,7 +520,7 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
     if (messageText && chartUrl) {
       const textPayload = {
         receive_id: chatId,
-        receive_id_type: 'chat_id', // Thêm trường này
+        receive_id_type: 'chat_id',
         msg_type: 'text',
         content: JSON.stringify({ text: messageText.replace(/[\n\r\t]/g, ' ').trim() })
       };
