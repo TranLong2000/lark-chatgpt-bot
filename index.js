@@ -197,6 +197,20 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
   }
 }
 
+// Hàm lấy tenant_access_token từ Lark API
+async function getTenantAccessToken() {
+    try {
+        const res = await axios.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+            app_id: process.env.LARK_APP_ID,
+            app_secret: process.env.LARK_APP_SECRET
+        });
+        return res.data.tenant_access_token;
+    } catch (error) {
+        console.error('Lỗi khi lấy tenant_access_token:', error);
+        throw error;
+    }
+}
+
 // Hàm lấy dữ liệu sheet từ Lark
 async function getAllSheetRows(spreadsheetToken, sheetId) {
     const token = await getTenantAccessToken();
