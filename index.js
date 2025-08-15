@@ -228,7 +228,9 @@ async function sendMessageToGroup(token, chatId, messageText) {
       payload,
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
-  } catch {}
+  } catch (err) {
+    console.log('Lỗi gửi tin nhắn:', err.message);
+  }
 }
 
 async function checkB2ValueChange() {
@@ -273,7 +275,7 @@ async function checkB2ValueChange() {
       const mentionUserId = BOT_OPEN_ID;
       const mentionUserName = 'L-GPT';
       for (const chatId of GROUP_CHAT_IDS) {
-        await replyToLark(null, messageText, mentionUserId, mentionUserName).catch(err => console.log('Lỗi gửi API:', err.message));
+        await sendMessageToGroup(token, chatId, messageText).catch(err => console.log('Lỗi gửi tin nhắn nhóm:', err.message));
       }
     } else if (lastB2Value === null && currentB2Value !== null) {
     } else if (currentB2Value === null) {
