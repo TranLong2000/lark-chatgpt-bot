@@ -220,18 +220,17 @@ async function sendMessageToGroup(token, chatId, messageText) {
   try {
     const payload = {
       receive_id: chatId,
-      receive_id_type: 'chat_id',
       msg_type: 'text',
       content: JSON.stringify({ text: messageText })
     };
-    console.log('Gửi API tới BOT:', { chatId, messageText, payload });
+    console.log('Gửi API tới BOT:', { chatId, messageText });
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
       payload,
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
   } catch (err) {
-    console.log('Lỗi gửi tin nhắn:', err.response ? err.response.data : err.message);
+    console.log('Lỗi gửi tin nhắn:', err.message);
   }
 }
 
@@ -592,7 +591,7 @@ app.post('/webhook', async (req, res) => {
       let spreadsheetToken = '';
 
       const mentionPrefix = `@_user_1 `;
-      if (userMessage.startsWith(mentionPrefix) {
+      if (userMessage.startsWith(mentionPrefix)) {
         const contentAfterMention = userMessage.slice(mentionPrefix.length);
         const reportMatch = contentAfterMention.match(new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|,)`, 'i'));
         if (reportMatch) {
