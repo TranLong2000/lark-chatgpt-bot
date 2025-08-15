@@ -244,133 +244,126 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   }
 }
 
-// Lưu giá trị tồn kho lần trước
-let lastInventorySum = null;
-
-// ==== Hàm lấy access_token ====
+// Lấy tenant access token
 async function getTenantAccessToken() {
-    const res = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            app_id: APP_ID,
-            app_secret: APP_SECRET
-        })
-    });
-    const data = await res.json();
-    if (!data.tenant_access_token) throw new Error('Không lấy được tenant_access_token');
-    return data.tenant_access_token;
+  const res = await fetch("https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      app_id: process.env.LARK_APP_ID,
+      app_secret: process.env.LARK_APP_SECRET
+    })
+  });
+
+  const data = await res.json();
+  return data.tenant_access_token;
 }
 
-// ==== Hàm lấy toàn bộ dữ liệu sheet ====
-async function getAllSheetRows(sheetToken) {
-    const token = await getTenantAccessToken();
-    const res = await fetch(`https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${sheetToken}/values`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}` }
-    });
-    const data = await res.json();
-    if (!data.data || !data.data.valueRange || !data.data.valueRange.values) {
-        throw new Error('Không đọc được dữ liệu sheet');
-    }
-    return data.data.valueRange.values; // Mảng 2D
-}
+let lastInventorySum = null;
+let hasSentDumpMessage = false;
 
-// ==== Hàm gửi tin nhắn ====
-async function sendLarkMessage(content) {
-    const token = await getTenantAccessToken();
-    await fetch(`https://open.larksuite.com/open-apis/message/v4/send/`, {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            chat_id: 'CHAT_ID_CỦA_BẠN',
-            msg_type: 'text',
-            content: { text: content }
-        })
-    });
-}
-
-// ==== Hàm kiểm tra SUM cột G ====
 async function checkInventorySumChange() {
-    try {
-        const rows = await getAllSheetRows(SHEET_TOKEN);
-
-        // Xác định index cột G (theo header)
-        const header = rows[0];
-        const colGIndex = header.findIndex(h => h.includes('实时可售库存') || h.includes('Số lượng tồn kho'));
-        if (colGIndex === -1) throw new Error('Không tìm thấy cột tồn kho');
-
-        // Tính tổng tồn kho
-        let sum = 0;
-        for (let i = 1; i < rows.length; i++) {
-            const val = parseFloat(rows[i][colGIndex] || 0);
-            sum += isNaN(val) ? 0 : val;
-        }
-
-        console.log(`Đã đổ số: { current: '${sum}', last: '${lastInventorySum}' }`);
-
-        if (lastInventorySum !== null && lastInventorySum !== sum) {
-            console.log('🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...');
-            await sendLarkMessage(`Đã đổ số - Tồn kho mới: ${sum}`);
-            await sendTop5ChangeProducts();
-        }
-
-        lastInventorySum = sum;
-    } catch (err) {
-        console.error('Lỗi checkInventorySumChange:', err.message);
+  try {
+    if (!SHEET_TOKEN || !SHEET_ID) {
+      console.error("❌ Bạn chưa khai báo SHEET_TOKEN và SHEET_ID");
+      return;
     }
+
+    const token = await getTenantAccessToken();
+
+    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN}/values/${SHEET_ID}`;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    const text = await res.text();
+
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (err) {
+      console.error("❌ API không trả về JSON. Nội dung trả về:", text);
+      return;
+    }
+
+    if (!data.data || !data.data.valueRange || !data.data.valueRange.values) {
+      console.error("❌ Không lấy được dữ liệu sheet:", data);
+      return;
+    }
+
+    const rows = data.data.valueRange.values;
+    const header = rows[0];
+    const gIndex = header.findIndex(col => col.includes("实时可售库存") || col.includes("Số lượng tồn kho"));
+    if (gIndex === -1) {
+      console.error("❌ Không tìm thấy cột G (库存 hoặc Số lượng tồn kho).");
+      return;
+    }
+
+    // Tính tổng tồn kho
+    let sum = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const val = parseFloat(rows[i][gIndex] || 0);
+      if (!isNaN(val)) sum += val;
+    }
+
+    console.log(`📊 Tổng tồn kho: ${sum}`);
+
+    // So sánh thay đổi
+    if (lastInventorySum === null) {
+      lastInventorySum = sum;
+      return;
+    }
+
+    if (sum !== lastInventorySum && !hasSentDumpMessage) {
+      await sendGroupMessage("Đã đổ số 📢");
+      hasSentDumpMessage = true;
+      lastInventorySum = sum;
+      return;
+    }
+
+    if (hasSentDumpMessage) {
+      // Lấy top 5 tăng giảm (so sánh với lần trước)
+      const differences = [];
+      for (let i = 1; i < rows.length; i++) {
+        const product = rows[i][0] || `SP-${i}`;
+        const currentVal = parseFloat(rows[i][gIndex] || 0);
+        const prevVal = 0; // chỗ này nếu cần lưu so sánh thì phải lưu prevRows
+        const diff = currentVal - prevVal;
+        differences.push({ product, diff });
+      }
+
+      const sorted = differences.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+      const top5 = sorted.slice(0, 5);
+      let msg = "📈 Top 5 biến động tồn kho:\n";
+      top5.forEach(item => {
+        msg += `${item.product}: ${item.diff > 0 ? "+" : ""}${item.diff}\n`;
+      });
+
+      await sendGroupMessage(msg);
+      hasSentDumpMessage = false;
+    }
+
+  } catch (err) {
+    console.error("Lỗi checkInventorySumChange:", err);
+  }
 }
 
-// ==== Hàm lấy 5 sản phẩm tăng giảm mạnh nhất ====
-async function sendTop5ChangeProducts() {
-    try {
-        const rows = await getAllSheetRows(SHEET_TOKEN);
-        const header = rows[0];
-
-        const colProduct = header.findIndex(h => h.includes('Product Name'));
-        const colTotalSale = header.findIndex(h => h.includes('Tổng sale') || h.includes('销量总计'));
-        const colO = header.findIndex(h => h.includes('Sale 2 ngày trước') || h.includes('前第2天销量'));
-        const colP = header.findIndex(h => h.includes('Sale ngày hôm qua') || h.includes('昨日销量'));
-
-        if ([colProduct, colTotalSale, colO, colP].includes(-1)) {
-            throw new Error('Không tìm thấy đủ 4 cột yêu cầu');
-        }
-
-        const products = [];
-        for (let i = 1; i < rows.length; i++) {
-            const totalSale = parseFloat(rows[i][colTotalSale] || 0);
-            if (totalSale > 100) {
-                const saleO = parseFloat(rows[i][colO] || 0);
-                const saleP = parseFloat(rows[i][colP] || 0);
-                const changeRate = saleO === 0 ? (saleP > 0 ? Infinity : 0) : ((saleP - saleO) / saleO) * 100;
-                products.push({
-                    name: rows[i][colProduct],
-                    saleO,
-                    saleP,
-                    changeRate
-                });
-            }
-        }
-
-        const topIncrease = [...products].sort((a, b) => b.changeRate - a.changeRate).slice(0, 5);
-        const topDecrease = [...products].sort((a, b) => a.changeRate - b.changeRate).slice(0, 5);
-
-        let msg = `📈 Top 5 SKU tăng mạnh:\n` +
-            topIncrease.map(p => `${p.name}: ${p.saleO} → ${p.saleP} (${p.changeRate.toFixed(2)}%)`).join('\n') +
-            `\n\n📉 Top 5 SKU giảm mạnh:\n` +
-            topDecrease.map(p => `${p.name}: ${p.saleO} → ${p.saleP} (${p.changeRate.toFixed(2)}%)`).join('\n');
-
-        await sendLarkMessage(msg);
-    } catch (err) {
-        console.error('Lỗi sendTop5ChangeProducts:', err.message);
-    }
+async function sendGroupMessage(text) {
+  const token = await getTenantAccessToken();
+  await fetch("https://open.larksuite.com/open-apis/message/v4/send/", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      chat_id: GROUP_CHAT_ID,
+      msg_type: "text",
+      content: { text }
+    })
+  });
 }
-
-// ==== Chạy kiểm tra mỗi 5 phút ====
-setInterval(checkInventorySumChange, 5 * 60 * 1000);
 
 app.post('/webhook', async (req, res) => {
   try {
