@@ -259,39 +259,10 @@ async function checkB2ValueChange() {
     const currentB2Value = await getCellB2Value(token);
 
     if (currentB2Value !== null && (lastB2Value === null || currentB2Value !== lastB2Value)) {
-      console.log('[checkB2ValueChange] Giá trị thay đổi:', { last: lastB2Value, current: currentB2Value }); // Log thay đổi
-      const prompt = `Tổng cột G đã thay đổi thành ${currentB2Value}. Gửi tin nhắn "Đã đổ số" đến nhóm chat. Định dạng JSON cho API Lark: { "result": "nội dung" }`;
-      const aiResponse = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-          model: 'deepseek/deepseek-r1-0528:free',
-          messages: [
-            { role: 'system', content: 'Bạn là trợ lý AI tạo nội dung JSON cho API. Chỉ trả về JSON hợp lệ.' },
-            { role: 'user', content: prompt },
-          ],
-          stream: false,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 30000,
-        }
-      );
-
-      let content = aiResponse.data.choices[0].message.content.trim();
-      let messageText;
-      try {
-        const parsedContent = JSON.parse(content);
-        messageText = parsedContent.result || 'Đã đổ số';
-      } catch (e) {
-        console.error('[checkB2ValueChange] Lỗi parse JSON từ OpenRouter:', e.message);
-        messageText = 'Đã đổ số';
-      }
-      await sendMessageToGroup(token, FIXED_GROUP_CHAT_ID, messageText);
+      console.log('[checkB2ValueChange] Giá trị thay đổi:', { last: lastB2Value, current: currentB2Value });
+      await sendMessageToGroup(token, FIXED_GROUP_CHAT_ID, "Đã đổ số");
     } else {
-      console.log('[checkB2ValueChange] Không có thay đổi:', { last: lastB2Value, current: currentB2Value }); // Log khi không có thay đổi
+      console.log('[checkB2ValueChange] Không có thay đổi:', { last: lastB2Value, current: currentB2Value });
     }
 
     lastB2Value = currentB2Value;
