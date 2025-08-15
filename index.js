@@ -29,7 +29,7 @@ const SHEET_MAPPINGS = {
 let lastB2Value = null;
 const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = 'hZ0ZAX';
-const FIXED_GROUP_CHAT_ID = 'oc_3a916c77b8c7ab9438f7555ab66fd808'; // Cố định CHAT GROUP ID
+const FIXED_GROUP_CHAT_ID = 'oc_3a916c77b8c7ab9438f7555ab66fd808';
 
 const processedMessageIds = new Set();
 const conversationMemory = new Map();
@@ -237,6 +237,7 @@ async function sendMessageToGroup(token, chatId, messageText) {
   try {
     const payload = {
       receive_id: chatId,
+      receive_id_type: 'chat_id', // Thêm trường này
       msg_type: 'text',
       content: JSON.stringify({ text: messageText.replace(/[\n\r\t]/g, ' ').trim() })
     };
@@ -496,10 +497,12 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   try {
     const payload = chartUrl ? {
       receive_id: chatId,
+      receive_id_type: 'chat_id', // Thêm trường này
       msg_type: 'image',
       content: JSON.stringify({ image_key: await uploadImageToLark(chartUrl, token) })
     } : {
       receive_id: chatId,
+      receive_id_type: 'chat_id', // Thêm trường này
       msg_type: 'text',
       content: JSON.stringify({ text: messageText.replace(/[\n\r\t]/g, ' ').trim() })
     };
@@ -512,6 +515,7 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
     if (messageText && chartUrl) {
       const textPayload = {
         receive_id: chatId,
+        receive_id_type: 'chat_id', // Thêm trường này
         msg_type: 'text',
         content: JSON.stringify({ text: messageText.replace(/[\n\r\t]/g, ' ').trim() })
       };
