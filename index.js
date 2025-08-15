@@ -241,51 +241,70 @@ async function checkB2ValueChange() {
 
     console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
 
-    // Nếu B2 thay đổi → gửi thông báo 1 lần
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-      const notifyText = `📢 Đã đổ số mới: ${currentB2Value} thùng`;
-      for (const chatId of GROUP_CHAT_IDS) {
-        await sendGroupMessage(token, chatId, notifyText);
+      let messageText = `Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
+
+      const analysisPrompt = `
+        Bạn là một trợ lý AI. Dựa trên thông tin sau:
+        - Tổng cột G: ${currentB2Value}
+        Hãy phân tích và trả lời ngắn gọn dưới dạng JSON: { "result": string }.
+      `;
+
+      const aiResponse = await axios.post(
+        'https://openrouter.ai/api/v1/chat/completions',
+        {
+          model: 'deepseek/deepseek-r1-0528:free',
+          messages: [
+            { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích dữ liệu với ít token nhất. Luôn trả lời dưới dạng JSON hợp lệ.' },
+            { role: 'user', content: analysisPrompt },
+          ],
+          stream: false,
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          timeout: 30000,
+        }
+      ).catch(err => console.log('Lỗi API phân tích:', err.message));
+
+      const aiContent = aiResponse?.data?.choices?.[0]?.message?.content?.trim();
+      if (aiContent) {
+        try {
+          const analysis = JSON.parse(aiContent);
+          if (analysis?.result) {
+            messageText += `. ${analysis.result}`;
+          }
+        } catch (e) {
+          console.log('Lỗi parse JSON từ AI:', e.message);
+        }
       }
 
-      console.log('🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...');
-
-      // --- Bắt đầu xử lý dữ liệu ---
-      const rows = await getAllSheetRows(token, SPREADSHEET_TOKEN, SHEET_ID);
-
-      // Giả sử cấu trúc dữ liệu: mỗi row là { 'Mã hàng': ..., '时间段内销量总计': ..., '昨日销量': ... }
-      const filtered = rows.filter(r => {
-        const sale = parseFloat(r['时间段内销量总计']) || 0;
-        return sale > 100;
-      });
-
-      // Tính tỷ lệ tăng/giảm so với hôm qua
-      const withRate = filtered.map(r => {
-        const today = parseFloat(r['时间段内销量总计']) || 0;
-        const yesterday = parseFloat(r['昨日销量']) || 0;
-        const rate = yesterday > 0 ? ((today - yesterday) / yesterday) * 100 : 0;
-        return { ...r, rate };
-      });
-
-      // Top 5 tăng
-      const topIncrease = [...withRate].sort((a, b) => b.rate - a.rate).slice(0, 5);
-
-      // Top 5 giảm
-      const topDecrease = [...withRate].sort((a, b) => a.rate - b.rate).slice(0, 5);
-
-      let analysisText = "📊 Phân tích biến động (lọc >100):\n";
-      analysisText += "🔺 Top 5 tăng:\n";
-      topIncrease.forEach((p, i) => {
-        analysisText += `${i + 1}. ${p['Mã hàng']}: ${p.rate.toFixed(2)}%\n`;
-      });
-
-      analysisText += "\n🔻 Top 5 giảm:\n";
-      topDecrease.forEach((p, i) => {
-        analysisText += `${i + 1}. ${p['Mã hàng']}: ${p.rate.toFixed(2)}%\n`;
-      });
-
+      // Gửi tin nhắn tới từng nhóm
       for (const chatId of GROUP_CHAT_IDS) {
-        await sendGroupMessage(token, chatId, analysisText);
+        const sendBody = {
+          receive_id: chatId,
+          content: JSON.stringify({ text: messageText }), // JSON string content
+          msg_type: 'text'
+        };
+
+        console.log('Gửi API tới BOT:', { chatId, messageText });
+
+        try {
+          await axios.post(
+            `https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`,
+            sendBody,
+            {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+        } catch (err) {
+          console.log('Lỗi gửi tin nhắn nhóm:', err.response?.data || err.message);
+        }
       }
     }
 
@@ -294,28 +313,6 @@ async function checkB2ValueChange() {
     console.log('Lỗi checkB2ValueChange:', err.message);
   }
 }
-
-async function sendGroupMessage(token, chatId, text) {
-  try {
-    await axios.post(
-      `https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`,
-      {
-        receive_id: chatId,
-        content: JSON.stringify({ text }),
-        msg_type: 'text'
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-  } catch (err) {
-    console.log('Lỗi gửi tin nhắn nhóm:', err.response?.data || err.message);
-  }
-}
-
 function updateConversationMemory(chatId, role, content) {
   if (!conversationMemory.has(chatId)) {
     conversationMemory.set(chatId, []);
