@@ -242,186 +242,133 @@ async function sendChartToGroup(token, chatId, chartUrl, messageText) {
   }
 }
 
-// helpers
-function _toNum(v) {
-  if (v === undefined || v === null) return 0;
-  const n = parseFloat(String(v).replace(/[,\s]/g, ''));
-  return Number.isFinite(n) ? n : 0;
-}
-
-function _norm(s) {
-  return String(s || '').trim().toLowerCase();
-}
-
-function _findKey(sampleObj, candidates) {
-  const keys = Object.keys(sampleObj || {});
-  for (const k of keys) {
-    const nk = _norm(k);
-    if (candidates.some(c => nk.includes(_norm(c)))) return k;
-  }
-  return null;
-}
-
-// Send text to groups using app token
-async function sendMessageToGroups(token, text) {
-  for (const chatId of GROUP_CHAT_IDS) {
-    try {
-      await axios.post(
-        `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
-        {
-          receive_id: chatId,
-          msg_type: 'text',
-          content: JSON.stringify({ text })
-        },
-        { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-      );
-    } catch (err) {
-      console.log('Lỗi gửi tin nhắn tới nhóm', chatId, ':', err.response?.data || err.message);
-    }
-  }
-}
-
-// ------------------ New: inventory check & top change logic ------------------
+// Lưu giá trị tồn kho lần trước
 let lastInventorySum = null;
 
+// ==== Hàm lấy access_token ====
+async function getTenantAccessToken() {
+    const res = await fetch('https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            app_id: APP_ID,
+            app_secret: APP_SECRET
+        })
+    });
+    const data = await res.json();
+    if (!data.tenant_access_token) throw new Error('Không lấy được tenant_access_token');
+    return data.tenant_access_token;
+}
+
+// ==== Hàm lấy toàn bộ dữ liệu sheet ====
+async function getAllSheetRows(sheetToken) {
+    const token = await getTenantAccessToken();
+    const res = await fetch(`https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${sheetToken}/values`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await res.json();
+    if (!data.data || !data.data.valueRange || !data.data.valueRange.values) {
+        throw new Error('Không đọc được dữ liệu sheet');
+    }
+    return data.data.valueRange.values; // Mảng 2D
+}
+
+// ==== Hàm gửi tin nhắn ====
+async function sendLarkMessage(content) {
+    const token = await getTenantAccessToken();
+    await fetch(`https://open.larksuite.com/open-apis/message/v4/send/`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            chat_id: 'CHAT_ID_CỦA_BẠN',
+            msg_type: 'text',
+            content: { text: content }
+        })
+    });
+}
+
+// ==== Hàm kiểm tra SUM cột G ====
 async function checkInventorySumChange() {
-  try {
-    const token = await getAppAccessToken();
-    if (!token) throw new Error('Không lấy được app access token');
+    try {
+        const rows = await getAllSheetRows(SHEET_TOKEN);
 
-    const values = await getAllSheetRows(token); // 2D array
-    if (!values || values.length < 2) {
-      console.log('Không có dữ liệu sheet hoặc thiếu header');
-      return;
+        // Xác định index cột G (theo header)
+        const header = rows[0];
+        const colGIndex = header.findIndex(h => h.includes('实时可售库存') || h.includes('Số lượng tồn kho'));
+        if (colGIndex === -1) throw new Error('Không tìm thấy cột tồn kho');
+
+        // Tính tổng tồn kho
+        let sum = 0;
+        for (let i = 1; i < rows.length; i++) {
+            const val = parseFloat(rows[i][colGIndex] || 0);
+            sum += isNaN(val) ? 0 : val;
+        }
+
+        console.log(`Đã đổ số: { current: '${sum}', last: '${lastInventorySum}' }`);
+
+        if (lastInventorySum !== null && lastInventorySum !== sum) {
+            console.log('🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...');
+            await sendLarkMessage(`Đã đổ số - Tồn kho mới: ${sum}`);
+            await sendTop5ChangeProducts();
+        }
+
+        lastInventorySum = sum;
+    } catch (err) {
+        console.error('Lỗi checkInventorySumChange:', err.message);
     }
-
-    const headers = values[0].map(h => (h || '').toString().trim());
-    const colInventoryIdx = headers.findIndex(h => h === '实时可售库存/Số lượng tồn kho' || h.toLowerCase().includes('实时可售库存'));
-    if (colInventoryIdx === -1) {
-      console.log('Không tìm thấy cột tồn kho (G) trong header:', headers.join(' | '));
-      return;
-    }
-
-    // compute sum of column G
-    let sum = 0;
-    for (let i = 1; i < values.length; i++) {
-      sum += _toNum(values[i][colInventoryIdx]);
-    }
-
-    console.log('Đã đổ số:', { current: String(sum), last: String(lastInventorySum) });
-
-    if (lastInventorySum === null) {
-      lastInventorySum = sum;
-      return;
-    }
-
-    if (sum !== lastInventorySum) {
-      // message 1
-      const message1 = `🔹 Đã đổ số. Tổng tồn kho (cột G) hiện tại: ${sum}`;
-      console.log('Gửi API tới BOT (notify):', { groups: GROUP_CHAT_IDS, message1 });
-      await sendMessageToGroups(token, message1);
-
-      // message 2: analyze and send top changes
-      await sendTopChanges(token, values, headers);
-
-      lastInventorySum = sum;
-    }
-  } catch (err) {
-    console.log('Lỗi checkInventorySumChange:', err.response?.data || err.message || err);
-  }
 }
 
-async function sendTopChanges(token, values, headers) {
-  try {
-    // If values/headers not provided, fetch them
-    let vals = values;
-    let hdr = headers;
-    if (!vals || !hdr) {
-      vals = await getAllSheetRows(token);
-      if (!vals || vals.length < 2) return;
-      hdr = vals[0].map(h => (h || '').toString().trim());
-    } else {
-      hdr = hdr.map(h => (h || '').toString().trim());
+// ==== Hàm lấy 5 sản phẩm tăng giảm mạnh nhất ====
+async function sendTop5ChangeProducts() {
+    try {
+        const rows = await getAllSheetRows(SHEET_TOKEN);
+        const header = rows[0];
+
+        const colProduct = header.findIndex(h => h.includes('Product Name'));
+        const colTotalSale = header.findIndex(h => h.includes('Tổng sale') || h.includes('销量总计'));
+        const colO = header.findIndex(h => h.includes('Sale 2 ngày trước') || h.includes('前第2天销量'));
+        const colP = header.findIndex(h => h.includes('Sale ngày hôm qua') || h.includes('昨日销量'));
+
+        if ([colProduct, colTotalSale, colO, colP].includes(-1)) {
+            throw new Error('Không tìm thấy đủ 4 cột yêu cầu');
+        }
+
+        const products = [];
+        for (let i = 1; i < rows.length; i++) {
+            const totalSale = parseFloat(rows[i][colTotalSale] || 0);
+            if (totalSale > 100) {
+                const saleO = parseFloat(rows[i][colO] || 0);
+                const saleP = parseFloat(rows[i][colP] || 0);
+                const changeRate = saleO === 0 ? (saleP > 0 ? Infinity : 0) : ((saleP - saleO) / saleO) * 100;
+                products.push({
+                    name: rows[i][colProduct],
+                    saleO,
+                    saleP,
+                    changeRate
+                });
+            }
+        }
+
+        const topIncrease = [...products].sort((a, b) => b.changeRate - a.changeRate).slice(0, 5);
+        const topDecrease = [...products].sort((a, b) => a.changeRate - b.changeRate).slice(0, 5);
+
+        let msg = `📈 Top 5 SKU tăng mạnh:\n` +
+            topIncrease.map(p => `${p.name}: ${p.saleO} → ${p.saleP} (${p.changeRate.toFixed(2)}%)`).join('\n') +
+            `\n\n📉 Top 5 SKU giảm mạnh:\n` +
+            topDecrease.map(p => `${p.name}: ${p.saleO} → ${p.saleP} (${p.changeRate.toFixed(2)}%)`).join('\n');
+
+        await sendLarkMessage(msg);
+    } catch (err) {
+        console.error('Lỗi sendTop5ChangeProducts:', err.message);
     }
-
-    const findHeaderIndex = candidates => {
-      const low = candidates.map(c => c.toString().trim().toLowerCase());
-      for (let i = 0; i < hdr.length; i++) {
-        const hh = (hdr[i] || '').toString().trim().toLowerCase();
-        if (low.includes(hh)) return i;
-        for (const c of low) if (hh.includes(c)) return i;
-      }
-      return -1;
-    };
-
-    const idxName = findHeaderIndex(['Product Name', 'product name']);
-    const idxTotalSale = findHeaderIndex(['时间段内销量总计', '时间段内销量总计/tổng sale', '总 sale', 'tổng sale trong thời gian chọn']);
-    const idxSale2 = findHeaderIndex(['前第2天销量', '前第2天销量/sale 2', 'sale 2']);
-    const idxSale1 = findHeaderIndex(['昨日销量', '昨日销量/sale', 'sale ngày hôm qua', 'sale hôm qua']);
-
-    if ([idxName, idxTotalSale, idxSale2, idxSale1].includes(-1)) {
-      console.log('Thiếu một hoặc nhiều cột cần thiết:', { idxName, idxTotalSale, idxSale2, idxSale1 });
-      await sendMessageToGroups(token, '❌ Không tìm thấy đầy đủ các cột cần thiết để phân tích Top SKU.');
-      return;
-    }
-
-    const products = [];
-    for (let i = 1; i < vals.length; i++) {
-      const row = vals[i];
-      const name = row[idxName] || '(NoName)';
-      const totalSale = _toNum(row[idxTotalSale]);
-      if (totalSale <= 100) continue;
-      const o = _toNum(row[idxSale2]);
-      const p = _toNum(row[idxSale1]);
-      let ratio;
-      if (o > 0) ratio = ((p - o) / o) * 100;
-      else if (p > 0) ratio = Number.POSITIVE_INFINITY;
-      else ratio = 0;
-      products.push({ name: String(name).trim(), totalSale, o, p, ratio });
-    }
-
-    if (products.length === 0) {
-      await sendMessageToGroups(token, 'Không có sản phẩm nào thỏa điều kiện (Tổng sale > 100).');
-      return;
-    }
-
-    const topInc = [...products].sort((a, b) => {
-      if (a.ratio === b.ratio) return 0;
-      if (a.ratio === Number.POSITIVE_INFINITY) return -1;
-      if (b.ratio === Number.POSITIVE_INFINITY) return 1;
-      return b.ratio - a.ratio;
-    }).slice(0, 5);
-
-    const topDec = [...products].sort((a, b) => a.ratio - b.ratio).slice(0, 5);
-
-    const fmt = p => (p.ratio === Number.POSITIVE_INFINITY ? `∞ (từ ${p.o} → ${p.p})` : `${p.ratio.toFixed(1)}% (từ ${p.o} → ${p.p})`);
-
-    let message = `📊 Top biến động (lọc Tổng sale > 100):\n\n📈 Top 5 tăng mạnh nhất:\n`;
-    topInc.forEach((p, i) => {
-      message += `${i + 1}. ${p.name} — ${fmt(p)}\n`;
-    });
-    message += `\n📉 Top 5 giảm mạnh nhất:\n`;
-    topDec.forEach((p, i) => {
-      message += `${i + 1}. ${p.name} — ${fmt(p)}\n`;
-    });
-
-    await sendMessageToGroups(token, message);
-  } catch (err) {
-    console.log('Lỗi sendTopChanges:', err.response?.data || err.message || err);
-    try { await sendMessageToGroups(token, `❌ Lỗi khi phân tích Top SKU: ${err.message || err}`); } catch {}
-  }
 }
 
-// ------------------ rest of original handlers (unchanged) ------------------
-
-process.on('SIGTERM', () => {
-  pendingTasks.forEach((task, messageId) => replyToLark(messageId, 'Xử lý bị gián đoạn.', task.mentionUserId, task.mentionUserName));
-  process.exit(0);
-});
-
-setInterval(() => {
-  conversationMemory.clear();
-}, 2 * 60 * 60 * 1000);
+// ==== Chạy kiểm tra mỗi 5 phút ====
+setInterval(checkInventorySumChange, 5 * 60 * 1000);
 
 app.post('/webhook', async (req, res) => {
   try {
