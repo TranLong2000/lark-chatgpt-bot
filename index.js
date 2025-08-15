@@ -254,6 +254,31 @@ async function sendTextMessage(token, chatId, text) {
   }
 }
 
+// Tính tổng cột G của sheet và trả về dạng string
+async function getCellB2Value(token) {
+  try {
+    // Đọc toàn bộ cột G của sheet ID đang dùng
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!G:G`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 20000,
+    });
+
+    const values = resp.data?.data?.valueRange?.values || [];
+    const sum = values.reduce((acc, row) => {
+      const raw = (row && row[0] != null) ? String(row[0]) : '';
+      const num = parseFloat(raw.replace(/[, ]/g, '')); // xử lý số có dấu phẩy
+      return Number.isFinite(num) ? acc + num : acc;
+    }, 0);
+
+    // Trả về string để so sánh như logic cũ của bạn
+    return String(sum);
+  } catch (e) {
+    console.log('Lỗi getCellB2Value:', e.response?.data || e.message);
+    return null;
+  }
+}
+
 // ========== Hàm "Đã đổ số" (tách 2 lần gửi) ==========
 async function checkB2ValueChange() {
   try {
