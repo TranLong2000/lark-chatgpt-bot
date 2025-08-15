@@ -26,7 +26,6 @@ const SHEET_MAPPINGS = {
   'PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
 };
 
-let lastB2Value = null;
 const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = '48e2fd';
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
@@ -197,13 +196,20 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
   }
 }
 
-// Hàm lấy tenant_access_token từ Lark API
+// ================== CONFIG ==================
+let lastInventorySum = null;
+let hasAnnouncedDump = false;
+
+// ================== HÀM LẤY TOKEN LARK ==================
 async function getTenantAccessToken() {
     try {
-        const res = await axios.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-            app_id: process.env.LARK_APP_ID,
-            app_secret: process.env.LARK_APP_SECRET
-        });
+        const res = await axios.post(
+            'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',
+            {
+                app_id: process.env.LARK_APP_ID,
+                app_secret: process.env.LARK_APP_SECRET
+            }
+        );
         return res.data.tenant_access_token;
     } catch (error) {
         console.error('Lỗi khi lấy tenant_access_token:', error);
@@ -211,104 +217,113 @@ async function getTenantAccessToken() {
     }
 }
 
-// Hàm lấy dữ liệu sheet từ Lark
-async function getAllSheetRows(spreadsheetToken, sheetId) {
-    const token = await getTenantAccessToken();
-    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${spreadsheetToken}/sheets/${sheetId}/values`;
-    const res = await axios.get(url, {
-        headers: {
-            Authorization: `Bearer ${token}`
-        }
-    });
-    return res.data.data.valueRange.values;
-}
-
-// Hàm kiểm tra thay đổi tổng cột G
-async function checkInventorySumChange() {
+// ================== HÀM CHECK VÀ GỬI TIN ==================
+async function checkInventoryAndSendStats() {
     try {
-        const rows = await getAllSheetRows(SPREADSHEET_TOKEN, SHEET_ID);
-        if (!rows || rows.length < 2) return;
+        const token = await getTenantAccessToken();
 
+        // 1. Lấy metadata cột
+        const metaRes = await axios.get(
+            `https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN}/metainfo`,
+            {
+                headers: { Authorization: `Bearer ${token}` }
+            }
+        );
+        const columns = metaRes.data.data.sheets[0].column_list;
+        const colMap = {};
+        columns.forEach((col, idx) => {
+            colMap[col.name] = col.col_index; // Map tên -> index (0-based)
+        });
+
+        // 2. Lấy dữ liệu toàn sheet
+        const dataRes = await axios.get(
+            `https://open.feishu.cn/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN}/values`,
+            {
+                headers: { Authorization: `Bearer ${token}` }
+            }
+        );
+        const rows = dataRes.data.data.valueRange.values;
         const header = rows[0];
-        const inventoryColIndex = header.indexOf("实时可售库存/Số lượng tồn kho");
-        const productColIndex = header.indexOf("Product Name");
-        const totalSaleColIndex = header.indexOf("时间段内销量总计/Tổng sale trong thời gian chọn");
-        const sale2DaysAgoIndex = header.indexOf("前第2天销量/Sale 2 ngày trước");
-        const saleYesterdayIndex = header.indexOf("昨日销量/Sale ngày hôm qua");
+        const dataRows = rows.slice(1);
 
-        if (inventoryColIndex === -1) throw new Error("Không tìm thấy cột tồn kho");
-        if ([productColIndex, totalSaleColIndex, sale2DaysAgoIndex, saleYesterdayIndex].includes(-1))
-            throw new Error("Thiếu 1 trong các cột cần thiết");
-
-        // Tính tổng tồn kho
-        const totalInventory = rows.slice(1).reduce((sum, row) => {
-            const val = parseFloat(row[inventoryColIndex] || 0);
+        // 3. SUM cột G (theo tên cột tồn kho)
+        const inventoryIndex = colMap['实时可售库存/Số lượng tồn kho'];
+        const inventorySum = dataRows.reduce((sum, row) => {
+            const val = parseFloat(row[inventoryIndex] || 0);
             return sum + (isNaN(val) ? 0 : val);
         }, 0);
 
-        console.log(`Tổng tồn kho hiện tại: ${totalInventory}, Lần trước: ${lastInventorySum}`);
-
-        // Nếu lần đầu hoặc tồn kho thay đổi → xử lý
-        if (lastInventorySum !== null && totalInventory !== lastInventorySum) {
-            console.log("🔹 Phát hiện thay đổi tồn kho → bắt đầu xử lý dữ liệu");
-
-            // Lọc sản phẩm có doanh số > 100
-            const filtered = rows.slice(1)
-                .map(row => ({
-                    product: row[productColIndex],
-                    totalSale: parseFloat(row[totalSaleColIndex] || 0),
-                    sale2DaysAgo: parseFloat(row[sale2DaysAgoIndex] || 0),
-                    saleYesterday: parseFloat(row[saleYesterdayIndex] || 0),
-                    changeRate: ((parseFloat(row[saleYesterdayIndex] || 0) - parseFloat(row[sale2DaysAgoIndex] || 0)) / (parseFloat(row[sale2DaysAgoIndex] || 1))) * 100
-                }))
-                .filter(item => item.totalSale > 100);
-
-            // 5 sản phẩm tăng mạnh nhất
-            const topIncrease = [...filtered].sort((a, b) => b.changeRate - a.changeRate).slice(0, 5);
-            // 5 sản phẩm giảm mạnh nhất
-            const topDecrease = [...filtered].sort((a, b) => a.changeRate - b.changeRate).slice(0, 5);
-
-            let message = `📊 **Báo cáo biến động doanh số**\n`;
-            message += `Tồn kho thay đổi từ ${lastInventorySum} → ${totalInventory}\n\n`;
-            message += `🔺 **Top 5 Tăng**:\n`;
-            topIncrease.forEach((p, i) => {
-                message += `${i + 1}. ${p.product} — ${p.changeRate.toFixed(2)}%\n`;
-            });
-            message += `\n🔻 **Top 5 Giảm**:\n`;
-            topDecrease.forEach((p, i) => {
-                message += `${i + 1}. ${p.product} — ${p.changeRate.toFixed(2)}%\n`;
-            });
-
-            // Gửi vào các group chat
-            for (const chatId of GROUP_CHAT_IDS) {
-                await sendLarkMessage(chatId, message);
-            }
+        // 4. Nếu sum thay đổi → gửi "Đã đổ số"
+        if (lastInventorySum === null || inventorySum !== lastInventorySum) {
+            lastInventorySum = inventorySum;
+            hasAnnouncedDump = true;
+            await sendLarkMessage(`📊 Đã đổ số! Tồn kho hiện tại: ${inventorySum}`);
+            return; // Kết thúc, chờ lần sau xử lý top 5
         }
 
-        // Cập nhật giá trị lần trước
-        lastInventorySum = totalInventory;
+        // 5. Nếu đã gửi "Đã đổ số" → gửi top 5 tăng giảm
+        if (hasAnnouncedDump) {
+            hasAnnouncedDump = false; // reset
+
+            const nameIdx = colMap['Product Name'];
+            const totalSaleIdx = colMap['时间段内销量总计/Tổng sale trong thời gian chọn'];
+            const sale2Idx = colMap['前第2天销量/Sale 2 ngày trước'];
+            const sale1Idx = colMap['昨日销量/Sale ngày hôm qua'];
+
+            const filtered = dataRows
+                .map(row => {
+                    const totalSale = parseFloat(row[totalSaleIdx] || 0);
+                    const sale2 = parseFloat(row[sale2Idx] || 0);
+                    const sale1 = parseFloat(row[sale1Idx] || 0);
+                    const change = sale2 === 0 ? 0 : ((sale1 - sale2) / sale2) * 100;
+                    return {
+                        name: row[nameIdx],
+                        totalSale,
+                        sale2,
+                        sale1,
+                        change
+                    };
+                })
+                .filter(item => item.totalSale > 100);
+
+            const topIncrease = [...filtered].sort((a, b) => b.change - a.change).slice(0, 5);
+            const topDecrease = [...filtered].sort((a, b) => a.change - b.change).slice(0, 5);
+
+            let msg = `📈 Top 5 tăng mạnh:\n`;
+            topIncrease.forEach(item => {
+                msg += `• ${item.name}: ${item.change.toFixed(2)}%\n`;
+            });
+
+            msg += `\n📉 Top 5 giảm mạnh:\n`;
+            topDecrease.forEach(item => {
+                msg += `• ${item.name}: ${item.change.toFixed(2)}%\n`;
+            });
+
+            await sendLarkMessage(msg);
+        }
 
     } catch (err) {
-        console.error("Lỗi checkInventorySumChange:", err);
+        console.error('Lỗi checkInventoryAndSendStats:', err);
     }
 }
 
-// Hàm gửi tin nhắn vào Lark group
-async function sendLarkMessage(chatId, text) {
-    const token = await getTenantAccessToken();
-    await axios.post("https://open.larksuite.com/open-apis/im/v1/messages", {
-        receive_id: chatId,
-        content: JSON.stringify({ text }),
-        msg_type: "text"
-    }, {
-        headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json"
-        },
-        params: {
-            receive_id_type: "chat_id"
-        }
-    });
+// ================== HÀM GỬI TIN NHẮN ==================
+async function sendLarkMessage(text) {
+    try {
+        await axios.post(
+            `https://open.feishu.cn/open-apis/message/v4/send/`,
+            {
+                open_chat_id: process.env.LARK_CHAT_ID,
+                msg_type: 'text',
+                content: { text }
+            },
+            {
+                headers: { Authorization: `Bearer ${await getTenantAccessToken()}` }
+            }
+        );
+    } catch (error) {
+        console.error('Lỗi gửi tin nhắn:', error);
+    }
 }
 
 function updateConversationMemory(chatId, role, content) {
