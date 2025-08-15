@@ -203,26 +203,19 @@ function _toNum(v) {
   const n = parseFloat(String(v).replace(/[,\s]/g, ''));
   return Number.isFinite(n) ? n : 0;
 }
-function _norm(s) {
-  return String(s || '').trim().toLowerCase();
-}
-function _findKey(sampleObj, candidates) {
-  const keys = Object.keys(sampleObj || {});
-  for (const k of keys) {
-    const nk = _norm(k);
-    if (candidates.some(c => nk.includes(c))) return k; // trả về tên key gốc
-  }
-  return null;
-}
 
 // Đọc toàn bộ dữ liệu Sheet và trả về mảng object {header: value}
-async function getAllSheetRows(token, spreadsheetToken, sheetId) {
-  // Dùng chính getSheetData bạn đã có sẵn
-  // Lưu ý range có kèm sheetId: `${sheetId}!A:ZZ` để lấy đủ cột
-  const values = await getSheetData(spreadsheetToken, token, `${sheetId}!A:ZZ`);
-  if (!values || values.length < 2) return [];
+async function getAllSheetRows(token) {
+  const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  const data = await res.json();
+  const values = data.data?.valueRange?.values || [];
+  if (values.length < 2) return [];
 
-  const headers = values[0].map(h => (h || '').toString());
+  const headers = values[0].map(h => (h || '').toString().trim());
   const rows = values.slice(1);
 
   return rows.map(row => {
@@ -232,32 +225,9 @@ async function getAllSheetRows(token, spreadsheetToken, sheetId) {
   });
 }
 
-// Gửi text tới group (đã fix receive_id_type=chat_id)
-async function sendTextMessage(token, chatId, text) {
-  try {
-    await axios.post(
-      `https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`,
-      {
-        receive_id: chatId,
-        content: JSON.stringify({ text }),
-        msg_type: 'text'
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-  } catch (err) {
-    console.log('Lỗi gửi tin nhắn:', err.response?.data || err.message);
-  }
-}
-
-// Tính tổng cột G của sheet và trả về dạng string
+// Hàm lấy tổng cột G
 async function getCellB2Value(token) {
   try {
-    // Đọc toàn bộ cột G của sheet ID đang dùng
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!G:G`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
@@ -266,12 +236,9 @@ async function getCellB2Value(token) {
 
     const values = resp.data?.data?.valueRange?.values || [];
     const sum = values.reduce((acc, row) => {
-      const raw = (row && row[0] != null) ? String(row[0]) : '';
-      const num = parseFloat(raw.replace(/[, ]/g, '')); // xử lý số có dấu phẩy
-      return Number.isFinite(num) ? acc + num : acc;
+      const num = _toNum(row?.[0]);
+      return acc + num;
     }, 0);
-
-    // Trả về string để so sánh như logic cũ của bạn
     return String(sum);
   } catch (e) {
     console.log('Lỗi getCellB2Value:', e.response?.data || e.message);
@@ -279,132 +246,13 @@ async function getCellB2Value(token) {
   }
 }
 
-// ========== Hàm "Đã đổ số" (tách 2 lần gửi) ==========
-async function checkB2ValueChange() {
-  try {
-    const currentValue = await getCellB2Value();
-    console.log(`Đã đổ số: { current: '${currentValue}', last: '${lastB2Value}' }`);
-
-    if (lastB2Value === null) {
-      lastB2Value = currentValue;
-      return;
-    }
-
-    if (currentValue !== lastB2Value) {
-      console.log(`🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...`);
-
-      // Bước 1: Gửi thông báo phát hiện
-      await sendMessageToGroups(`🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...`);
-
-      // Bước 2: Lấy dữ liệu sheet và xử lý
-      await processTopIncreaseDecrease();
-
-      lastB2Value = currentValue;
-    }
-  } catch (err) {
-    console.error("Lỗi checkB2ValueChange:", err);
-  }
-}
-
-// Hàm lấy giá trị ô B2
-async function getCellB2Value() {
-  const res = await fetch(`https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${await getTenantAccessToken()}`
-    }
-  });
-  const data = await res.json();
-  return data.data?.valueRange?.values?.[0]?.[0] || null;
-}
-
-// Hàm xử lý top tăng/giảm
-async function processTopIncreaseDecrease() {
-  try {
-    const rows = await getAllSheetRows();
-    if (!rows || rows.length === 0) {
-      await sendMessageToGroups("❌ Không lấy được dữ liệu từ Sheet.");
-      return;
-    }
-
-    // Tìm index của các cột theo tên
-    const headerRow = rows[0];
-    const colIndex = {
-      productName: headerRow.indexOf("Product Name"),
-      totalSale: headerRow.indexOf("时间段内销量总计/Tổng sale trong thời gian chọn"),
-      sale2DaysAgo: headerRow.indexOf("前第2天销量/Sale 2 ngày trước"),
-      saleYesterday: headerRow.indexOf("昨日销量/Sale ngày hôm qua")
-    };
-
-    // Kiểm tra tồn tại cột
-    if (Object.values(colIndex).some(idx => idx === -1)) {
-      await sendMessageToGroups("❌ Không tìm thấy một hoặc nhiều cột cần thiết trong Sheet.");
-      return;
-    }
-
-    // Lọc sản phẩm có tổng sale > 100
-    const filteredRows = rows.slice(1).filter(row => {
-      const total = parseFloat(row[colIndex.totalSale]) || 0;
-      return total > 100;
-    });
-
-    // Tính tỷ lệ thay đổi giữa hôm qua và 2 ngày trước
-    const changes = filteredRows.map(row => {
-      const name = row[colIndex.productName] || "N/A";
-      const sale2d = parseFloat(row[colIndex.sale2DaysAgo]) || 0;
-      const sale1d = parseFloat(row[colIndex.saleYesterday]) || 0;
-      let ratio = 0;
-      if (sale2d > 0) {
-        ratio = ((sale1d - sale2d) / sale2d) * 100;
-      } else if (sale1d > 0) {
-        ratio = 100; // Nếu trước đó = 0 mà hôm qua > 0 thì coi như tăng 100%
-      }
-      return { name, sale2d, sale1d, ratio };
-    });
-
-    // Lấy top 5 tăng và giảm
-    const topIncrease = [...changes].sort((a, b) => b.ratio - a.ratio).slice(0, 5);
-    const topDecrease = [...changes].sort((a, b) => a.ratio - b.ratio).slice(0, 5);
-
-    // Format tin nhắn
-    let message = "📈 **Top 5 sản phẩm tăng mạnh nhất:**\n";
-    topIncrease.forEach((p, i) => {
-      message += `${i + 1}. ${p.name} — ${p.sale2d} → ${p.sale1d} (${p.ratio.toFixed(2)}%)\n`;
-    });
-
-    message += "\n📉 **Top 5 sản phẩm giảm mạnh nhất:**\n";
-    topDecrease.forEach((p, i) => {
-      message += `${i + 1}. ${p.name} — ${p.sale2d} → ${p.sale1d} (${p.ratio.toFixed(2)}%)\n`;
-    });
-
-    // Gửi tin nhắn kết quả
-    await sendMessageToGroups(message);
-
-  } catch (err) {
-    console.error("Lỗi processTopIncreaseDecrease:", err);
-    await sendMessageToGroups(`❌ Lỗi xử lý dữ liệu: ${err.message}`);
-  }
-}
-
-// Hàm lấy toàn bộ dữ liệu sheet
-async function getAllSheetRows() {
-  const res = await fetch(`https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': `Bearer ${await getTenantAccessToken()}`
-    }
-  });
-  const data = await res.json();
-  return data.data?.valueRange?.values || [];
-}
-
-// Hàm gửi tin nhắn đến tất cả nhóm
-async function sendMessageToGroups(text) {
+// Hàm gửi tin nhắn đến tất cả group
+async function sendMessageToGroups(token, text) {
   for (const chatId of GROUP_CHAT_IDS) {
     await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${await getTenantAccessToken()}`,
+        'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -413,6 +261,70 @@ async function sendMessageToGroups(text) {
         content: JSON.stringify({ text })
       })
     });
+  }
+}
+
+// Hàm xử lý top tăng/giảm
+async function processTopIncreaseDecrease(token) {
+  const rows = await getAllSheetRows(token);
+  if (rows.length === 0) {
+    await sendMessageToGroups(token, "❌ Không lấy được dữ liệu từ Sheet.");
+    return;
+  }
+
+  const filtered = rows.filter(r => _toNum(r["时间段内销量总计/Tổng sale trong thời gian chọn"]) > 100);
+
+  const changes = filtered.map(r => {
+    const name = r["Product Name"] || "N/A";
+    const sale2d = _toNum(r["前第2天销量/Sale 2 ngày trước"]);
+    const sale1d = _toNum(r["昨日销量/Sale ngày hôm qua"]);
+    let ratio = 0;
+    if (sale2d > 0) {
+      ratio = ((sale1d - sale2d) / sale2d) * 100;
+    } else if (sale1d > 0) {
+      ratio = 100;
+    }
+    return { name, sale2d, sale1d, ratio };
+  });
+
+  const topIncrease = [...changes].sort((a, b) => b.ratio - a.ratio).slice(0, 5);
+  const topDecrease = [...changes].sort((a, b) => a.ratio - b.ratio).slice(0, 5);
+
+  let message = "📈 **Top 5 sản phẩm tăng mạnh nhất:**\n";
+  topIncrease.forEach((p, i) => {
+    message += `${i + 1}. ${p.name} — ${p.sale2d} → ${p.sale1d} (${p.ratio.toFixed(2)}%)\n`;
+  });
+
+  message += "\n📉 **Top 5 sản phẩm giảm mạnh nhất:**\n";
+  topDecrease.forEach((p, i) => {
+    message += `${i + 1}. ${p.name} — ${p.sale2d} → ${p.sale1d} (${p.ratio.toFixed(2)}%)\n`;
+  });
+
+  await sendMessageToGroups(token, message);
+}
+
+// Hàm "Đã đổ số"
+let lastB2Value = null;
+async function checkB2ValueChange() {
+  try {
+    const token = await getTenantAccessToken();
+    const currentValue = await getCellB2Value(token);
+    console.log(`Đã đổ số: { current: '${currentValue}', last: '${lastB2Value}' }`);
+
+    if (lastB2Value === null) {
+      lastB2Value = currentValue;
+      return;
+    }
+
+    if (currentValue !== lastB2Value) {
+      // Lần gửi 1
+      await sendMessageToGroups(token, `🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...`);
+      // Lần gửi 2
+      await processTopIncreaseDecrease(token);
+      lastB2Value = currentValue;
+    }
+  } catch (err) {
+    console.error("Lỗi checkB2ValueChange:", err);
   }
 }
 
