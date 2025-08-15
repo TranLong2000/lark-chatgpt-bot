@@ -282,110 +282,137 @@ async function getCellB2Value(token) {
 // ========== Hàm "Đã đổ số" (tách 2 lần gửi) ==========
 async function checkB2ValueChange() {
   try {
-    const token = await getAppAccessToken();
-    const currentB2Value = await getCellB2Value(token);
+    const currentValue = await getCellB2Value();
+    console.log(`Đã đổ số: { current: '${currentValue}', last: '${lastB2Value}' }`);
 
-    console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
-
-    // Chỉ trigger khi có thay đổi (và không phải lần đầu)
-    if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-      // ===== 1) Gửi thông báo LẦN 1 ngay lập tức =====
-      const firstMsg = `📢 Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
-      for (const chatId of GROUP_CHAT_IDS) {
-        await sendTextMessage(token, chatId, firstMsg);
-      }
-
-      console.log('🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...');
-
-      // ===== 2) Xử lý dữ liệu Sheet rồi gửi LẦN 2 =====
-      try {
-        const rows = await getAllSheetRows(token, SPREADSHEET_TOKEN, SHEET_ID);
-        if (!rows.length) {
-          for (const chatId of GROUP_CHAT_IDS) {
-            await sendTextMessage(token, chatId, 'Không có dữ liệu sheet để phân tích.');
-          }
-        } else {
-          // Xác định key cột bằng tên (song ngữ)
-          const sample = rows.find(r => r && Object.keys(r).length) || {};
-          const keyName   = _findKey(sample, ['商品名称', '产品名称', '商品名', '品名', 'tên sản phẩm', 'product name', 'sku', 'mã hàng']);
-          const keyY      = _findKey(sample, ['昨日销量', 'sale ngày hôm qua']);
-          const keyT      = _findKey(sample, ['今日销量', 'doanh số bán hàng hôm nay']);
-          const keyTotal  = _findKey(sample, ['时间段内销量总计', 'tổng sale trong thời gian chọn']);
-
-          if (!keyName || !keyY || !keyT || !keyTotal) {
-            console.log('Thiếu cột bắt buộc:', { keyName, keyY, keyT, keyTotal });
-            for (const chatId of GROUP_CHAT_IDS) {
-              await sendTextMessage(token, chatId, 'Thiếu cột bắt buộc (Tên SP / Hôm qua / Hôm nay / Tổng giai đoạn).');
-            }
-          } else {
-            // Lọc tổng giai đoạn > 100
-            const filtered = rows.filter(r => _toNum(r[keyTotal]) > 100);
-
-            // Tính tỷ lệ thay đổi (%) dựa trên 今日销量 vs 昨日销量
-            const withRate = filtered.map(r => {
-              const name = (r[keyName] || '').toString().trim() || '(Không tên)';
-              const y = _toNum(r[keyY]);
-              const t = _toNum(r[keyT]);
-              // Tránh chia 0: nếu hôm qua = 0 và hôm nay > 0 → set 100%
-              const rate = y === 0 ? (t > 0 ? 100 : 0) : ((t - y) / y) * 100;
-              return { name, yesterday: y, today: t, total: _toNum(r[keyTotal]), rate };
-            });
-
-            if (!withRate.length) {
-              for (const chatId of GROUP_CHAT_IDS) {
-                await sendTextMessage(token, chatId, 'Không có sản phẩm nào (Tổng giai đoạn > 100) để phân tích.');
-              }
-            } else {
-              const topIncrease = [...withRate].sort((a, b) => b.rate - a.rate).slice(0, 5);
-              const topDecrease = [...withRate].sort((a, b) => a.rate - b.rate).slice(0, 5);
-
-              let secondMsg = '📊 Top biến động (lọc "Tổng sale trong thời gian chọn" > 100)\n';
-              secondMsg += '🔺 Tăng mạnh nhất:\n';
-              topIncrease.forEach((p, i) => {
-                const sign = p.rate >= 0 ? '+' : '';
-                secondMsg += `${i + 1}. ${p.name} — ${sign}${p.rate.toFixed(1)}% (Hqua: ${p.yesterday}, Hnay: ${p.today}, Tổng: ${p.total})\n`;
-              });
-              secondMsg += '\n🔻 Giảm mạnh nhất:\n';
-              topDecrease.forEach((p, i) => {
-                const sign = p.rate >= 0 ? '+' : '';
-                secondMsg += `${i + 1}. ${p.name} — ${sign}${p.rate.toFixed(1)}% (Hqua: ${p.yesterday}, Hnay: ${p.today}, Tổng: ${p.total})\n`;
-              });
-
-              for (const chatId of GROUP_CHAT_IDS) {
-                await sendTextMessage(token, chatId, secondMsg.trim());
-              }
-            }
-          }
-        }
-      } catch (e2) {
-        console.log('Lỗi xử lý dữ liệu:', e2.response?.data || e2.message);
-      }
+    if (lastB2Value === null) {
+      lastB2Value = currentValue;
+      return;
     }
 
-    // Cập nhật lastB2Value sau cùng
-    lastB2Value = currentB2Value;
+    if (currentValue !== lastB2Value) {
+      console.log(`🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...`);
+
+      // Bước 1: Gửi thông báo phát hiện
+      await sendMessageToGroups(`🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...`);
+
+      // Bước 2: Lấy dữ liệu sheet và xử lý
+      await processTopIncreaseDecrease();
+
+      lastB2Value = currentValue;
+    }
   } catch (err) {
-    console.log('Lỗi checkB2ValueChange:', err.message);
+    console.error("Lỗi checkB2ValueChange:", err);
   }
 }
-async function sendGroupMessage(token, chatId, text) {
+
+// Hàm lấy giá trị ô B2
+async function getCellB2Value() {
+  const res = await fetch(`https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!B2`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${await getTenantAccessToken()}`
+    }
+  });
+  const data = await res.json();
+  return data.data?.valueRange?.values?.[0]?.[0] || null;
+}
+
+// Hàm xử lý top tăng/giảm
+async function processTopIncreaseDecrease() {
   try {
-    await axios.post(
-      `https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`,
-      {
-        receive_id: chatId,
-        content: JSON.stringify({ text }),
-        msg_type: 'text'
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+    const rows = await getAllSheetRows();
+    if (!rows || rows.length === 0) {
+      await sendMessageToGroups("❌ Không lấy được dữ liệu từ Sheet.");
+      return;
+    }
+
+    // Tìm index của các cột theo tên
+    const headerRow = rows[0];
+    const colIndex = {
+      productName: headerRow.indexOf("Product Name"),
+      totalSale: headerRow.indexOf("时间段内销量总计/Tổng sale trong thời gian chọn"),
+      sale2DaysAgo: headerRow.indexOf("前第2天销量/Sale 2 ngày trước"),
+      saleYesterday: headerRow.indexOf("昨日销量/Sale ngày hôm qua")
+    };
+
+    // Kiểm tra tồn tại cột
+    if (Object.values(colIndex).some(idx => idx === -1)) {
+      await sendMessageToGroups("❌ Không tìm thấy một hoặc nhiều cột cần thiết trong Sheet.");
+      return;
+    }
+
+    // Lọc sản phẩm có tổng sale > 100
+    const filteredRows = rows.slice(1).filter(row => {
+      const total = parseFloat(row[colIndex.totalSale]) || 0;
+      return total > 100;
+    });
+
+    // Tính tỷ lệ thay đổi giữa hôm qua và 2 ngày trước
+    const changes = filteredRows.map(row => {
+      const name = row[colIndex.productName] || "N/A";
+      const sale2d = parseFloat(row[colIndex.sale2DaysAgo]) || 0;
+      const sale1d = parseFloat(row[colIndex.saleYesterday]) || 0;
+      let ratio = 0;
+      if (sale2d > 0) {
+        ratio = ((sale1d - sale2d) / sale2d) * 100;
+      } else if (sale1d > 0) {
+        ratio = 100; // Nếu trước đó = 0 mà hôm qua > 0 thì coi như tăng 100%
       }
-    );
+      return { name, sale2d, sale1d, ratio };
+    });
+
+    // Lấy top 5 tăng và giảm
+    const topIncrease = [...changes].sort((a, b) => b.ratio - a.ratio).slice(0, 5);
+    const topDecrease = [...changes].sort((a, b) => a.ratio - b.ratio).slice(0, 5);
+
+    // Format tin nhắn
+    let message = "📈 **Top 5 sản phẩm tăng mạnh nhất:**\n";
+    topIncrease.forEach((p, i) => {
+      message += `${i + 1}. ${p.name} — ${p.sale2d} → ${p.sale1d} (${p.ratio.toFixed(2)}%)\n`;
+    });
+
+    message += "\n📉 **Top 5 sản phẩm giảm mạnh nhất:**\n";
+    topDecrease.forEach((p, i) => {
+      message += `${i + 1}. ${p.name} — ${p.sale2d} → ${p.sale1d} (${p.ratio.toFixed(2)}%)\n`;
+    });
+
+    // Gửi tin nhắn kết quả
+    await sendMessageToGroups(message);
+
   } catch (err) {
-    console.log('Lỗi gửi tin nhắn nhóm:', err.response?.data || err.message);
+    console.error("Lỗi processTopIncreaseDecrease:", err);
+    await sendMessageToGroups(`❌ Lỗi xử lý dữ liệu: ${err.message}`);
+  }
+}
+
+// Hàm lấy toàn bộ dữ liệu sheet
+async function getAllSheetRows() {
+  const res = await fetch(`https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${await getTenantAccessToken()}`
+    }
+  });
+  const data = await res.json();
+  return data.data?.valueRange?.values || [];
+}
+
+// Hàm gửi tin nhắn đến tất cả nhóm
+async function sendMessageToGroups(text) {
+  for (const chatId of GROUP_CHAT_IDS) {
+    await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${await getTenantAccessToken()}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        receive_id: chatId,
+        msg_type: "text",
+        content: JSON.stringify({ text })
+      })
+    });
   }
 }
 
