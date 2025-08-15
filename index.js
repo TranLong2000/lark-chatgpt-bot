@@ -197,134 +197,104 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
   }
 }
 
-// ========== Helpers ==========
-function _toNum(v) {
-  if (v === undefined || v === null) return 0;
-  const n = parseFloat(String(v).replace(/[,\s]/g, ''));
-  return Number.isFinite(n) ? n : 0;
-}
-
-// Đọc toàn bộ dữ liệu Sheet và trả về mảng object {header: value}
-async function getAllSheetRows(token) {
-  const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}`;
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { 'Authorization': `Bearer ${token}` }
-  });
-  const data = await res.json();
-  const values = data.data?.valueRange?.values || [];
-  if (values.length < 2) return [];
-
-  const headers = values[0].map(h => (h || '').toString().trim());
-  const rows = values.slice(1);
-
-  return rows.map(row => {
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = row[i]; });
-    return obj;
-  });
-}
-
-// Hàm lấy tổng cột G
-async function getCellB2Value(token) {
-  try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!G:G`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000,
-    });
-
-    const values = resp.data?.data?.valueRange?.values || [];
-    const sum = values.reduce((acc, row) => {
-      const num = _toNum(row?.[0]);
-      return acc + num;
-    }, 0);
-    return String(sum);
-  } catch (e) {
-    console.log('Lỗi getCellB2Value:', e.response?.data || e.message);
-    return null;
-  }
-}
-
-// Hàm gửi tin nhắn đến tất cả group
-async function sendMessageToGroups(token, text) {
-  for (const chatId of GROUP_CHAT_IDS) {
-    await fetch(`https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        receive_id: chatId,
-        msg_type: "text",
-        content: JSON.stringify({ text })
-      })
-    });
-  }
-}
-
-// Hàm xử lý top tăng/giảm
-async function processTopIncreaseDecrease(token) {
-  const rows = await getAllSheetRows(token);
-  if (rows.length === 0) {
-    await sendMessageToGroups(token, "❌ Không lấy được dữ liệu từ Sheet.");
-    return;
-  }
-
-  const filtered = rows.filter(r => _toNum(r["时间段内销量总计/Tổng sale trong thời gian chọn"]) > 100);
-
-  const changes = filtered.map(r => {
-    const name = r["Product Name"] || "N/A";
-    const sale2d = _toNum(r["前第2天销量/Sale 2 ngày trước"]);
-    const sale1d = _toNum(r["昨日销量/Sale ngày hôm qua"]);
-    let ratio = 0;
-    if (sale2d > 0) {
-      ratio = ((sale1d - sale2d) / sale2d) * 100;
-    } else if (sale1d > 0) {
-      ratio = 100;
-    }
-    return { name, sale2d, sale1d, ratio };
-  });
-
-  const topIncrease = [...changes].sort((a, b) => b.ratio - a.ratio).slice(0, 5);
-  const topDecrease = [...changes].sort((a, b) => a.ratio - b.ratio).slice(0, 5);
-
-  let message = "📈 **Top 5 sản phẩm tăng mạnh nhất:**\n";
-  topIncrease.forEach((p, i) => {
-    message += `${i + 1}. ${p.name} — ${p.sale2d} → ${p.sale1d} (${p.ratio.toFixed(2)}%)\n`;
-  });
-
-  message += "\n📉 **Top 5 sản phẩm giảm mạnh nhất:**\n";
-  topDecrease.forEach((p, i) => {
-    message += `${i + 1}. ${p.name} — ${p.sale2d} → ${p.sale1d} (${p.ratio.toFixed(2)}%)\n`;
-  });
-
-  await sendMessageToGroups(token, message);
-}
-
-// Hàm "Đã đổ số"
-async function checkB2ValueChange() {
-  try {
+// Hàm lấy dữ liệu sheet từ Lark
+async function getAllSheetRows(spreadsheetToken, sheetId) {
     const token = await getTenantAccessToken();
-    const currentValue = await getCellB2Value(token);
-    console.log(`Đã đổ số: { current: '${currentValue}', last: '${lastB2Value}' }`);
+    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${spreadsheetToken}/sheets/${sheetId}/values`;
+    const res = await axios.get(url, {
+        headers: {
+            Authorization: `Bearer ${token}`
+        }
+    });
+    return res.data.data.valueRange.values;
+}
 
-    if (lastB2Value === null) {
-      lastB2Value = currentValue;
-      return;
-    }
+// Hàm kiểm tra thay đổi tổng cột G
+async function checkInventorySumChange() {
+    try {
+        const rows = await getAllSheetRows(SPREADSHEET_TOKEN, SHEET_ID);
+        if (!rows || rows.length < 2) return;
 
-    if (currentValue !== lastB2Value) {
-      // Lần gửi 1
-      await sendMessageToGroups(token, `🔹 Phát hiện thông báo "Đã đổ số", bắt đầu xử lý...`);
-      // Lần gửi 2
-      await processTopIncreaseDecrease(token);
-      lastB2Value = currentValue;
+        const header = rows[0];
+        const inventoryColIndex = header.indexOf("实时可售库存/Số lượng tồn kho");
+        const productColIndex = header.indexOf("Product Name");
+        const totalSaleColIndex = header.indexOf("时间段内销量总计/Tổng sale trong thời gian chọn");
+        const sale2DaysAgoIndex = header.indexOf("前第2天销量/Sale 2 ngày trước");
+        const saleYesterdayIndex = header.indexOf("昨日销量/Sale ngày hôm qua");
+
+        if (inventoryColIndex === -1) throw new Error("Không tìm thấy cột tồn kho");
+        if ([productColIndex, totalSaleColIndex, sale2DaysAgoIndex, saleYesterdayIndex].includes(-1))
+            throw new Error("Thiếu 1 trong các cột cần thiết");
+
+        // Tính tổng tồn kho
+        const totalInventory = rows.slice(1).reduce((sum, row) => {
+            const val = parseFloat(row[inventoryColIndex] || 0);
+            return sum + (isNaN(val) ? 0 : val);
+        }, 0);
+
+        console.log(`Tổng tồn kho hiện tại: ${totalInventory}, Lần trước: ${lastInventorySum}`);
+
+        // Nếu lần đầu hoặc tồn kho thay đổi → xử lý
+        if (lastInventorySum !== null && totalInventory !== lastInventorySum) {
+            console.log("🔹 Phát hiện thay đổi tồn kho → bắt đầu xử lý dữ liệu");
+
+            // Lọc sản phẩm có doanh số > 100
+            const filtered = rows.slice(1)
+                .map(row => ({
+                    product: row[productColIndex],
+                    totalSale: parseFloat(row[totalSaleColIndex] || 0),
+                    sale2DaysAgo: parseFloat(row[sale2DaysAgoIndex] || 0),
+                    saleYesterday: parseFloat(row[saleYesterdayIndex] || 0),
+                    changeRate: ((parseFloat(row[saleYesterdayIndex] || 0) - parseFloat(row[sale2DaysAgoIndex] || 0)) / (parseFloat(row[sale2DaysAgoIndex] || 1))) * 100
+                }))
+                .filter(item => item.totalSale > 100);
+
+            // 5 sản phẩm tăng mạnh nhất
+            const topIncrease = [...filtered].sort((a, b) => b.changeRate - a.changeRate).slice(0, 5);
+            // 5 sản phẩm giảm mạnh nhất
+            const topDecrease = [...filtered].sort((a, b) => a.changeRate - b.changeRate).slice(0, 5);
+
+            let message = `📊 **Báo cáo biến động doanh số**\n`;
+            message += `Tồn kho thay đổi từ ${lastInventorySum} → ${totalInventory}\n\n`;
+            message += `🔺 **Top 5 Tăng**:\n`;
+            topIncrease.forEach((p, i) => {
+                message += `${i + 1}. ${p.product} — ${p.changeRate.toFixed(2)}%\n`;
+            });
+            message += `\n🔻 **Top 5 Giảm**:\n`;
+            topDecrease.forEach((p, i) => {
+                message += `${i + 1}. ${p.product} — ${p.changeRate.toFixed(2)}%\n`;
+            });
+
+            // Gửi vào các group chat
+            for (const chatId of GROUP_CHAT_IDS) {
+                await sendLarkMessage(chatId, message);
+            }
+        }
+
+        // Cập nhật giá trị lần trước
+        lastInventorySum = totalInventory;
+
+    } catch (err) {
+        console.error("Lỗi checkInventorySumChange:", err);
     }
-  } catch (err) {
-    console.error("Lỗi checkB2ValueChange:", err);
-  }
+}
+
+// Hàm gửi tin nhắn vào Lark group
+async function sendLarkMessage(chatId, text) {
+    const token = await getTenantAccessToken();
+    await axios.post("https://open.larksuite.com/open-apis/im/v1/messages", {
+        receive_id: chatId,
+        content: JSON.stringify({ text }),
+        msg_type: "text"
+    }, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+        },
+        params: {
+            receive_id_type: "chat_id"
+        }
+    });
 }
 
 function updateConversationMemory(chatId, role, content) {
