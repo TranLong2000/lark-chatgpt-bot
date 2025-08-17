@@ -307,7 +307,7 @@ async function analyzeSalesChange(token) {
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  let msg = `📊 So sánh số Sale (${compareLabel}, lọc ${currentCol} > 10):\n`;
+    let msg = `📊 So sánh số Sale (lọc ${currentCol} > 10):\n`;
   if (increases.length) {
     msg += `\n🔥 Top 5 tăng mạnh (Tổng ${totalIncrease} SP tăng):\n`;
     increases.forEach(r => {
