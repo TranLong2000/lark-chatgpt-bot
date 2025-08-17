@@ -234,6 +234,106 @@ async function sendMessageToGroup(token, chatId, messageText) {
   }
 }
 
+async function getCellB2Value(token) {
+  try {
+    const targetColumn = 'G';
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${targetColumn}:${targetColumn}`;
+    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
+    const values = resp.data.data.valueRange.values || [];
+
+    const sum = values.reduce((acc, row) => {
+      const value = row[0];
+      const num = parseFloat(value);
+      return isNaN(num) ? acc : acc + num;
+    }, 0);
+
+    return sum || sum === 0 ? sum.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function sendMessageToGroup(token, chatId, messageText) {
+  try {
+    const payload = {
+      receive_id: chatId,
+      msg_type: 'text',
+      content: JSON.stringify({ text: messageText })
+    };
+    console.log('Gửi API tới BOT:', { chatId, messageText });
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+  } catch (err) {
+    console.log('Lỗi gửi tin nhắn:', err.message);
+  }
+}
+
+// 📌 Hàm lấy dữ liệu 2 cột O (sale 2 ngày trước) và P (sale hôm qua)
+async function getSaleComparisonData(token) {
+  try {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!O:P`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 20000
+    });
+
+    const rows = resp.data.data.valueRange.values || [];
+    let results = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const [salePrev, saleYesterday] = rows[i];
+      const prev = parseFloat(salePrev) || 0;
+      const yesterday = parseFloat(saleYesterday) || 0;
+      if (prev > 0 || yesterday > 0) {
+        const change = prev === 0 ? (yesterday > 0 ? Infinity : 0) : ((yesterday - prev) / prev) * 100;
+        results.push({
+          row: i + 1,
+          prev,
+          yesterday,
+          change
+        });
+      }
+    }
+
+    return results;
+  } catch (err) {
+    console.log('Lỗi lấy dữ liệu O:P:', err.message);
+    return [];
+  }
+}
+
+// 📌 Hàm phân tích top 5 tăng và top 5 giảm
+async function analyzeSalesChange(token) {
+  const salesData = await getSaleComparisonData(token);
+
+  if (!salesData.length) return null;
+
+  // Lọc tăng > 50%
+  const increases = salesData.filter(r => r.change > 50).sort((a, b) => b.change - a.change).slice(0, 5);
+
+  // Lọc giảm < -50%
+  const decreases = salesData.filter(r => r.change < -50).sort((a, b) => a.change - b.change).slice(0, 5);
+
+  let msg = "📊 So sánh số Sale:\n";
+  if (increases.length) {
+    msg += "\n🔥 Top 5 tăng mạnh:\n";
+    increases.forEach(r => {
+      msg += `- Hàng dòng ${r.row}: ${r.prev} → ${r.yesterday} (${r.change.toFixed(1)}%)\n`;
+    });
+  }
+  if (decreases.length) {
+    msg += "\n📉 Top 5 giảm mạnh:\n";
+    decreases.forEach(r => {
+      msg += `- Hàng dòng ${r.row}: ${r.prev} → ${r.yesterday} (${r.change.toFixed(1)}%)\n`;
+    });
+  }
+
+  return msg;
+}
+
 async function checkB2ValueChange() {
   try {
     const token = await getAppAccessToken();
@@ -244,81 +344,6 @@ async function checkB2ValueChange() {
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
       let messageText = `Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
 
-// === Function so sánh số sale và gửi tin nhắn ===
-async function compareAndSendSalesChange(token, chatId) {
-  try {
-    const sheetRangeO = `${process.env.SHEET_ID}!O:O`; // 2 ngày trước
-    const sheetRangeP = `${process.env.SHEET_ID}!P:P`; // hôm qua
-    const sheetRangeSKU = `${process.env.SHEET_ID}!E:E`; // SKU cột E
-
-    const baseUrl = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`;
-
-    // Lấy dữ liệu 3 cột
-    const [respO, respP, respSKU] = await Promise.all([
-      axios.get(`${baseUrl}/${sheetRangeO}`, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }),
-      axios.get(`${baseUrl}/${sheetRangeP}`, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }),
-      axios.get(`${baseUrl}/${sheetRangeSKU}`, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }),
-    ]);
-
-    const valuesO = respO.data.data.valueRange.values || [];
-    const valuesP = respP.data.data.valueRange.values || [];
-    const valuesSKU = respSKU.data.data.valueRange.values || [];
-
-    const changes = [];
-    for (let i = 1; i < valuesSKU.length; i++) { // bỏ header
-      const sku = valuesSKU[i]?.[0] || "";
-      const saleBefore = parseFloat(valuesO[i]?.[0] || "0");
-      const saleYesterday = parseFloat(valuesP[i]?.[0] || "0");
-
-      if (!sku || isNaN(saleBefore) || isNaN(saleYesterday)) continue;
-      if (saleBefore === 0) continue; // tránh chia 0
-
-      const changePct = ((saleYesterday - saleBefore) / saleBefore) * 100;
-      changes.push({ sku, saleBefore, saleYesterday, changePct });
-    }
-
-    // lọc tăng >50%
-    const topIncrease = changes
-      .filter(c => c.changePct > 50)
-      .sort((a, b) => b.changePct - a.changePct)
-      .slice(0, 5);
-
-    // lọc giảm < -50%
-    const topDecrease = changes
-      .filter(c => c.changePct < -50)
-      .sort((a, b) => a.changePct - b.changePct)
-      .slice(0, 5);
-
-    let msg = `📊 So sánh số sale hôm qua vs 2 ngày trước:\n\n`;
-
-    if (topIncrease.length) {
-      msg += `🔥 Top 5 SKU tăng mạnh (>50%):\n`;
-      topIncrease.forEach(c => {
-        msg += `- ${c.sku}: ${c.saleBefore} → ${c.saleYesterday} (${c.changePct.toFixed(1)}%)\n`;
-      });
-      msg += `\n`;
-    } else {
-      msg += `🔥 Không có SKU nào tăng >50%\n\n`;
-    }
-
-    if (topDecrease.length) {
-      msg += `📉 Top 5 SKU giảm mạnh (< -50%):\n`;
-      topDecrease.forEach(c => {
-        msg += `- ${c.sku}: ${c.saleBefore} → ${c.saleYesterday} (${c.changePct.toFixed(1)}%)\n`;
-      });
-    } else {
-      msg += `📉 Không có SKU nào giảm < -50%\n`;
-    }
-
-    // Gửi tin nhắn vào chat
-    await sendTextMessage(chatId, msg);
-    console.log("✅ Đã gửi báo cáo so sánh số sale");
-  } catch (err) {
-    console.error("compareAndSendSalesChange error:", err.message);
-    await sendTextMessage(chatId, "❌ Lỗi khi so sánh số sale");
-  }
-}
-      
       const analysisPrompt = `
         Bạn là một trợ lý AI. Dựa trên thông tin sau:
         - Tổng cột G: ${currentB2Value}
@@ -356,29 +381,16 @@ async function compareAndSendSalesChange(token, chatId) {
         }
       }
 
-      // Gửi tin nhắn tới từng nhóm
+      // Gửi tin nhắn "Đã đổ Stock" tới từng nhóm
       for (const chatId of GROUP_CHAT_IDS) {
-        const sendBody = {
-          receive_id: chatId,
-          content: JSON.stringify({ text: messageText }), // JSON string content
-          msg_type: 'text'
-        };
+        await sendMessageToGroup(token, chatId, messageText);
+      }
 
-        console.log('Gửi API tới BOT:', { chatId, messageText });
-
-        try {
-          await axios.post(
-            `https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=chat_id`,
-            sendBody,
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json'
-              }
-            }
-          );
-        } catch (err) {
-          console.log('Lỗi gửi tin nhắn nhóm:', err.response?.data || err.message);
+      // 📌 Gọi thêm hàm phân tích tăng/giảm ngay sau khi báo "Đã đổ Stock"
+      const salesMsg = await analyzeSalesChange(token);
+      if (salesMsg) {
+        for (const chatId of GROUP_CHAT_IDS) {
+          await sendMessageToGroup(token, chatId, salesMsg);
         }
       }
     }
@@ -388,6 +400,8 @@ async function compareAndSendSalesChange(token, chatId) {
     console.log('Lỗi checkB2ValueChange:', err.message);
   }
 }
+
+
 function updateConversationMemory(chatId, role, content) {
   if (!conversationMemory.has(chatId)) {
     conversationMemory.set(chatId, []);
