@@ -596,6 +596,242 @@ setInterval(() => {
   conversationMemory.clear();
 }, 2 * 60 * 60 * 1000);
 
+// 🔵 [PLAN] Helpers cho phân tích Plan,
+function viNormalize(s) {
+  return (s || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function isNumeric(v) {
+  if (v === null || v === undefined) return false;
+  const n = parseFloat(String(v).toString().replace(/,/g, ''));
+  return !isNaN(n) && isFinite(n);
+}
+
+function toNumber(v) {
+  const n = parseFloat(String(v).toString().replace(/,/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function topNumericColumns(headers, rows, k = 2) {
+  const score = headers.map((_, idx) => {
+    let cnt = 0, total = 0;
+    for (const r of rows) {
+      if (idx < r.length) {
+        total++;
+        if (isNumeric(r[idx])) cnt++;
+      }
+    }
+    return { idx, ratio: total ? cnt / total : 0 };
+  });
+  score.sort((a, b) => b.ratio - a.ratio);
+  return score.slice(0, k).map(x => x.idx);
+}
+
+function findHeaderIndex(headers, name) {
+  const norm = viNormalize(name);
+  for (let i = 0; i < headers.length; i++) {
+    if (viNormalize(headers[i]) === norm) return i;
+  }
+  return -1;
+}
+
+function findLikelyProductColumn(headers) {
+  const candidates = [
+    'sản phẩm','san pham','product','item','sku','tên','ten','name','mã','ma'
+  ].map(viNormalize);
+  for (let i = 0; i < headers.length; i++) {
+    const h = viNormalize(headers[i]);
+    if (candidates.some(c => h.includes(c))) return i;
+  }
+  // fallback: cột có nhiều text khác nhau
+  let best = 0, bestVariety = -1;
+  for (let i = 0; i < headers.length; i++) {
+    const h = viNormalize(headers[i]);
+    if (h.trim() === '') continue;
+    // ưu tiên cột không numeric
+    if (!h.match(/(ngay|date|thang|nam)/)) {
+      best = i; bestVariety = 1;
+      break;
+    }
+  }
+  return best;
+}
+
+function extractKeywords(q) {
+  const cleaned = viNormalize(q).replace(/[^a-z0-9\s%]/g, ' ');
+  const stop = new Set(['la','là','là','bao','nhieu','nhiêu','nhieu%','bao nhieu','bao nhieu%','tang','giảm','giam','so','so ban','ban','co','cua','lao','là','%','theo','ngay','hom','qua','nay','thang','nam','top','tong','trung binh','average','sum','tong cong','plan']);
+  return cleaned.split(/\s+/).filter(w => w && !stop.has(w) && isNaN(w));
+}
+
+function detectIntent(q) {
+  const norm = viNormalize(q);
+  if (/(tang|tăng|giam|giảm).+%/.test(norm)) return 'pct_change';
+  if (/(tang|tăng|giam|giảm)/.test(norm)) return 'diff';
+  if (/(tong|tổng|sum)/.test(norm)) return 'sum';
+  if (/(trung binh|trung bình|avg|average)/.test(norm)) return 'avg';
+  if (/top\s*\d+/.test(norm)) return 'top';
+  return 'auto';
+}
+
+// 🔵 [PLAN] Phân tích câu hỏi Plan, với Sheet
+async function handlePlanQuery(messageId, userMessage, token, mentionUserId, mentionUserName) {
+  try {
+    const query = userMessage.replace(/^Plan,\s*/i, '').trim();
+    const range = `${SHEET_ID}!A:AZ`;
+    const sheetData = await getSheetData(SPREADSHEET_TOKEN, token, range);
+    if (!sheetData || sheetData.length < 2) {
+      await replyToLark(messageId, 'Không tìm thấy dữ liệu Sheet để phân tích.', mentionUserId, mentionUserName);
+      return;
+    }
+
+    const headers = sheetData[0];
+    const rows = sheetData.slice(1);
+
+    // Nếu người dùng CHỈ ĐỊNH CHÍNH XÁC tên cột (khớp header) -> dùng luôn
+    // Cú pháp: column:"Tên Cột" hoặc [Tên Cột]
+    const explicitColMatch = query.match(/column\s*:\s*"(.*?)"|column\s*:\s*\[(.*?)\]/i);
+    let explicitColName = null;
+    if (explicitColMatch) explicitColName = explicitColMatch[1] || explicitColMatch[2];
+
+    let targetColIdx = -1;
+    if (explicitColName) {
+      targetColIdx = findHeaderIndex(headers, explicitColName);
+    }
+
+    // Intent
+    const intent = detectIntent(query);
+
+    // Chọn cột giá trị (numeric) mặc định: 2 cột numeric mạnh nhất (coi như prev/current)
+    const [colA, colB] = topNumericColumns(headers, rows, 2);
+    const prevIdx = colA;
+    const currIdx = colB;
+
+    // Chọn cột sản phẩm / mô tả
+    const prodIdx = findLikelyProductColumn(headers);
+
+    // Lọc theo keywords (vd: "Lager")
+    const kws = extractKeywords(query);
+    const matchRow = (r) => {
+      if (prodIdx < 0 || prodIdx >= r.length) return true;
+      const cell = viNormalize(r[prodIdx] || '');
+      return kws.length === 0 ? true : kws.every(k => cell.includes(k));
+    };
+
+    // Duyệt dữ liệu
+    const selected = rows.filter(r => r && r.length > 0 && matchRow(r));
+
+    if (!selected.length) {
+      await replyToLark(messageId, 'Không tìm thấy dòng phù hợp với từ khoá trong câu hỏi.', mentionUserId, mentionUserName);
+      return;
+    }
+
+    // Nếu người dùng chỉ định cột chính xác -> thực hiện tổng/avg mặc định
+    if (targetColIdx !== -1) {
+      const nums = selected.map(r => toNumber(r[targetColIdx]));
+      const sum = nums.reduce((a,b)=>a+b,0);
+      const avg = nums.length ? sum/nums.length : 0;
+      await replyToLark(
+        messageId,
+        `Cột "${headers[targetColIdx]}": Tổng=${sum.toLocaleString('vi-VN')} | Trung bình=${avg.toLocaleString('vi-VN')}`,
+        mentionUserId,
+        mentionUserName
+      );
+      return;
+    }
+
+    // Tự động xử lý theo intent
+    if (intent === 'pct_change' || intent === 'diff') {
+      // Tính thay đổi giữa 2 cột numeric mạnh nhất
+      const prevSum = selected.reduce((a,r)=> a + toNumber(r[prevIdx]), 0);
+      const currSum = selected.reduce((a,r)=> a + toNumber(r[currIdx]), 0);
+      const diff = currSum - prevSum;
+      const pct = prevSum === 0 ? (currSum > 0 ? Infinity : 0) : (diff / prevSum) * 100;
+      const pctStr = pct === Infinity ? '∞%' : `${pct.toFixed(2)}%`;
+      await replyToLark(
+        messageId,
+        `Thay đổi ${headers[prevIdx]} → ${headers[currIdx]} cho ${kws.join(', ') || 'toàn bộ'}: ${prevSum.toLocaleString('vi-VN')} → ${currSum.toLocaleString('vi-VN')} (Δ=${diff.toLocaleString('vi-VN')}, ${pctStr})`,
+        mentionUserId,
+        mentionUserName
+      );
+      return;
+    }
+
+    if (intent === 'sum') {
+      // Tự chọn cột numeric tốt nhất
+      const bestIdx = topNumericColumns(headers, rows, 1)[0];
+      const total = selected.reduce((a,r)=> a + toNumber(r[bestIdx]), 0);
+      await replyToLark(
+        messageId,
+        `Tổng ${headers[bestIdx]} cho ${kws.join(', ') || 'toàn bộ'}: ${total.toLocaleString('vi-VN')}`,
+        mentionUserId,
+        mentionUserName
+      );
+      return;
+    }
+
+    if (intent === 'avg') {
+      const bestIdx = topNumericColumns(headers, rows, 1)[0];
+      const nums = selected.map(r => toNumber(r[bestIdx]));
+      const sum = nums.reduce((a,b)=>a+b,0);
+      const avg = nums.length ? sum/nums.length : 0;
+      await replyToLark(
+        messageId,
+        `Trung bình ${headers[bestIdx]} cho ${kws.join(', ') || 'toàn bộ'}: ${avg.toLocaleString('vi-VN')}`,
+        mentionUserId,
+        mentionUserName
+      );
+      return;
+    }
+
+    if (intent === 'top') {
+      const n = Math.max(1, Math.min(10, parseInt((viNormalize(query).match(/top\s*(\d+)/)||[])[1] || '5', 10)));
+      const bestIdx = topNumericColumns(headers, rows, 1)[0];
+      const ranked = selected
+        .map(r => ({ name: r[prodIdx] || '(N/A)', val: toNumber(r[bestIdx]) }))
+        .sort((a,b)=> b.val - a.val)
+        .slice(0, n);
+      let msg = `Top ${n} theo ${headers[bestIdx]}:\n`;
+      ranked.forEach((x,i)=> msg += `${i+1}. ${x.name}: ${x.val.toLocaleString('vi-VN')}\n`);
+      await replyToLark(messageId, msg.trim(), mentionUserId, mentionUserName);
+      return;
+    }
+
+    // AUTO: ưu tiên báo % thay đổi nếu có 2 cột numeric, không thì trả tổng
+    if (prevIdx !== undefined && currIdx !== undefined) {
+      const prevSum = selected.reduce((a,r)=> a + toNumber(r[prevIdx]), 0);
+      const currSum = selected.reduce((a,r)=> a + toNumber(r[currIdx]), 0);
+      const diff = currSum - prevSum;
+      const pct = prevSum === 0 ? (currSum > 0 ? Infinity : 0) : (diff / prevSum) * 100;
+      const pctStr = pct === Infinity ? '∞%' : `${pct.toFixed(2)}%`;
+      await replyToLark(
+        messageId,
+        `Tự động: ${headers[prevIdx]} → ${headers[currIdx]} cho ${kws.join(', ') || 'toàn bộ'}: ${prevSum.toLocaleString('vi-VN')} → ${currSum.toLocaleString('vi-VN')} (Δ=${diff.toLocaleString('vi-VN')}, ${pctStr})`,
+        mentionUserId,
+        mentionUserName
+      );
+      return;
+    } else {
+      const bestIdx = topNumericColumns(headers, rows, 1)[0];
+      const total = selected.reduce((a,r)=> a + toNumber(r[bestIdx]), 0);
+      await replyToLark(
+        messageId,
+        `Tự động: Tổng ${headers[bestIdx]} cho ${kws.join(', ') || 'toàn bộ'}: ${total.toLocaleString('vi-VN')}`,
+        mentionUserId,
+        mentionUserName
+      );
+      return;
+    }
+  } catch (e) {
+    await replyToLark(messageId, 'Lỗi khi xử lý Plan,. Vui lòng thử lại hoặc liên hệ Admin Long.', mentionUserId, mentionUserName);
+  }
+}
+
 app.post('/webhook', async (req, res) => {
   try {
     let bodyRaw = req.body.toString('utf8');
@@ -751,6 +987,13 @@ app.post('/webhook', async (req, res) => {
           await replyToLark(messageId, 'Vui lòng reply trực tiếp tin nhắn chứa file để xử lý.', mentionUserId, mentionUserName);
         }
       } else if (messageType === 'text' && userMessage.trim() && !baseId && !tableId) {
+
+        // 🔵 [PLAN] NHÁNH ƯU TIÊN: nếu người dùng bắt đầu bằng "Plan," → bật chức năng Plan Sheet
+        if (/^\s*Plan,\s*/i.test(userMessage)) {
+          await handlePlanQuery(messageId, userMessage, token, mentionUserId, mentionUserName);
+          return;
+        }
+
         try {
           updateConversationMemory(chatId, 'user', userMessage);
           const memory = conversationMemory.get(chatId) || [];
