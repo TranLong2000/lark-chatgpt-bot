@@ -272,32 +272,68 @@ async function getSaleComparisonData(token) {
   }
 }
 
-// 📌 Phân tích top tăng/giảm (không giới hạn 50%)
+// 📌 Phân tích top tăng/giảm
 async function analyzeSalesChange(token) {
-  const salesData = await getSaleComparisonData(token);
+  // Lấy dữ liệu có filter P > 10 cho top tăng/giảm
+  const filteredData = await getSaleComparisonData(token);
 
-  if (!salesData.length) return null;
+  // Lấy dữ liệu không filter để tính tổng SP tăng/giảm
+  const allData = await (async () => {
+    try {
+      const cols = ['E', 'O', 'P'];
+      let data = {};
 
-  // Sắp xếp giảm dần theo % thay đổi
-  const increases = [...salesData]
+      for (const col of cols) {
+        const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${col}:${col}`;
+        const resp = await axios.get(url, {
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 20000
+        });
+        data[col] = resp.data.data.valueRange.values.map(r => r[0]);
+      }
+
+      let results = [];
+      for (let i = 1; i < data['E'].length; i++) {
+        const productName = data['E'][i] || `Dòng ${i+1}`;
+        const prev = parseFloat(data['O'][i]) || 0;
+        const yesterday = parseFloat(data['P'][i]) || 0;
+        if (prev === 0 && yesterday === 0) continue;
+        const change = prev === 0 ? (yesterday > 0 ? Infinity : 0) : ((yesterday - prev) / prev) * 100;
+        results.push({ productName, prev, yesterday, change });
+      }
+      return results;
+    } catch {
+      return [];
+    }
+  })();
+
+  if (!filteredData.length) return null;
+
+  // Đếm tổng SP tăng/giảm từ toàn bộ data
+  const totalIncrease = allData.filter(r => r.change > 0).length;
+  const totalDecrease = allData.filter(r => r.change < 0).length;
+
+  // Top tăng/giảm chỉ tính với filter (P > 10)
+  const increases = filteredData
+    .filter(r => r.change >= 0 || r.change === Infinity)
     .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
     .slice(0, 5);
 
-  // Sắp xếp tăng dần theo % thay đổi
-  const decreases = [...salesData]
+  const decreases = filteredData
+    .filter(r => r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
   let msg = "📊 So sánh số Sale (lọc hôm qua > 10):\n";
   if (increases.length) {
-    msg += "\n🔥 Top 5 tăng mạnh:\n";
+    msg += `\n🔥 Top 5 tăng mạnh (Tổng: ${totalIncrease} SP tăng):\n`;
     increases.forEach(r => {
       const pct = r.change === Infinity ? "∞%" : `${r.change.toFixed(1)}%`;
       msg += `- ${r.productName}: ${r.prev} → ${r.yesterday} (${pct})\n`;
     });
   }
   if (decreases.length) {
-    msg += "\n📉 Top 5 giảm mạnh:\n";
+    msg += `\n📉 Top 5 giảm mạnh (Tổng: ${totalDecrease} SP giảm):\n`;
     decreases.forEach(r => {
       msg += `- ${r.productName}: ${r.prev} → ${r.yesterday} (${r.change.toFixed(1)}%)\n`;
     });
