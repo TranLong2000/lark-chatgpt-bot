@@ -236,10 +236,10 @@ async function sendMessageToGroup(token, chatId, messageText) {
   }
 }
 
-// 📌 Lấy dữ liệu cột E (tên SP), I (tổng sale), O (2 ngày trước), P (hôm qua)
-async function getSaleComparisonData(token) {
+// 📌 Lấy dữ liệu so sánh (có filter hoặc không filter)
+async function getSaleComparisonData(token, prevCol, currentCol, withFilter = true) {
   try {
-    const cols = ['E', 'I', 'O', 'P'];
+    const cols = ['E', prevCol, currentCol];
     let data = {};
 
     for (const col of cols) {
@@ -252,60 +252,42 @@ async function getSaleComparisonData(token) {
     }
 
     let results = [];
-    for (let i = 1; i < data['E'].length; i++) { // bỏ dòng header
+    for (let i = 1; i < data['E'].length; i++) {
       const productName = data['E'][i] || `Dòng ${i+1}`;
-      const totalSale = parseFloat(data['I'][i]) || 0;
-      const prev = parseFloat(data['O'][i]) || 0;
-      const yesterday = parseFloat(data['P'][i]) || 0;
+      const prev = parseFloat(data[prevCol][i]) || 0;
+      const current = parseFloat(data[currentCol][i]) || 0;
 
-      if (yesterday <= 10) continue; // 🔥 lọc cột P > 10
-      if (prev === 0 && yesterday === 0) continue;
+      if (withFilter && current <= 10) continue; // lọc current > 10
+      if (prev === 0 && current === 0) continue;
 
-      const change = prev === 0 ? (yesterday > 0 ? Infinity : 0) : ((yesterday - prev) / prev) * 100;
-      results.push({ productName, prev, yesterday, change });
+      const change = prev === 0 ? (current > 0 ? Infinity : 0) : ((current - prev) / prev) * 100;
+      results.push({ productName, prev, current, change });
     }
 
     return results;
   } catch (err) {
-    console.log('Lỗi lấy dữ liệu E/I/O/P:', err.message);
+    console.log(`Lỗi lấy dữ liệu ${prevCol}/${currentCol}:`, err.message);
     return [];
   }
 }
 
 // 📌 Phân tích top tăng/giảm
 async function analyzeSalesChange(token) {
-  // Lấy dữ liệu có filter P > 10 cho top tăng/giảm
-  const filteredData = await getSaleComparisonData(token);
+  // Xác định so sánh theo giờ
+  const now = new Date();
+  const compareMode = now.getHours() < 12 ? "morning" : "afternoon";
 
-  // Lấy dữ liệu không filter để tính tổng SP tăng/giảm
-  const allData = await (async () => {
-    try {
-      const cols = ['E', 'O', 'P'];
-      let data = {};
+  let prevCol, currentCol, compareLabel;
+  if (compareMode === "morning") {
+    prevCol = "O"; currentCol = "P"; compareLabel = "O (2 hôm trước) → P (hôm qua)";
+  } else {
+    prevCol = "P"; currentCol = "Q"; compareLabel = "P (hôm qua) → Q (hôm nay)";
+  }
 
-      for (const col of cols) {
-        const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${col}:${col}`;
-        const resp = await axios.get(url, {
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: 20000
-        });
-        data[col] = resp.data.data.valueRange.values.map(r => r[0]);
-      }
-
-      let results = [];
-      for (let i = 1; i < data['E'].length; i++) {
-        const productName = data['E'][i] || `Dòng ${i+1}`;
-        const prev = parseFloat(data['O'][i]) || 0;
-        const yesterday = parseFloat(data['P'][i]) || 0;
-        if (prev === 0 && yesterday === 0) continue;
-        const change = prev === 0 ? (yesterday > 0 ? Infinity : 0) : ((yesterday - prev) / prev) * 100;
-        results.push({ productName, prev, yesterday, change });
-      }
-      return results;
-    } catch {
-      return [];
-    }
-  })();
+  // Dữ liệu filter (current > 10)
+  const filteredData = await getSaleComparisonData(token, prevCol, currentCol, true);
+  // Dữ liệu không filter (để đếm SP tăng/giảm)
+  const allData = await getSaleComparisonData(token, prevCol, currentCol, false);
 
   if (!filteredData.length) return null;
 
@@ -313,29 +295,30 @@ async function analyzeSalesChange(token) {
   const totalIncrease = allData.filter(r => r.change > 0).length;
   const totalDecrease = allData.filter(r => r.change < 0).length;
 
-  // Top tăng/giảm chỉ tính với filter (P > 10)
+  // Top tăng
   const increases = filteredData
     .filter(r => r.change >= 0 || r.change === Infinity)
     .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
     .slice(0, 5);
 
+  // Top giảm
   const decreases = filteredData
     .filter(r => r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  let msg = "📊 So sánh số Sale (lọc hôm qua > 10):\n";
+  let msg = `📊 So sánh số Sale (${compareLabel}, lọc ${currentCol} > 10):\n`;
   if (increases.length) {
     msg += `\n🔥 Top 5 tăng mạnh (Tổng: ${totalIncrease} SP tăng):\n`;
     increases.forEach(r => {
-      const pct = r.change === Infinity ? "∞%" : `+${r.change.toFixed(1)}%`;
-      msg += `- ${r.productName}: ${r.prev} → ${r.yesterday} (${pct})\n`;
+      const pct = r.change === Infinity ? "+∞%" : `+${r.change.toFixed(1)}%`;
+      msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
     });
   }
   if (decreases.length) {
     msg += `\n📉 Top 5 giảm mạnh (Tổng: ${totalDecrease} SP giảm):\n`;
     decreases.forEach(r => {
-      msg += `- ${r.productName}: ${r.prev} → ${r.yesterday} (${r.change.toFixed(1)}%)\n`;
+      msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
     });
   }
 
@@ -372,6 +355,7 @@ async function checkB2ValueChange() {
     console.log('Lỗi checkB2ValueChange:', err.message);
   }
 }
+
 
 
 function updateConversationMemory(chatId, role, content) {
