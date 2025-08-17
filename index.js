@@ -328,7 +328,7 @@ async function analyzeSalesChange(token) {
   if (increases.length) {
     msg += `\n🔥 Top 5 tăng mạnh (Tổng: ${totalIncrease} SP tăng):\n`;
     increases.forEach(r => {
-      const pct = r.change === Infinity ? "∞%" : `${r.change.toFixed(1)}%`;
+      const pct = r.change === Infinity ? "∞%" : `+${r.change.toFixed(1)}%`;
       msg += `- ${r.productName}: ${r.prev} → ${r.yesterday} (${pct})\n`;
     });
   }
