@@ -244,6 +244,81 @@ async function checkB2ValueChange() {
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
       let messageText = `Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
 
+// === Function so sánh số sale và gửi tin nhắn ===
+async function compareAndSendSalesChange(token, chatId) {
+  try {
+    const sheetRangeO = `${process.env.SHEET_ID}!O:O`; // 2 ngày trước
+    const sheetRangeP = `${process.env.SHEET_ID}!P:P`; // hôm qua
+    const sheetRangeSKU = `${process.env.SHEET_ID}!E:E`; // SKU cột E
+
+    const baseUrl = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`;
+
+    // Lấy dữ liệu 3 cột
+    const [respO, respP, respSKU] = await Promise.all([
+      axios.get(`${baseUrl}/${sheetRangeO}`, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }),
+      axios.get(`${baseUrl}/${sheetRangeP}`, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }),
+      axios.get(`${baseUrl}/${sheetRangeSKU}`, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }),
+    ]);
+
+    const valuesO = respO.data.data.valueRange.values || [];
+    const valuesP = respP.data.data.valueRange.values || [];
+    const valuesSKU = respSKU.data.data.valueRange.values || [];
+
+    const changes = [];
+    for (let i = 1; i < valuesSKU.length; i++) { // bỏ header
+      const sku = valuesSKU[i]?.[0] || "";
+      const saleBefore = parseFloat(valuesO[i]?.[0] || "0");
+      const saleYesterday = parseFloat(valuesP[i]?.[0] || "0");
+
+      if (!sku || isNaN(saleBefore) || isNaN(saleYesterday)) continue;
+      if (saleBefore === 0) continue; // tránh chia 0
+
+      const changePct = ((saleYesterday - saleBefore) / saleBefore) * 100;
+      changes.push({ sku, saleBefore, saleYesterday, changePct });
+    }
+
+    // lọc tăng >50%
+    const topIncrease = changes
+      .filter(c => c.changePct > 50)
+      .sort((a, b) => b.changePct - a.changePct)
+      .slice(0, 5);
+
+    // lọc giảm < -50%
+    const topDecrease = changes
+      .filter(c => c.changePct < -50)
+      .sort((a, b) => a.changePct - b.changePct)
+      .slice(0, 5);
+
+    let msg = `📊 So sánh số sale hôm qua vs 2 ngày trước:\n\n`;
+
+    if (topIncrease.length) {
+      msg += `🔥 Top 5 SKU tăng mạnh (>50%):\n`;
+      topIncrease.forEach(c => {
+        msg += `- ${c.sku}: ${c.saleBefore} → ${c.saleYesterday} (${c.changePct.toFixed(1)}%)\n`;
+      });
+      msg += `\n`;
+    } else {
+      msg += `🔥 Không có SKU nào tăng >50%\n\n`;
+    }
+
+    if (topDecrease.length) {
+      msg += `📉 Top 5 SKU giảm mạnh (< -50%):\n`;
+      topDecrease.forEach(c => {
+        msg += `- ${c.sku}: ${c.saleBefore} → ${c.saleYesterday} (${c.changePct.toFixed(1)}%)\n`;
+      });
+    } else {
+      msg += `📉 Không có SKU nào giảm < -50%\n`;
+    }
+
+    // Gửi tin nhắn vào chat
+    await sendTextMessage(chatId, msg);
+    console.log("✅ Đã gửi báo cáo so sánh số sale");
+  } catch (err) {
+    console.error("compareAndSendSalesChange error:", err.message);
+    await sendTextMessage(chatId, "❌ Lỗi khi so sánh số sale");
+  }
+}
+      
       const analysisPrompt = `
         Bạn là một trợ lý AI. Dựa trên thông tin sau:
         - Tổng cột G: ${currentB2Value}
