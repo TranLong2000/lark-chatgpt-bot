@@ -272,17 +272,19 @@ async function getSaleComparisonData(token) {
   }
 }
 
-// 📌 Phân tích top tăng/giảm
+// 📌 Phân tích top tăng/giảm (không giới hạn 50%)
 async function analyzeSalesChange(token) {
   const salesData = await getSaleComparisonData(token);
 
   if (!salesData.length) return null;
 
-  const increases = salesData.filter(r => r.change >= 50 || r.change === Infinity)
+  // Sắp xếp giảm dần theo % thay đổi
+  const increases = [...salesData]
     .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
     .slice(0, 5);
 
-  const decreases = salesData.filter(r => r.change <= -50)
+  // Sắp xếp tăng dần theo % thay đổi
+  const decreases = [...salesData]
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
