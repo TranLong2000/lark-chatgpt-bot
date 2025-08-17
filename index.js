@@ -258,7 +258,7 @@ async function getSaleComparisonData(token) {
       const prev = parseFloat(data['O'][i]) || 0;
       const yesterday = parseFloat(data['P'][i]) || 0;
 
-      if (totalSale <= 50) continue; // lọc tổng sale > 50
+      if (yesterday <= 10) continue; // 🔥 lọc cột P > 10
       if (prev === 0 && yesterday === 0) continue;
 
       const change = prev === 0 ? (yesterday > 0 ? Infinity : 0) : ((yesterday - prev) / prev) * 100;
@@ -286,7 +286,7 @@ async function analyzeSalesChange(token) {
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  let msg = "📊 So sánh số Sale (lọc tổng sale > 50):\n";
+  let msg = "📊 So sánh số Sale (lọc hôm qua > 10):\n";
   if (increases.length) {
     msg += "\n🔥 Top 5 tăng mạnh:\n";
     increases.forEach(r => {
@@ -334,6 +334,7 @@ async function checkB2ValueChange() {
     console.log('Lỗi checkB2ValueChange:', err.message);
   }
 }
+
 
 function updateConversationMemory(chatId, role, content) {
   if (!conversationMemory.has(chatId)) {
