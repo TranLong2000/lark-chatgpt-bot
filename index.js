@@ -23,7 +23,7 @@ const BASE_MAPPINGS = {
 };
 
 const SHEET_MAPPINGS = {
-  'PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
+  'PUR_SHEET': 'https://cgfscmkep8m.sg.larksuite.com/sheets/LYYqsXmnPhwwGHtKP00lZ1IWgDb?sheet=48e2fd'
 };
 
 let lastB2Value = null;
