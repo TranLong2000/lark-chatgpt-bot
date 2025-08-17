@@ -197,6 +197,7 @@ async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
   }
 }
 
+// 📌 Lấy tổng cột G
 async function getCellB2Value(token) {
   try {
     const targetColumn = 'G';
@@ -216,43 +217,7 @@ async function getCellB2Value(token) {
   }
 }
 
-async function sendMessageToGroup(token, chatId, messageText) {
-  try {
-    const payload = {
-      receive_id: chatId,
-      msg_type: 'text',
-      content: JSON.stringify({ text: messageText })
-    };
-    console.log('Gửi API tới BOT:', { chatId, messageText });
-    await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages`,
-      payload,
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-    );
-  } catch (err) {
-    console.log('Lỗi gửi tin nhắn:', err.message);
-  }
-}
-
-async function getCellB2Value(token) {
-  try {
-    const targetColumn = 'G';
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${targetColumn}:${targetColumn}`;
-    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
-    const values = resp.data.data.valueRange.values || [];
-
-    const sum = values.reduce((acc, row) => {
-      const value = row[0];
-      const num = parseFloat(value);
-      return isNaN(num) ? acc : acc + num;
-    }, 0);
-
-    return sum || sum === 0 ? sum.toString() : null;
-  } catch {
-    return null;
-  }
-}
-
+// 📌 Gửi tin nhắn tới group
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
     const payload = {
@@ -271,69 +236,75 @@ async function sendMessageToGroup(token, chatId, messageText) {
   }
 }
 
-// 📌 Hàm lấy dữ liệu 2 cột O (sale 2 ngày trước) và P (sale hôm qua)
+// 📌 Lấy dữ liệu cột E (tên SP), I (tổng sale), O (2 ngày trước), P (hôm qua)
 async function getSaleComparisonData(token) {
   try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!O:P`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000
-    });
+    const cols = ['E', 'I', 'O', 'P'];
+    let data = {};
 
-    const rows = resp.data.data.valueRange.values || [];
+    for (const col of cols) {
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${col}:${col}`;
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 20000
+      });
+      data[col] = resp.data.data.valueRange.values.map(r => r[0]);
+    }
+
     let results = [];
+    for (let i = 1; i < data['E'].length; i++) { // bỏ dòng header
+      const productName = data['E'][i] || `Dòng ${i+1}`;
+      const totalSale = parseFloat(data['I'][i]) || 0;
+      const prev = parseFloat(data['O'][i]) || 0;
+      const yesterday = parseFloat(data['P'][i]) || 0;
 
-    for (let i = 0; i < rows.length; i++) {
-      const [salePrev, saleYesterday] = rows[i];
-      const prev = parseFloat(salePrev) || 0;
-      const yesterday = parseFloat(saleYesterday) || 0;
-      if (prev > 0 || yesterday > 0) {
-        const change = prev === 0 ? (yesterday > 0 ? Infinity : 0) : ((yesterday - prev) / prev) * 100;
-        results.push({
-          row: i + 1,
-          prev,
-          yesterday,
-          change
-        });
-      }
+      if (totalSale <= 50) continue; // lọc tổng sale > 50
+      if (prev === 0 && yesterday === 0) continue;
+
+      const change = prev === 0 ? (yesterday > 0 ? Infinity : 0) : ((yesterday - prev) / prev) * 100;
+      results.push({ productName, prev, yesterday, change });
     }
 
     return results;
   } catch (err) {
-    console.log('Lỗi lấy dữ liệu O:P:', err.message);
+    console.log('Lỗi lấy dữ liệu E/I/O/P:', err.message);
     return [];
   }
 }
 
-// 📌 Hàm phân tích top 5 tăng và top 5 giảm
+// 📌 Phân tích top tăng/giảm
 async function analyzeSalesChange(token) {
   const salesData = await getSaleComparisonData(token);
 
   if (!salesData.length) return null;
 
-  // Lọc tăng > 50%
-  const increases = salesData.filter(r => r.change > 50).sort((a, b) => b.change - a.change).slice(0, 5);
+  const increases = salesData.filter(r => r.change >= 50 || r.change === Infinity)
+    .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
+    .slice(0, 5);
 
-  // Lọc giảm < -50%
-  const decreases = salesData.filter(r => r.change < -50).sort((a, b) => a.change - b.change).slice(0, 5);
+  const decreases = salesData.filter(r => r.change <= -50)
+    .sort((a, b) => a.change - b.change)
+    .slice(0, 5);
 
-  let msg = "📊 So sánh số Sale:\n";
+  let msg = "📊 So sánh số Sale (lọc tổng sale > 50):\n";
   if (increases.length) {
     msg += "\n🔥 Top 5 tăng mạnh:\n";
     increases.forEach(r => {
-      msg += `- Hàng dòng ${r.row}: ${r.prev} → ${r.yesterday} (${r.change.toFixed(1)}%)\n`;
+      const pct = r.change === Infinity ? "∞%" : `${r.change.toFixed(1)}%`;
+      msg += `- ${r.productName}: ${r.prev} → ${r.yesterday} (${pct})\n`;
     });
   }
   if (decreases.length) {
     msg += "\n📉 Top 5 giảm mạnh:\n";
     decreases.forEach(r => {
-      msg += `- Hàng dòng ${r.row}: ${r.prev} → ${r.yesterday} (${r.change.toFixed(1)}%)\n`;
+      msg += `- ${r.productName}: ${r.prev} → ${r.yesterday} (${r.change.toFixed(1)}%)\n`;
     });
   }
 
   return msg;
 }
 
+// 📌 Check B2 thay đổi → gửi tin + phân tích sale
 async function checkB2ValueChange() {
   try {
     const token = await getAppAccessToken();
@@ -342,51 +313,14 @@ async function checkB2ValueChange() {
     console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
 
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-      let messageText = `Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
+      let messageText = `✅ Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
 
-      const analysisPrompt = `
-        Bạn là một trợ lý AI. Dựa trên thông tin sau:
-        - Tổng cột G: ${currentB2Value}
-        Hãy phân tích và trả lời ngắn gọn dưới dạng JSON: { "result": string }.
-      `;
-
-      const aiResponse = await axios.post(
-        'https://openrouter.ai/api/v1/chat/completions',
-        {
-          model: 'deepseek/deepseek-r1-0528:free',
-          messages: [
-            { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích dữ liệu với ít token nhất. Luôn trả lời dưới dạng JSON hợp lệ.' },
-            { role: 'user', content: analysisPrompt },
-          ],
-          stream: false,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 30000,
-        }
-      ).catch(err => console.log('Lỗi API phân tích:', err.message));
-
-      const aiContent = aiResponse?.data?.choices?.[0]?.message?.content?.trim();
-      if (aiContent) {
-        try {
-          const analysis = JSON.parse(aiContent);
-          if (analysis?.result) {
-            messageText += `. ${analysis.result}`;
-          }
-        } catch (e) {
-          console.log('Lỗi parse JSON từ AI:', e.message);
-        }
-      }
-
-      // Gửi tin nhắn "Đã đổ Stock" tới từng nhóm
+      // Gửi tin nhắn "Đã đổ Stock"
       for (const chatId of GROUP_CHAT_IDS) {
         await sendMessageToGroup(token, chatId, messageText);
       }
 
-      // 📌 Gọi thêm hàm phân tích tăng/giảm ngay sau khi báo "Đã đổ Stock"
+      // 📌 Gọi thêm phân tích tăng/giảm ngay sau khi báo "Đã đổ Stock"
       const salesMsg = await analyzeSalesChange(token);
       if (salesMsg) {
         for (const chatId of GROUP_CHAT_IDS) {
@@ -400,7 +334,6 @@ async function checkB2ValueChange() {
     console.log('Lỗi checkB2ValueChange:', err.message);
   }
 }
-
 
 function updateConversationMemory(chatId, role, content) {
   if (!conversationMemory.has(chatId)) {
