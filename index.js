@@ -309,14 +309,14 @@ async function analyzeSalesChange(token) {
 
   let msg = `📊 So sánh số Sale (${compareLabel}, lọc ${currentCol} > 10):\n`;
   if (increases.length) {
-    msg += `\n🔥 Top 5 tăng mạnh (Tổng: ${totalIncrease} SP tăng):\n`;
+    msg += `\n🔥 Top 5 tăng mạnh (Tổng ${totalIncrease} SP tăng):\n`;
     increases.forEach(r => {
       const pct = r.change === Infinity ? "+∞%" : `+${r.change.toFixed(1)}%`;
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
     });
   }
   if (decreases.length) {
-    msg += `\n📉 Top 5 giảm mạnh (Tổng: ${totalDecrease} SP giảm):\n`;
+    msg += `\n📉 Top 5 giảm mạnh (Tổng ${totalDecrease} SP giảm):\n`;
     decreases.forEach(r => {
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
     });
