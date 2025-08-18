@@ -892,9 +892,14 @@ app.post('/webhook', async (req, res) => {
       const message = decryptedData.event.message;
       const messageId = message.message_id;
       const chatId = message.chat_id;
+      const chatType = message.chat_type;
       const messageType = message.message_type;
       const parentId = message.parent_id;
       const mentions = message.mentions || [];
+
+      if (chatType === 'group') {
+        console.log(`BOT đang trò chuyện trong Group Chat ID: ${chatId}`);
+      }
 
       if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
