@@ -319,7 +319,7 @@ async function analyzeSalesChange(token) {
   const prevCol = "M"; // AVG sale 7 ngày trước
   let currentCol, currentLabel;
 
-  if (hour < 12) {
+  if (hourVN < 12) {
     currentCol = "P";
     currentLabel = "hôm qua";
   } else {
