@@ -35,7 +35,7 @@ const SHEET_MAPPINGS = {
 let lastB2Value = null;
 const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb'; // bạn đã đặt trước
 const SHEET_ID = '48e2fd';
-const GROUP_CHAT_IDS = ['oc_3a916c77b8c7ab9438f7555ab66fd808', 'oc_yyyyyyyyyyyy', 'oc_zzzzzzzzzzzz']; // Điền các Group ID lần lượt vào đây
+const GROUP_CHAT_IDS = ['oc_3a916c77b8c7ab9438f7555ab66fd808', 'oc_24adc0cb7b63a8cd1472e1809d79a669', 'oc_zzzzzzzzzzzz']; // Điền các Group ID lần lượt vào đây
 const BOT_OPEN_ID = 'ou_28e2a5e298050b5f08899314b2d49300';
 
 /* ===========================
