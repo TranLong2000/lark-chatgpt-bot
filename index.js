@@ -311,8 +311,10 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
    UPDATED: analyzeSalesChange
    =========================== */
 async function analyzeSalesChange(token) {
+  // Lấy giờ hiện tại theo múi giờ Việt Nam
   const now = new Date();
-  const hour = now.getHours();
+  const nowVN = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
+  const hourVN = nowVN.getHours();
 
   const prevCol = "M"; // AVG sale 7 ngày trước
   let currentCol, currentLabel;
