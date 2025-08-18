@@ -35,7 +35,7 @@ const SHEET_MAPPINGS = {
 let lastB2Value = null;
 const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb'; // bạn đã đặt trước
 const SHEET_ID = '48e2fd';
-const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
+const GROUP_CHAT_IDS = ['oc_3a916c77b8c7ab9438f7555ab66fd808', 'oc_yyyyyyyyyyyy', 'oc_zzzzzzzzzzzz']; // Điền các Group ID lần lượt vào đây
 const BOT_OPEN_ID = 'ou_28e2a5e298050b5f08899314b2d49300';
 
 /* ===========================
@@ -1107,7 +1107,7 @@ app.post('/webhook-base', async (req, res) => {
 
       if (!updateDate || updateDate.includes('{{')) return res.sendStatus(200);
 
-      const groupChatIds = (process.env.LARK_GROUP_CHAT_IDS || '').split(',').filter(id => id.trim());
+      const groupChatIds = GROUP_CHAT_IDS;
       if (groupChatIds.length === 0) return res.status(400).send('Thiếu group chat IDs');
 
       const token = await getAppAccessToken();
