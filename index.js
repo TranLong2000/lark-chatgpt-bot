@@ -660,23 +660,135 @@ app.post('/webhook', async (req, res) => {
         }
       }
 
-      let contentAfterMention = message.content?.text?.replace(/^@.*?\s*/, '').trim() || '';
+      let contentAfterMention = '';
+      try { contentAfterMention = JSON.parse(message.content).text.replace(/^@.*?\s*/, '').trim(); } catch {}
 
+      // ======= XỬ LÝ PLAN =========
       if (/^Plan[,，]/i.test(contentAfterMention)) {
         pendingTasks.set(messageId, { chatId, userMessage: contentAfterMention, mentionUserId, mentionUserName });
         await processPlanQuery(messageId, SPREADSHEET_TOKEN, contentAfterMention, token, mentionUserId, mentionUserName);
         return;
       }
 
-      // Các trường hợp khác: Base / file / chat AI
-      // (giữ nguyên logic cũ đã xử lý file, image, Base, chat AI)
-      // ...
+      // ======= XỬ LÝ BASE =========
+      let baseId = '';
+      let tableId = '';
+      const reportMatch = contentAfterMention.match(new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|,)`, 'i'));
+      if (reportMatch) {
+        const reportName = reportMatch[1].toUpperCase();
+        const reportUrl = BASE_MAPPINGS[reportName];
+        if (reportUrl) {
+          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
+          if (urlMatch) {
+            baseId = urlMatch[1];
+            tableId = urlMatch[2];
+          }
+        }
+      }
+      if (baseId && tableId) {
+        pendingTasks.set(messageId, { chatId, userMessage: contentAfterMention, mentionUserId, mentionUserName });
+        await processBaseData(messageId, baseId, tableId, contentAfterMention, token);
+        return;
+      }
+
+      // ======= XỬ LÝ FILE / IMAGE =========
+      if (['file','image'].includes(messageType)) {
+        try {
+          const fileKey = message.file_key;
+          if (!fileKey) {
+            await replyToLark(messageId, 'Không tìm thấy file_key. Vui lòng kiểm tra lại.', mentionUserId, mentionUserName);
+            return;
+          }
+
+          const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
+          const ext = path.extname(fileName).slice(1).toLowerCase();
+
+          pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
+
+          await replyToLark(
+            messageId,
+            'File đã nhận. Vui lòng reply với câu hỏi hoặc yêu cầu (tag @BOT nếu cần). File sẽ bị xóa sau 5 phút nếu không reply.',
+            mentionUserId,
+            mentionUserName
+          );
+        } catch (err) {
+          await replyToLark(messageId, `Lỗi khi xử lý file ${message.file_name || 'không xác định'}.`, mentionUserId, mentionUserName);
+        }
+        return;
+      }
+
+      // ======= XỬ LÝ REPLY FILE =========
+      if (messageType === 'post' && message.parent_id) {
+        const pendingFile = pendingFiles.get(chatId);
+        if (pendingFile && pendingFile.messageId === message.parent_id) {
+          try {
+            const fileUrlResp = await axios.get(
+              `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${pendingFile.fileKey}/download_url`,
+              { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
+            );
+            const fileUrl = fileUrlResp.data.data.download_url;
+            const extractedText = await extractFileContent(fileUrl, pendingFile.ext);
+            if (!extractedText || extractedText.startsWith('Lỗi')) {
+              await replyToLark(messageId, `Không thể trích xuất nội dung từ file ${pendingFile.fileName}.`, mentionUserId, mentionUserName);
+            } else {
+              const combinedMessage = contentAfterMention + `\nNội dung từ file: ${extractedText}`;
+              updateConversationMemory(chatId, 'user', combinedMessage);
+              const memory = conversationMemory.get(chatId) || [];
+              const aiResp = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                  model: 'deepseek/deepseek-r1-0528:free',
+                  messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: combinedMessage }],
+                  stream: false,
+                },
+                { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+              );
+              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, chưa tìm ra kết quả.';
+              const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+              updateConversationMemory(chatId, 'assistant', cleanMessage);
+              await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+            }
+            pendingFiles.delete(chatId);
+          } catch {
+            await replyToLark(messageId, `Lỗi khi xử lý file ${pendingFile.fileName}.`, mentionUserId, mentionUserName);
+            pendingFiles.delete(chatId);
+          }
+        } else {
+          await replyToLark(messageId, 'Vui lòng reply trực tiếp tin nhắn chứa file để xử lý.', mentionUserId, mentionUserName);
+        }
+        return;
+      }
+
+      // ======= XỬ LÝ CHAT AI BÌNH THƯỜNG =========
+      if (messageType === 'text' && contentAfterMention.trim()) {
+        try {
+          updateConversationMemory(chatId, 'user', contentAfterMention);
+          const memory = conversationMemory.get(chatId) || [];
+          const aiResp = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+              model: 'deepseek/deepseek-r1-0528:free',
+              messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: contentAfterMention }],
+              stream: false,
+            },
+            { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+          );
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả.';
+          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+          updateConversationMemory(chatId, 'assistant', cleanMessage);
+          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+        } catch {
+          await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả.', mentionUserId, mentionUserName);
+        }
+        return;
+      }
+
+      await replyToLark(messageId, 'Vui lòng sử dụng lệnh Plan, PUR, SALE, FIN kèm dấu phẩy hoặc gửi file/hình ảnh.', mentionUserId, mentionUserName);
     }
   } catch {
     res.status(500).send('Lỗi máy chủ nội bộ');
   }
 });
-
 
 /* ===========================
    SHUTDOWN HANDLER
