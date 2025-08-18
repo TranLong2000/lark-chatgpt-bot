@@ -272,10 +272,9 @@ async function sendMessageToGroup(token, chatId, messageText) {
 }
 
 /* ===========================
-   EXISTING: Sale comparison helpers
-   (unchanged logic, kept for compatibility)
+   UPDATED: Sale comparison helpers
    =========================== */
-async function getSaleComparisonData(token, prevCol, currentCol, withFilter = true) {
+async function getSaleComparisonData(token, prevCol, currentCol) {
   try {
     const cols = ['E', prevCol, currentCol];
     let data = {};
@@ -295,12 +294,9 @@ async function getSaleComparisonData(token, prevCol, currentCol, withFilter = tr
       const prev = parseFloat(data[prevCol][i]) || 0;
       const current = parseFloat(data[currentCol][i]) || 0;
 
-      // lọc prevCol > 3
-      if (withFilter && prev <= 3) continue;
-      
       // bỏ các dòng prev=0 và current=0
       if (prev === 0 && current === 0) continue;
-      
+
       const change = prev === 0 ? (current > 0 ? Infinity : 0) : ((current - prev) / prev) * 100;
       results.push({ productName, prev, current, change });
     }
@@ -312,6 +308,9 @@ async function getSaleComparisonData(token, prevCol, currentCol, withFilter = tr
   }
 }
 
+/* ===========================
+   UPDATED: analyzeSalesChange
+   =========================== */
 async function analyzeSalesChange(token) {
   const now = new Date();
   const compareMode = now.getHours() < 12 ? "morning" : "afternoon";
@@ -327,30 +326,30 @@ async function analyzeSalesChange(token) {
     currentLabel = "hôm nay";
   }
 
-  // Lấy dữ liệu sale so với prevCol
-  const filteredData = await getSaleComparisonData(token, prevCol, currentCol, true);
-  const allData = await getSaleComparisonData(token, prevCol, currentCol, false);
+  // Lấy toàn bộ dữ liệu
+  const allData = await getSaleComparisonData(token, prevCol, currentCol);
+  if (!allData.length) return null;
 
-  if (!filteredData.length) return null;
-
-  const totalIncrease = allData.filter(r => r.change > 0).length;
-  const totalDecrease = allData.filter(r => r.change < 0).length;
-
-  const increases = filteredData
-    .filter(r => r.change >= 0 || r.change === Infinity)
+  // Top 5 tăng mạnh: prev > 0 && current > 10
+  const increases = allData
+    .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
     .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
     .slice(0, 5);
 
-  const decreases = filteredData
-    .filter(r => r.change < 0)
+  // Top 5 giảm mạnh: prev > 10 && change < 0
+  const decreases = allData
+    .filter(r => r.prev > 10 && r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  // Tạo tin nhắn với currentLabel
-  let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel} (filter M > 3):\n`;
+  const totalIncrease = increases.length;
+  const totalDecrease = decreases.length;
+
+  // Tạo tin nhắn
+  let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel}:\n`;
 
   if (increases.length) {
-    msg += `\n🔥 Top 5 tăng mạnh (Tổng ${totalIncrease} SP tăng):\n`;
+    msg += `\n🔥 Top 5 tăng mạnh (M > 0 & ${currentCol} > 10, Tổng ${totalIncrease} SP tăng):\n`;
     increases.forEach(r => {
       const pct = r.change === Infinity ? "+∞%" : `+${r.change.toFixed(1)}%`;
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
@@ -358,7 +357,7 @@ async function analyzeSalesChange(token) {
   }
 
   if (decreases.length) {
-    msg += `\n📉 Top 5 giảm mạnh (Tổng ${totalDecrease} SP giảm):\n`;
+    msg += `\n📉 Top 5 giảm mạnh (M > 10, Tổng ${totalDecrease} SP giảm):\n`;
     decreases.forEach(r => {
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
     });
@@ -369,7 +368,6 @@ async function analyzeSalesChange(token) {
 
 /* ===========================
    EXISTING: checkB2ValueChange
-   (unchanged)
    =========================== */
 async function checkB2ValueChange() {
   try {
@@ -415,16 +413,6 @@ function updateConversationMemory(chatId, role, content) {
 
 /* ===========================
    NEW FUNCTION: interpretSheetQuery
-   - Gọi AI để phân tích câu hỏi + header data
-   - Mong muốn AI trả về 1 JSON chỉ dẫn rõ ràng
-   JSON schema kỳ vọng (ví dụ):
-   {
-     "action": "value" | "sum" | "avg" | "percent_change" | "count",
-     "target_column": "Q" or "Số bán hôm nay" (header name),
-     "match_column": "E",
-     "match_value": "Lager",
-     "additional": { ... }
-   }
    =========================== */
 async function interpretSheetQuery(userMessage, columnData) {
   try {
@@ -467,19 +455,13 @@ Nguyên tắc:
 
     const aiContent = aiResp.data?.choices?.[0]?.message?.content?.trim();
     if (!aiContent) return null;
-    // cố gắng parse JSON trong response
     try {
       const parsed = JSON.parse(aiContent);
       return parsed;
     } catch (e) {
-      // nếu AI trả thêm text, cố gắng extract json substring
       const match = aiContent.match(/\{[\s\S]*\}/);
       if (match) {
-        try {
-          return JSON.parse(match[0]);
-        } catch {
-          return null;
-        }
+        try { return JSON.parse(match[0]); } catch { return null; }
       }
       return null;
     }
@@ -491,27 +473,18 @@ Nguyên tắc:
 
 /* ===========================
    NEW FUNCTION: processPlanQuery
-   - Thực thi flow Plan:
-     1) đọc sheet (toàn A:Z)
-     2) xây dựng columnData từ header
-     3) gọi interpretSheetQuery để AI chỉ dẫn
-     4) thực thi phép tính đơn giản (value / sum / avg / percent change)
-     5) trả kết quả text trả về chat
    =========================== */
 async function processPlanQuery(messageId, spreadsheetToken, userMessage, token, mentionUserId, mentionUserName) {
   try {
-    // 1) Lấy dữ liệu sheet (A:Z)
     const sheetData = await getSheetData(spreadsheetToken, token, 'A:Z');
     if (!sheetData || sheetData.length === 0) {
       await replyToLark(messageId, 'Không tìm thấy dữ liệu trên sheet.', mentionUserId, mentionUserName);
       return;
     }
 
-    // 2) Tạo headers + rows
     const headers = sheetData[0].map(h => (h ? h.toString().trim() : ''));
     const rows = sheetData.slice(1).map(r => r.map(c => (c === undefined || c === null) ? '' : c.toString().trim()));
 
-    // 3) Map header -> column letter (A,B,C...) and index
     const headerToIndex = {};
     const headerToColLetter = {};
     for (let i = 0; i < headers.length; i++) {
@@ -520,54 +493,40 @@ async function processPlanQuery(messageId, spreadsheetToken, userMessage, token,
       headerToColLetter[headers[i]] = letter;
     }
 
-    // 4) Build columnData object: header -> array of values (for AI context)
     const columnData = {};
     headers.forEach((h, idx) => {
       columnData[h || `Column_${idx}`] = rows.map(r => r[idx] || '');
     });
 
-    // 5) Gọi AI để interpret
     const interpretation = await interpretSheetQuery(userMessage, columnData);
     if (!interpretation || !interpretation.action || !interpretation.target_column) {
       await replyToLark(messageId, 'Không thể hiểu yêu cầu từ câu hỏi. Vui lòng thử hỏi đơn giản hơn (ví dụ: "Plan, hôm nay bán bao nhiêu thùng Lager").', mentionUserId, mentionUserName);
       return;
     }
 
-    // 6) Normalize target column -> index
     let targetColIdx = null;
     const tcol = interpretation.target_column;
-    // nếu AI gửi letter như "Q" hoặc gửi header name
-    if (/^[A-Z]$/.test(tcol)) {
-      targetColIdx = tcol.charCodeAt(0) - 'A'.charCodeAt(0);
-    } else if (headerToIndex.hasOwnProperty(tcol)) {
-      targetColIdx = headerToIndex[tcol];
-    } else {
-      // try fuzzy match header names (case-insensitive includes)
+    if (/^[A-Z]$/.test(tcol)) targetColIdx = tcol.charCodeAt(0) - 'A'.charCodeAt(0);
+    else if (headerToIndex.hasOwnProperty(tcol)) targetColIdx = headerToIndex[tcol];
+    else {
       const foundHeader = headers.find(h => h && h.toLowerCase().includes((tcol || '').toLowerCase()));
       if (foundHeader) targetColIdx = headerToIndex[foundHeader];
     }
 
-    // 7) Normalize match column / value
     let matchColIdx = null;
     if (interpretation.match_column) {
       const mcol = interpretation.match_column;
-      if (/^[A-Z]$/.test(mcol)) {
-        matchColIdx = mcol.charCodeAt(0) - 'A'.charCodeAt(0);
-      } else if (headerToIndex.hasOwnProperty(mcol)) {
-        matchColIdx = headerToIndex[mcol];
-      } else {
+      if (/^[A-Z]$/.test(mcol)) matchColIdx = mcol.charCodeAt(0) - 'A'.charCodeAt(0);
+      else if (headerToIndex.hasOwnProperty(mcol)) matchColIdx = headerToIndex[mcol];
+      else {
         const foundHeader = headers.find(h => h && h.toLowerCase().includes((mcol || '').toLowerCase()));
         if (foundHeader) matchColIdx = headerToIndex[foundHeader];
       }
     }
 
     const matchValue = interpretation.match_value;
-
-    // 8) Execute action
     const action = interpretation.action;
     let resultText = '';
-
-    // helper: get numeric cell value
     const parseNum = v => {
       if (v === '' || v === null || v === undefined) return NaN;
       const cleaned = v.toString().replace(/[^\d\.\-]/g, '');
@@ -576,12 +535,9 @@ async function processPlanQuery(messageId, spreadsheetToken, userMessage, token,
     };
 
     if (action === 'value') {
-      // find first row where matchCol matches matchValue
-      if (matchColIdx === null || matchValue === undefined) {
-        resultText = 'Thiếu thông tin để tìm hàng (match column hoặc match value).';
-      } else if (targetColIdx === null) {
-        resultText = 'Không xác định được cột dữ liệu cần lấy.';
-      } else {
+      if (matchColIdx === null || matchValue === undefined) resultText = 'Thiếu thông tin để tìm hàng (match column hoặc match value).';
+      else if (targetColIdx === null) resultText = 'Không xác định được cột dữ liệu cần lấy.';
+      else {
         let found = false;
         for (let r = 0; r < rows.length; r++) {
           const cell = (rows[r][matchColIdx] || '').toString().trim();
@@ -595,30 +551,21 @@ async function processPlanQuery(messageId, spreadsheetToken, userMessage, token,
         if (!found) resultText = `Không tìm thấy hàng khớp "${matchValue}" trong cột ${headers[matchColIdx] || matchColIdx}.`;
       }
     } else if (action === 'sum' || action === 'avg' || action === 'count') {
-      if (targetColIdx === null) {
-        resultText = 'Không xác định được cột để tính tổng.';
-      } else {
+      if (targetColIdx === null) resultText = 'Không xác định được cột để tính tổng.';
+      else {
         let filteredRows = rows;
         if (matchColIdx !== null && matchValue !== undefined) {
           filteredRows = rows.filter(r => (r[matchColIdx] || '').toString().toLowerCase().includes(matchValue.toString().toLowerCase()));
         }
         const nums = filteredRows.map(r => parseNum(r[targetColIdx])).filter(n => !isNaN(n));
-        if (nums.length === 0) {
-          resultText = 'Không có giá trị số để tính toán.';
-        } else {
-          if (action === 'sum') {
-            const s = nums.reduce((a,b)=>a+b,0);
-            resultText = `Tổng (${headers[targetColIdx] || 'target'}): ${s}`;
-          } else if (action === 'avg') {
-            const s = nums.reduce((a,b)=>a+b,0) / nums.length;
-            resultText = `Trung bình (${headers[targetColIdx] || 'target'}): ${s.toFixed(2)}`;
-          } else if (action === 'count') {
-            resultText = `Số dòng thỏa: ${nums.length}`;
-          }
+        if (nums.length === 0) resultText = 'Không có giá trị số để tính toán.';
+        else {
+          if (action === 'sum') resultText = `Tổng (${headers[targetColIdx] || 'target'}): ${nums.reduce((a,b)=>a+b,0)}`;
+          else if (action === 'avg') resultText = `Trung bình (${headers[targetColIdx] || 'target'}): ${(nums.reduce((a,b)=>a+b,0)/nums.length).toFixed(2)}`;
+          else if (action === 'count') resultText = `Số dòng thỏa: ${nums.length}`;
         }
       }
     } else if (action === 'percent_change') {
-      // expects interpretation to include prev_column or similar
       const prevCol = interpretation.prev_column;
       let prevIdx = null;
       if (prevCol) {
@@ -632,16 +579,14 @@ async function processPlanQuery(messageId, spreadsheetToken, userMessage, token,
       if (prevIdx === null || targetColIdx === null || matchColIdx === null || !matchValue) {
         resultText = 'Thiếu thông tin để tính percent_change (cần prev column, target column, match column/value).';
       } else {
-        // find row
         let found = false;
         for (let r = 0; r < rows.length; r++) {
           const cell = (rows[r][matchColIdx] || '').toString().trim();
           if (cell && matchValue && cell.toLowerCase().includes(matchValue.toString().toLowerCase())) {
             const prevVal = parseNum(rows[r][prevIdx]);
             const curVal = parseNum(rows[r][targetColIdx]);
-            if (isNaN(prevVal) || isNaN(curVal)) {
-              resultText = 'Các giá trị không phải số, không thể tính phần trăm.';
-            } else {
+            if (isNaN(prevVal) || isNaN(curVal)) resultText = 'Các giá trị không phải số, không thể tính phần trăm.';
+            else {
               const change = prevVal === 0 ? (curVal > 0 ? Infinity : 0) : ((curVal - prevVal) / prevVal) * 100;
               const pct = change === Infinity ? '∞' : `${change.toFixed(1)}%`;
               resultText = `${matchValue}: ${prevVal} → ${curVal} (Thay đổi: ${pct})`;
@@ -652,11 +597,8 @@ async function processPlanQuery(messageId, spreadsheetToken, userMessage, token,
         }
         if (!found) resultText = `Không tìm thấy hàng khớp "${matchValue}" trong cột ${headers[matchColIdx] || matchColIdx}.`;
       }
-    } else {
-      resultText = 'Action không được hỗ trợ: ' + action;
-    }
+    } else resultText = 'Action không được hỗ trợ: ' + action;
 
-    // 9) Gửi kết quả
     await replyToLark(messageId, resultText, mentionUserId, mentionUserName);
   } catch (err) {
     console.log('Lỗi processPlanQuery:', err.message);
@@ -665,6 +607,7 @@ async function processPlanQuery(messageId, spreadsheetToken, userMessage, token,
     pendingTasks.delete(messageId);
   }
 }
+
 
 /* ===========================
    EXISTING: analyzeQueryAndProcessData (unchanged)
