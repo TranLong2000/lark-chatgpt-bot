@@ -295,9 +295,12 @@ async function getSaleComparisonData(token, prevCol, currentCol, withFilter = tr
       const prev = parseFloat(data[prevCol][i]) || 0;
       const current = parseFloat(data[currentCol][i]) || 0;
 
-      if (withFilter && current <= 10) continue; // lọc current > 10
+      // lọc prevCol > 3
+      if (withFilter && prev <= 3) continue;
+      
+      // bỏ các dòng prev=0 và current=0
       if (prev === 0 && current === 0) continue;
-
+      
       const change = prev === 0 ? (current > 0 ? Infinity : 0) : ((current - prev) / prev) * 100;
       results.push({ productName, prev, current, change });
     }
