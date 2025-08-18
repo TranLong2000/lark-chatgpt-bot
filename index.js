@@ -330,6 +330,10 @@ async function analyzeSalesChange(token) {
   const allData = await getSaleComparisonData(token, prevCol, currentCol);
   if (!allData.length) return null;
 
+  // Tính tổng số mã tăng/giảm trên toàn bộ dữ liệu (không filter)
+  const totalIncrease = allData.filter(r => r.change > 0).length;
+  const totalDecrease = allData.filter(r => r.change < 0).length;
+
   // Top 5 tăng mạnh: prev > 0 && current > 10
   const increases = allData
     .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
@@ -341,9 +345,6 @@ async function analyzeSalesChange(token) {
     .filter(r => r.prev > 10 && r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
-
-  const totalIncrease = increases.length;
-  const totalDecrease = decreases.length;
 
   // Tạo tin nhắn
   let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel}:\n`;
