@@ -347,7 +347,7 @@ async function analyzeSalesChange(token) {
     .slice(0, 5);
 
   // Tạo tin nhắn với currentLabel
-  let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel} (${currentCol} > 10):\n`;
+  let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel} (filter M > 3):\n`;
 
   if (increases.length) {
     msg += `\n🔥 Top 5 tăng mạnh (Tổng ${totalIncrease} SP tăng):\n`;
