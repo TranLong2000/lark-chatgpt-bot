@@ -272,9 +272,10 @@ async function sendMessageToGroup(token, chatId, messageText) {
 }
 
 /* ===========================
-   UPDATED: Sale comparison helpers
+   EXISTING: Sale comparison helpers
+   (unchanged logic, kept for compatibility)
    =========================== */
-async function getSaleComparisonData(token, prevCol, currentCol) {
+async function getSaleComparisonData(token, prevCol, currentCol, withFilter = true) {
   try {
     const cols = ['E', prevCol, currentCol];
     let data = {};
@@ -294,9 +295,12 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
       const prev = parseFloat(data[prevCol][i]) || 0;
       const current = parseFloat(data[currentCol][i]) || 0;
 
+      // lọc prevCol > 3
+      if (withFilter && prev <= 3) continue;
+      
       // bỏ các dòng prev=0 và current=0
       if (prev === 0 && current === 0) continue;
-
+      
       const change = prev === 0 ? (current > 0 ? Infinity : 0) : ((current - prev) / prev) * 100;
       results.push({ productName, prev, current, change });
     }
@@ -323,31 +327,30 @@ async function analyzeSalesChange(token) {
     currentLabel = "hôm nay";
   }
 
-  // Lấy toàn bộ dữ liệu
-  const allData = await getSaleComparisonData(token, prevCol, currentCol);
-  if (!allData.length) return null;
+  // Lấy dữ liệu sale so với prevCol
+  const filteredData = await getSaleComparisonData(token, prevCol, currentCol, true);
+  const allData = await getSaleComparisonData(token, prevCol, currentCol, false);
 
-  // Lọc riêng cho tăng mạnh: M > 0 && currentCol > 10
-  const increases = allData
-    .filter(r => r.prev > 0 && r.current > 10)
+  if (!filteredData.length) return null;
+
+  const totalIncrease = allData.filter(r => r.change > 0).length;
+  const totalDecrease = allData.filter(r => r.change < 0).length;
+
+  const increases = filteredData
     .filter(r => r.change >= 0 || r.change === Infinity)
     .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
     .slice(0, 5);
 
-  // Lọc riêng cho giảm mạnh: M > 10
-  const decreases = allData
-    .filter(r => r.prev > 10 && r.change < 0)
+  const decreases = filteredData
+    .filter(r => r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  const totalIncrease = increases.length;
-  const totalDecrease = decreases.length;
-
   // Tạo tin nhắn với currentLabel
-  let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel}:\n`;
+  let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel} (filter M > 3):\n`;
 
   if (increases.length) {
-    msg += `\n🔥 Top 5 tăng mạnh (M > 0 & ${currentCol} > 10, Tổng ${totalIncrease} SP tăng):\n`;
+    msg += `\n🔥 Top 5 tăng mạnh (Tổng ${totalIncrease} SP tăng):\n`;
     increases.forEach(r => {
       const pct = r.change === Infinity ? "+∞%" : `+${r.change.toFixed(1)}%`;
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
@@ -355,13 +358,47 @@ async function analyzeSalesChange(token) {
   }
 
   if (decreases.length) {
-    msg += `\n📉 Top 5 giảm mạnh (M > 10, Tổng ${totalDecrease} SP giảm):\n`;
+    msg += `\n📉 Top 5 giảm mạnh (Tổng ${totalDecrease} SP giảm):\n`;
     decreases.forEach(r => {
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
     });
   }
 
   return msg;
+}
+
+/* ===========================
+   EXISTING: checkB2ValueChange
+   (unchanged)
+   =========================== */
+async function checkB2ValueChange() {
+  try {
+    const token = await getAppAccessToken();
+    const currentB2Value = await getCellB2Value(token);
+
+    console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
+
+    if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
+      let messageText = `✅ Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
+
+      // Gửi tin nhắn "Đã đổ Stock"
+      for (const chatId of GROUP_CHAT_IDS) {
+        await sendMessageToGroup(token, chatId, messageText);
+      }
+
+      // Gọi phân tích tăng/giảm ngay sau
+      const salesMsg = await analyzeSalesChange(token);
+      if (salesMsg) {
+        for (const chatId of GROUP_CHAT_IDS) {
+          await sendMessageToGroup(token, chatId, salesMsg);
+        }
+      }
+    }
+
+    lastB2Value = currentB2Value;
+  } catch (err) {
+    console.log('Lỗi checkB2ValueChange:', err.message);
+  }
 }
 
 /* ===========================
