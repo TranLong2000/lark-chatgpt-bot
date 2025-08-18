@@ -314,16 +314,17 @@ async function analyzeSalesChange(token) {
   const compareMode = now.getHours() < 12 ? "morning" : "afternoon";
 
   const prevCol = "M"; // AVG sale 7 ngày trước
-  let currentCol, compareLabel;
+  let currentCol, currentLabel;
 
   if (compareMode === "morning") {
-    currentCol = "P"; 
-    compareLabel = "M (AVG 7 ngày trước) → P (hôm qua)";
+    currentCol = "P";
+    currentLabel = "hôm qua";
   } else {
-    currentCol = "Q"; 
-    compareLabel = "M (AVG 7 ngày trước) → Q (hôm nay)";
+    currentCol = "Q";
+    currentLabel = "hôm nay";
   }
 
+  // Lấy dữ liệu sale so với prevCol
   const filteredData = await getSaleComparisonData(token, prevCol, currentCol, true);
   const allData = await getSaleComparisonData(token, prevCol, currentCol, false);
 
@@ -342,7 +343,9 @@ async function analyzeSalesChange(token) {
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  let msg = `📊 So sánh số Sale (lọc ${currentCol} > 10):\n`;
+  // Tạo tin nhắn với currentLabel
+  let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel} (${currentCol} > 10):\n`;
+
   if (increases.length) {
     msg += `\n🔥 Top 5 tăng mạnh (Tổng ${totalIncrease} SP tăng):\n`;
     increases.forEach(r => {
@@ -350,6 +353,7 @@ async function analyzeSalesChange(token) {
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
     });
   }
+
   if (decreases.length) {
     msg += `\n📉 Top 5 giảm mạnh (Tổng ${totalDecrease} SP giảm):\n`;
     decreases.forEach(r => {
