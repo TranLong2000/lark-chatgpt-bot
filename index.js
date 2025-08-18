@@ -313,11 +313,15 @@ async function analyzeSalesChange(token) {
   const now = new Date();
   const compareMode = now.getHours() < 12 ? "morning" : "afternoon";
 
-  let prevCol, currentCol, compareLabel;
+  const prevCol = "M"; // AVG sale 7 ngày trước
+  let currentCol, compareLabel;
+
   if (compareMode === "morning") {
-    prevCol = "O"; currentCol = "P"; compareLabel = "O (2 hôm trước) → P (hôm qua)";
+    currentCol = "P"; 
+    compareLabel = "M (AVG 7 ngày trước) → P (hôm qua)";
   } else {
-    prevCol = "P"; currentCol = "Q"; compareLabel = "P (hôm qua) → Q (hôm nay)";
+    currentCol = "Q"; 
+    compareLabel = "M (AVG 7 ngày trước) → Q (hôm nay)";
   }
 
   const filteredData = await getSaleComparisonData(token, prevCol, currentCol, true);
