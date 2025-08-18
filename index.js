@@ -1,4 +1,3 @@
-// index.js - FULL (mã gốc của bạn + chức năng Plan)
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
@@ -313,12 +312,12 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
    =========================== */
 async function analyzeSalesChange(token) {
   const now = new Date();
-  const compareMode = now.getHours() < 12 ? "morning" : "afternoon";
+  const hour = now.getHours();
 
   const prevCol = "M"; // AVG sale 7 ngày trước
   let currentCol, currentLabel;
 
-  if (compareMode === "morning") {
+  if (hour < 12) {
     currentCol = "P";
     currentLabel = "hôm qua";
   } else {
@@ -330,7 +329,7 @@ async function analyzeSalesChange(token) {
   const allData = await getSaleComparisonData(token, prevCol, currentCol);
   if (!allData.length) return null;
 
-  // Tính tổng số mã tăng/giảm trên toàn bộ dữ liệu (không filter)
+  // Tổng số mã tăng/giảm trên toàn bộ dữ liệu
   const totalIncrease = allData.filter(r => r.change > 0).length;
   const totalDecrease = allData.filter(r => r.change < 0).length;
 
@@ -350,7 +349,7 @@ async function analyzeSalesChange(token) {
   let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel}:\n`;
 
   if (increases.length) {
-    msg += `\n🔥 Top 5 tăng mạnh (M > 0 & ${currentCol} > 10, Tổng ${totalIncrease} SP tăng):\n`;
+    msg += `\n🔥 Top 5 HOT SKU tăng mạnh/ Tổng ${totalIncrease} SKU tăng:\n`;
     increases.forEach(r => {
       const pct = r.change === Infinity ? "+∞%" : `+${r.change.toFixed(1)}%`;
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
@@ -358,7 +357,7 @@ async function analyzeSalesChange(token) {
   }
 
   if (decreases.length) {
-    msg += `\n📉 Top 5 giảm mạnh (M > 10, Tổng ${totalDecrease} SP giảm):\n`;
+    msg += `\n📉 Top 5 HOT SKU giảm mạnh/ Tổng ${totalDecrease} SKU giảm:\n`;
     decreases.forEach(r => {
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
     });
