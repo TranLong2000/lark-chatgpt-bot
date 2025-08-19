@@ -121,9 +121,9 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
 /* ===========================
    HELPERS: extract file/image content
    =========================== */
-async function extractFileContent(fileUrl, fileType) {
+async function extractFileContent(fileUrl, fileType, token) {
   try {
-    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 20000 });
+    const response = await axios.get(fileUrl, { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer', timeout: 20000 });
     const buffer = Buffer.from(response.data);
 
     if (fileType === 'pdf') {
@@ -535,28 +535,11 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
 }
 
 /* ===========================
-   Check Remaining Credits
-   =========================== */
-async function checkRemainingCredits() {
-  try {
-    const response = await axios.get('https://openrouter.ai/api/v1/key', {
-      headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` }
-    });
-    const { usage, limit } = response.data.data;
-    const remaining = limit ? limit - usage : 'Unlimited';
-    console.log(`Remaining credits: ${remaining}`);
-  } catch (err) {
-    console.log('Error checking credits:', err.message);
-  }
-}
-
-/* ===========================
    NEW FUNCTION: interpretSheetQuery
    - AI đọc câu hỏi và chọn cột, hành động
    =========================== */
 async function interpretSheetQuery(userMessage, columnData) {
   try {
-    await checkRemainingCredits();
     const prompt = `
 Bạn là trợ lý phân tích bảng. Tôi cung cấp:
 1) Câu hỏi user: """${userMessage}"""
@@ -771,13 +754,15 @@ app.post('/webhook', async (req, res) => {
       // ======= XỬ LÝ FILE / IMAGE =========
       if (['file','image'].includes(messageType)) {
         try {
-          const fileKey = message.file_key;
+          const content = JSON.parse(message.content);
+          const keyField = messageType === 'image' ? 'image_key' : 'file_key';
+          const fileKey = content[keyField];
           if (!fileKey) {
-            await replyToLark(messageId, 'Không tìm thấy file_key. Vui lòng kiểm tra lại.', mentionUserId, mentionUserName);
+            await replyToLark(messageId, 'Không tìm thấy key file/image. Vui lòng kiểm tra lại.', mentionUserId, mentionUserName);
             return;
           }
 
-          const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
+          const fileName = content.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
           const ext = path.extname(fileName).slice(1).toLowerCase();
 
           pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
@@ -799,19 +784,14 @@ app.post('/webhook', async (req, res) => {
         const pendingFile = pendingFiles.get(chatId);
         if (pendingFile && pendingFile.messageId === message.parent_id) {
           try {
-            const fileUrlResp = await axios.get(
-              `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${pendingFile.fileKey}/download_url`,
-              { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
-            );
-            const fileUrl = fileUrlResp.data.data.download_url;
-            const extractedText = await extractFileContent(fileUrl, pendingFile.ext);
+            const fileUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${pendingFile.messageId}/resources/${pendingFile.fileKey}`;
+            const extractedText = await extractFileContent(fileUrl, pendingFile.ext, token);
             if (!extractedText || extractedText.startsWith('Lỗi')) {
               await replyToLark(messageId, `Không thể trích xuất nội dung từ file ${pendingFile.fileName}.`, mentionUserId, mentionUserName);
             } else {
               const combinedMessage = contentAfterMention + `\nNội dung từ file: ${extractedText}`;
               updateConversationMemory(chatId, 'user', combinedMessage);
               const memory = conversationMemory.get(chatId) || [];
-              await checkRemainingCredits();
               const aiResp = await axios.post(
                 'https://openrouter.ai/api/v1/chat/completions',
                 {
@@ -873,7 +853,6 @@ app.post('/webhook', async (req, res) => {
             }
           });
 
-          await checkRemainingCredits();
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
