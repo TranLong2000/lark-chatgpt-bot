@@ -217,7 +217,7 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
 /* ===========================
    SHEETS helper: read sheet range
    =========================== */
-async function getSheetData(spreadsheetToken, token, range = 'A:Z') {
+async function getSheetData(spreadsheetToken, token, range = 'A:AL') {
   const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${range}`;
   try {
     const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
@@ -271,113 +271,102 @@ async function sendMessageToGroup(token, chatId, messageText) {
 }
 
 /* ===========================
-   UPDATED: Sale comparison helpers
+   Function: getSaleComparisonData
    =========================== */
 async function getSaleComparisonData(token, prevCol, currentCol) {
+  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN}/values_batch_get`;
+
   try {
-    // Các cột cố định + cột động (loại trùng)
-    const baseCols = ['A', 'E', 'F', 'G', 'M', 'N', 'O', 'P', 'AK', prevCol, currentCol];
-    const cols = Array.from(new Set(baseCols));
+    const resp = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      },
+      params: {
+        ranges: `Sales!AL`
+      },
+      timeout: 30000 // tăng timeout lên 30s
+    });
 
-    const colData = {};
-    for (const col of cols) {
-      const url =
-        `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/` +
-        `${SHEET_ID}!${col}:${col}?valueRenderOption=FormattedValue`;
+    const sheet = resp.data.data.valueRanges[0].values;
+    if (!sheet || !sheet.length) return [];
 
-      const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 20000
-      });
+    // Lấy header
+    const header = sheet[0];
+    const rows = sheet.slice(1);
 
-      colData[col] = (resp?.data?.data?.valueRange?.values || []).map(r => (r?.[0] ?? ''));
-    }
+    const colIndex = {};
+    header.forEach((h, i) => {
+      colIndex[h.trim()] = i;
+    });
 
-    const lenByE = (colData['E'] || []).length;
-    const maxLen = Math.max(...Object.values(colData).map(a => a.length));
-    const totalRows = lenByE > 0 ? lenByE : maxLen;
-
-    const getCell = (col, i) =>
-      colData[col] && colData[col][i] !== undefined ? colData[col][i] : '';
-
-    const toNumber = (v) => {
-      if (v === null || v === undefined) return 0;
-      const s = String(v).trim().replace(/,/g, '');
-      const n = parseFloat(s);
-      return Number.isFinite(n) ? n : 0;
-    };
-
-    const results = [];
-    for (let i = 1; i < totalRows; i++) {
-      const sku         = getCell('A', i) || '';
-      const productName = getCell('E', i) || `Dòng ${i + 1}`;
-      const warehouse   = getCell('F', i) || '';
-      const stock       = toNumber(getCell('G', i));
-      const avr7days    = getCell('M', i) || '';
-      const sale3day    = toNumber(getCell('N', i));
-      const sale2day    = toNumber(getCell('O', i));
-      const sale1day    = toNumber(getCell('P', i));
-      const finalStatus = getCell('AK', i) || '';
-
-      const prev    = toNumber(getCell(prevCol, i));
-      const current = toNumber(getCell(currentCol, i));
+    // Mapping dữ liệu
+    const data = rows.map(r => {
+      const warehouse = r[colIndex["F"]] || "";
+      const productName = r[colIndex["C"]] || "";
+      const finalStatus = r[colIndex["AK"]] || "";
+      const avr7days = Number(r[colIndex["M"]]) || 0;
+      const prev = Number(r[colIndex[prevCol]]) || 0;
+      const current = Number(r[colIndex[currentCol]]) || 0;
+      const stock = Number(r[colIndex["G"]]) || 0;
+      const sale1day = Number(r[colIndex["P"]]) || 0;
+      const sale2day = Number(r[colIndex["O"]]) || 0;
+      const sale3day = Number(r[colIndex["N"]]) || 0;
 
       let change = 0;
-      if (prev === 0 && current > 0) change = Infinity;
-      else if (prev > 0) change = ((current - prev) / prev) * 100;
+      if (prev > 0) change = ((current - prev) / prev) * 100;
+      else if (prev === 0 && current > 0) change = Infinity;
 
-      results.push({
-        sku,
-        productName,
+      return {
         warehouse,
-        stock,
-        avr7days,
-        sale3day,
-        sale2day,
-        sale1day,
+        productName,
         finalStatus,
+        avr7days,
         prev,
         current,
-        change
-      });
-    }
+        change,
+        stock,
+        sale1day,
+        sale2day,
+        sale3day
+      };
+    });
 
-    return results;
+    return data;
   } catch (err) {
-    console.log(`Lỗi lấy dữ liệu ${prevCol}/${currentCol}:`, err.message);
+    console.error("❌ Error getSaleComparisonDat", err.message);
     return [];
   }
 }
 
 /* ===========================
-   UPDATED: analyzeSalesChange (with OOS rule + fixed total SKU filter)
+   Function: analyzeSalesChange
    =========================== */
 async function analyzeSalesChange(token) {
   const now = new Date();
   const nowVN = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
   const hourVN = nowVN.getHours();
 
-  const prevCol = "M";
+  const prevCol = "M"; // AVG D-7
   let currentCol, currentLabel;
 
   if (hourVN < 12) {
-    currentCol = "P";
+    currentCol = "P"; // hôm qua
     currentLabel = "hôm qua";
   } else {
-    currentCol = "Q";
+    currentCol = "Q"; // hôm nay
     currentLabel = "hôm nay";
   }
 
   const allData = await getSaleComparisonData(token, prevCol, currentCol);
-  if (!allData.length) return null;
+  if (!allData.length) return "Không lấy được dữ liệu để phân tích.";
 
-  // Lọc cho TOP 5 (warehouse + avr7days, giữ nguyên như cũ)
-  const topData = allData.filter(r => 
+  // TOP 5: warehouse + avr7days
+  const topData = allData.filter(r =>
     r.warehouse === "Binh Tan Warehouse" && r.avr7days
   );
 
-  // Lọc cho tổng SKU (On sale + warehouse + avr7days)
-  const totalData = allData.filter(r => 
+  // Tổng SKU: On sale + warehouse + avr7days
+  const totalData = allData.filter(r =>
     r.finalStatus.trim() === "On sale" &&
     r.warehouse === "Binh Tan Warehouse" &&
     r.avr7days
@@ -387,41 +376,46 @@ async function analyzeSalesChange(token) {
     return `Không có dữ liệu cho Warehouse: Binh Tan Warehouse`;
   }
 
+  // Tổng SKU tăng/giảm
   const totalIncrease = totalData.filter(r => r.change > 0).length;
   const totalDecrease = totalData.filter(r => r.change < 0).length;
 
+  // TOP tăng mạnh
   const increases = topData
     .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
-    .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
+    .sort((a, b) =>
+      (b.change === Infinity ? Infinity : b.change) -
+      (a.change === Infinity ? Infinity : a.change)
+    )
     .slice(0, 5);
 
+  // TOP giảm mạnh
   const decreases = topData
     .filter(r => r.prev > 10 && r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  // OOS với rule mới: P/O/N
+  // SKU OOS
   const allOOS = totalData
-    .filter(r => Number(r.stock) === 0)
+    .filter(r => r.stock === 0)
     .map(r => {
-      let oosLabel = "";
-      if (r.sale1day === 0) oosLabel = "OOS 1 ngày";
-      if (r.sale1day === 0 && r.sale2day === 0) oosLabel = "OOS 2 ngày";
-      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) oosLabel = "OOS > 3 ngày";
+      let days = 0;
+      if (r.sale1day === 0) days = 1;
+      if (r.sale1day === 0 && r.sale2day === 0) days = 2;
+      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) days = 3;
 
       return {
         ...r,
-        oosLabel
+        daysOOS: days,
+        oosLabel: days === 0 ? "" : (days === 3 ? "OOS > 3 ngày" : `OOS ${days} ngày`)
       };
     })
-    .filter(r => r.oosLabel)
-    .sort((a, b) => {
-      const weight = (lbl) => lbl.includes("> 3") ? 3 : lbl.includes("2") ? 2 : 1;
-      return weight(b.oosLabel) - weight(a.oosLabel);
-    });
+    .filter(r => r.daysOOS > 0)
+    .sort((a, b) => b.daysOOS - a.daysOOS);
 
   const outOfStock = allOOS.slice(0, 5);
 
+  // Build message
   let msg = `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}:\n`;
 
   if (increases.length) {
@@ -622,7 +616,7 @@ Trả JSON ngắn, không thêm text khác.
    =========================== */
 async function processPlanQuery(messageId, spreadsheetToken, userMessage, token, mentionUserId, mentionUserName) {
   try {
-    const sheetData = await getSheetData(spreadsheetToken, token, 'A:Z');
+    const sheetData = await getSheetData(spreadsheetToken, token, 'A:AL');
     if (!sheetData || sheetData.length === 0) {
       await replyToLark(messageId, 'Không tìm thấy dữ liệu trên sheet.', mentionUserId, mentionUserName);
       return;
