@@ -525,13 +525,13 @@ async function checkB2ValueChange() {
 /* ===========================
    Conversation memory helper
    =========================== */
-function updateConversationMemory(chatId, role, content) {
+function updateConversationMemory(chatId, role, content, senderName = null) {
   if (!conversationMemory.has(chatId)) {
     conversationMemory.set(chatId, []);
   }
   const mem = conversationMemory.get(chatId);
-  mem.push({ role, content });
-  if (mem.length > 10) mem.shift();
+  mem.push({ role, content, senderName });
+  if (mem.length > 20) mem.shift(); // tăng buffer lên 20 câu
 }
 
 /* ===========================
@@ -881,29 +881,54 @@ app.post('/webhook', async (req, res) => {
       }
 
       // ======= XỬ LÝ CHAT AI BÌNH THƯỜNG =========
-      if (messageType === 'text' && contentAfterMention.trim()) {
-        try {
-          updateConversationMemory(chatId, 'user', contentAfterMention);
-          const memory = conversationMemory.get(chatId) || [];
-          const aiResp = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528:free',
-              messages: [...memory.map(({ role, content }) => ({ role, content })), { role: 'user', content: contentAfterMention }],
-              stream: false,
-            },
-            { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-          );
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả.';
-          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-          updateConversationMemory(chatId, 'assistant', cleanMessage);
-          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-        } catch {
-          await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả.', mentionUserId, mentionUserName);
-        }
-        return;
-      }
+if (messageType === 'text' && contentAfterMention.trim()) {
+  try {
+    // Lưu hội thoại kèm tên người gửi
+    updateConversationMemory(chatId, 'user', contentAfterMention, mentionUserName);
 
+    const memory = conversationMemory.get(chatId) || [];
+
+    // Biến đổi memory thành prompt với tên người gửi
+    const formattedHistory = memory.map(m => {
+      if (m.role === 'user') {
+        return { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` };
+      } else {
+        return { role: 'assistant', content: m.content };
+      }
+    });
+
+    const aiResp = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn là trợ lý AI trong nhóm chat. Luôn phân biệt rõ ai nói gì dựa trên tên ở đầu câu.' },
+          ...formattedHistory,
+          { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 20000,
+      }
+    );
+
+    const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả.';
+    const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+
+    // Lưu phản hồi bot
+    updateConversationMemory(chatId, 'assistant', cleanMessage, 'BOT');
+
+    await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+  } catch (err) {
+    await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả.', mentionUserId, mentionUserName);
+  }
+  return;
+}
       await replyToLark(messageId, 'Vui lòng sử dụng lệnh Plan, PUR, SALE, FIN kèm dấu phẩy hoặc gửi file/hình ảnh.', mentionUserId, mentionUserName);
     }
   } catch {
