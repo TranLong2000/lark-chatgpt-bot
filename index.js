@@ -531,7 +531,7 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
   }
   const mem = conversationMemory.get(chatId);
   mem.push({ role, content, senderName });
-  if (mem.length > 20) mem.shift();
+  if (mem.length > 20) mem.shift(); // giữ tối đa 20 câu
 }
 
 /* ===========================
@@ -818,7 +818,7 @@ app.post('/webhook', async (req, res) => {
       }
 
       // ======= XỬ LÝ CHAT AI =========
-      if (messageType === 'text' && contentAfterMention.trim()) {
+if (messageType === 'text' && contentAfterMention.trim()) {
   try {
     // Lưu hội thoại kèm tên người gửi
     updateConversationMemory(chatId, 'user', contentAfterMention, mentionUserName);
@@ -830,7 +830,7 @@ app.post('/webhook', async (req, res) => {
       if (m.role === 'user') {
         return { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` };
       } else {
-        return { role: 'assistant', content: `${m.content}` };
+        return { role: 'assistant', content: `L-GPT: ${m.content}` };
       }
     });
 
@@ -839,7 +839,7 @@ app.post('/webhook', async (req, res) => {
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là trợ lý AI lạnh lùng, đáng yêu tuỳ vào cảm xúc của người hội thoại, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
+          { role: 'system', content: 'Bạn là trợ lý AI lạnh lùng, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
           ...formattedHistory,
           { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
         ],
