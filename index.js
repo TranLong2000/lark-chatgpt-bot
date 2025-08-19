@@ -535,11 +535,28 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
 }
 
 /* ===========================
+   Check Remaining Credits
+   =========================== */
+async function checkRemainingCredits() {
+  try {
+    const response = await axios.get('https://openrouter.ai/api/v1/key', {
+      headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` }
+    });
+    const { usage, limit } = response.data.data;
+    const remaining = limit ? limit - usage : 'Unlimited';
+    console.log(`Remaining credits: ${remaining}`);
+  } catch (err) {
+    console.log('Error checking credits:', err.message);
+  }
+}
+
+/* ===========================
    NEW FUNCTION: interpretSheetQuery
    - AI đọc câu hỏi và chọn cột, hành động
    =========================== */
 async function interpretSheetQuery(userMessage, columnData) {
   try {
+    await checkRemainingCredits();
     const prompt = `
 Bạn là trợ lý phân tích bảng. Tôi cung cấp:
 1) Câu hỏi user: """${userMessage}"""
@@ -705,7 +722,7 @@ app.post('/webhook', async (req, res) => {
       if (senderId === (process.env.BOT_SENDER_ID || '')) return res.sendStatus(200);
 
       const isBotMentioned = mentions.some(m => m.id.open_id === BOT_OPEN_ID);
-      if (!isBotMentioned && !['file','image','text'].includes(messageType)) return res.sendStatus(200);
+      if (!isBotMentioned) return res.sendStatus(200);
       res.sendStatus(200);
 
       const token = await getAppAccessToken();
@@ -794,6 +811,7 @@ app.post('/webhook', async (req, res) => {
               const combinedMessage = contentAfterMention + `\nNội dung từ file: ${extractedText}`;
               updateConversationMemory(chatId, 'user', combinedMessage);
               const memory = conversationMemory.get(chatId) || [];
+              await checkRemainingCredits();
               const aiResp = await axios.post(
                 'https://openrouter.ai/api/v1/chat/completions',
                 {
@@ -825,7 +843,7 @@ app.post('/webhook', async (req, res) => {
         const mentions = message.mentions || [];
 
         // Kiểm tra bot có bị mention không
-        const botMentioned = mentions.some(m => m.id?.app_id === process.env.LARK_APP_ID);
+        const botMentioned = mentions.some(m => m.id.open_id === BOT_OPEN_ID);
 
         // Nếu không mention bot thì bỏ qua
         if (!botMentioned) {
@@ -855,6 +873,7 @@ app.post('/webhook', async (req, res) => {
             }
           });
 
+          await checkRemainingCredits();
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
