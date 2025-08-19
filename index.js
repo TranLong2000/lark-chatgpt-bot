@@ -880,7 +880,7 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-if (messageType === 'text' && contentAfterMention.trim()) {
+       if (messageType === 'text' && contentAfterMention.trim()) {
   try {
     // Lưu hội thoại kèm tên người gửi
     updateConversationMemory(chatId, 'user', contentAfterMention, mentionUserName);
