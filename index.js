@@ -869,7 +869,7 @@ app.post('/webhook', async (req, res) => {
             if (m.role === 'user') {
               return { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` };
             } else {
-              return { role: 'assistant', content: `L-GPT: ${m.content}` };
+              return { role: 'assistant', content: `${m.content}` };
             }
           });
 
@@ -879,7 +879,7 @@ app.post('/webhook', async (req, res) => {
             {
               model: 'deepseek/deepseek-r1-0528:free',
               messages: [
-                { role: 'system', content: 'Bạn là một trợ lý AI lạnh lùng, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
+                { role: 'system', content: 'Bạn là một trợ lý AI phong cách tổng tài bá đạo nhưng vô cùng ngoan ngoãn nghe lời, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
                 ...formattedHistory,
                 { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
               ],
@@ -898,7 +898,7 @@ app.post('/webhook', async (req, res) => {
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
 
           // Lưu phản hồi bot với tên L-GPT
-          updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+             updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
 
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
         } catch (err) {
