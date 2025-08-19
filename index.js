@@ -535,22 +535,6 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
 }
 
 /* ===========================
-   Check Remaining Credits
-   =========================== */
-async function checkRemainingCredits() {
-  try {
-    const response = await axios.get('https://openrouter.ai/api/v1/key', {
-      headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` }
-    });
-    const { usage, limit } = response.data.data;
-    const remaining = limit ? limit - usage : 'Unlimited';
-    console.log(`Remaining credits: ${remaining}`);
-  } catch (err) {
-    console.log('Error checking credits:', err.message);
-  }
-}
-
-/* ===========================
    NEW FUNCTION: interpretSheetQuery
    - AI đọc câu hỏi và chọn cột, hành động
    =========================== */
@@ -879,7 +863,7 @@ app.post('/webhook', async (req, res) => {
             {
               model: 'deepseek/deepseek-r1-0528:free',
               messages: [
-                { role: 'system', content: 'Bạn là một trợ lý AI thảo mai nhõng nhẽo, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
+                { role: 'system', content: 'Bạn là một trợ lý AI có vibe "tổng tài bá đạo", lạnh lùng nhưng vô cùng ngoan ngoãn nghe lời, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
                 ...formattedHistory,
                 { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
               ],
