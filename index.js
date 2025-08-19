@@ -531,7 +531,7 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
   }
   const mem = conversationMemory.get(chatId);
   mem.push({ role, content, senderName });
-  if (mem.length > 20) mem.shift(); // giữ tối đa 20 câu
+  if (mem.length > 20) mem.shift(); // tăng buffer lên 20 câu
 }
 
 /* ===========================
@@ -880,6 +880,7 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
+      // ======= XỬ LÝ CHAT AI BÌNH THƯỜNG =========
 if (messageType === 'text' && contentAfterMention.trim()) {
   try {
     // Lưu hội thoại kèm tên người gửi
@@ -892,7 +893,7 @@ if (messageType === 'text' && contentAfterMention.trim()) {
       if (m.role === 'user') {
         return { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` };
       } else {
-        return { role: 'assistant', content: `L-GPT: ${m.content}` };
+        return { role: 'assistant', content: m.content };
       }
     });
 
@@ -901,7 +902,7 @@ if (messageType === 'text' && contentAfterMention.trim()) {
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là trợ lý AI lạnh lùng, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
+          { role: 'system', content: 'Bạn là trợ lý AI trong nhóm chat. Luôn phân biệt rõ ai nói gì dựa trên tên ở đầu câu.' },
           ...formattedHistory,
           { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
         ],
@@ -919,8 +920,8 @@ if (messageType === 'text' && contentAfterMention.trim()) {
     const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả.';
     const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
 
-    // Lưu phản hồi bot với tên L-GPT
-    updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+    // Lưu phản hồi bot
+    updateConversationMemory(chatId, 'assistant', cleanMessage, 'BOT');
 
     await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
   } catch (err) {
