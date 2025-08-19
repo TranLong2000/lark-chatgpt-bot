@@ -392,20 +392,22 @@ async function analyzeSalesChange(token) {
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  // OOS với số ngày hết hàng
+  // OOS với số ngày hết hàng theo rule P/O/N
   const allOOS = filteredData
     .filter(r => r.finalStatus.trim() === "On sale" && Number(r.stock) === 0)
     .map(r => {
       let days = 0;
-      if (r.sale3day === 0) days++;
-      if (r.sale2day === 0) days++;
-      if (r.sale1day === 0) days++;
+      if (r.sale1day === 0) days = 1;
+      if (r.sale1day === 0 && r.sale2day === 0) days = 2;
+      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) days = 3;
+
       return {
         ...r,
         daysOOS: days,
-        oosLabel: days >= 3 ? "OOS > 3 ngày" : `OOS ${days} ngày`
+        oosLabel: days === 0 ? "" : (days === 3 ? "OOS > 3 ngày" : `OOS ${days} ngày`)
       };
     })
+    .filter(r => r.daysOOS > 0)
     .sort((a, b) => b.daysOOS - a.daysOOS);
 
   const outOfStock = allOOS.slice(0, 5);
@@ -428,7 +430,7 @@ async function analyzeSalesChange(token) {
   }
 
   if (outOfStock.length) {
-    msg += `\n🚨 Top 5 SKU hết hàng/ Tổng ${allOOS.length} SKU OOS:\n`;
+    msg += `\n🚨 SKU hết hàng/ Tổng ${allOOS.length} SKU OOS:\n`;
     outOfStock.forEach(r => {
       msg += `- ${r.productName} (${r.oosLabel})\n`;
     });
