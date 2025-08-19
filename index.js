@@ -388,11 +388,13 @@ async function analyzeSalesChange(token) {
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  // 🚨 Out of Stock SKU (Trạng thái cuối cùng = On sale, tồn kho = 0)
-  const outOfStock = filteredData.filter(r => r.finalStatus === "On sale" && Number(r.stock || 0) === 0);
+  // 🚨 Top 5 Out of Stock (On sale nhưng tồn kho = 0)
+  const outOfStock = filteredData
+    .filter(r => r.finalStatus === "On sale" && Number(r.stock) === 0)
+    .slice(0, 5);
 
   // Tạo tin nhắn
-  let msg = `📊 Biến động Sale (Warehouse: Binh Tan Warehouse): AVG 7 ngày trước → ${currentLabel}:\n`;
+  let msg = `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}:\n`;
 
   if (increases.length) {
     msg += `\n🔥 Top 5 HOT SKU tăng mạnh/ Tổng ${totalIncrease} SKU tăng:\n`;
@@ -410,13 +412,10 @@ async function analyzeSalesChange(token) {
   }
 
   if (outOfStock.length) {
-    msg += `\n🚨 Out of Stock (${outOfStock.length} SKU, On sale nhưng tồn kho = 0):\n`;
-    outOfStock.slice(0, 10).forEach(r => { // giới hạn 10 SKU đầu tiên để tránh quá dài
+    msg += `\n🚨 Top 5 SKU Out of Stock:\n`;
+    outOfStock.forEach(r => {
       msg += `- ${r.productName} (SKU: ${r.sku})\n`;
     });
-    if (outOfStock.length > 10) {
-      msg += `... và ${outOfStock.length - 10} SKU khác.\n`;
-    }
   }
 
   return msg;
