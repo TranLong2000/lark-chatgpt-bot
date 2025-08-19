@@ -392,7 +392,9 @@ async function analyzeSalesChange(token) {
   console.log("🔎 Debug finalStatus & stock:");
   filteredData.forEach(r => {
     if (Number(r.stock) === 0) {
-      console.log(`SKU=${r.sku}, finalStatus="${r.finalStatus}", stock=${r.stock}`);
+      console.log(
+        `SKU=${r.sku}, finalStatus="${r.finalStatus}", stock=${r.stock}, prev=${r.prev}, current=${r.current}`
+      );
     }
   });
 
@@ -431,6 +433,7 @@ async function analyzeSalesChange(token) {
 
   return msg;
 }
+
 
 /* ===========================
    EXISTING: checkB2ValueChange
