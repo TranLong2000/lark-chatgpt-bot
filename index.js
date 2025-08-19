@@ -350,7 +350,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 }
 
 /* ===========================
-   UPDATED: analyzeSalesChange (with OOS days)
+   UPDATED: analyzeSalesChange (fix total SKU filter)
    =========================== */
 async function analyzeSalesChange(token) {
   const now = new Date();
@@ -371,30 +371,38 @@ async function analyzeSalesChange(token) {
   const allData = await getSaleComparisonData(token, prevCol, currentCol);
   if (!allData.length) return null;
 
-  // lọc theo warehouse & có avr7days
-  const filteredData = allData.filter(r => 
+  // Lọc cho TOP 5 (warehouse + avr7days, giữ nguyên như cũ)
+  const topData = allData.filter(r => 
     r.warehouse === "Binh Tan Warehouse" && r.avr7days
   );
-  if (!filteredData.length) {
+
+  // Lọc cho tổng SKU (On sale + warehouse + avr7days)
+  const totalData = allData.filter(r => 
+    r.finalStatus.trim() === "On sale" &&
+    r.warehouse === "Binh Tan Warehouse" &&
+    r.avr7days
+  );
+
+  if (!topData.length) {
     return `Không có dữ liệu cho Warehouse: Binh Tan Warehouse`;
   }
 
-  const totalIncrease = filteredData.filter(r => r.change > 0).length;
-  const totalDecrease = filteredData.filter(r => r.change < 0).length;
+  const totalIncrease = totalData.filter(r => r.change > 0).length;
+  const totalDecrease = totalData.filter(r => r.change < 0).length;
 
-  const increases = filteredData
+  const increases = topData
     .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
     .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
     .slice(0, 5);
 
-  const decreases = filteredData
+  const decreases = topData
     .filter(r => r.prev > 10 && r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
   // OOS với số ngày hết hàng theo rule P/O/N
-  const allOOS = filteredData
-    .filter(r => r.finalStatus.trim() === "On sale" && Number(r.stock) === 0)
+  const allOOS = totalData
+    .filter(r => Number(r.stock) === 0)
     .map(r => {
       let days = 0;
       if (r.sale1day === 0) days = 1;
@@ -441,6 +449,7 @@ async function analyzeSalesChange(token) {
 
   return msg;
 }
+
 
 /* ===========================
    EXISTING: checkB2ValueChange
