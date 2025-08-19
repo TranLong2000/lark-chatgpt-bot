@@ -350,7 +350,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 }
 
 /* ===========================
-   UPDATED: analyzeSalesChange (fix total SKU filter)
+   UPDATED: analyzeSalesChange (with OOS rule + fixed total SKU filter)
    =========================== */
 async function analyzeSalesChange(token) {
   const now = new Date();
@@ -400,23 +400,25 @@ async function analyzeSalesChange(token) {
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  // OOS với số ngày hết hàng theo rule P/O/N
+  // OOS với rule mới: P/O/N
   const allOOS = totalData
     .filter(r => Number(r.stock) === 0)
     .map(r => {
-      let days = 0;
-      if (r.sale1day === 0) days = 1;
-      if (r.sale1day === 0 && r.sale2day === 0) days = 2;
-      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) days = 3;
+      let oosLabel = "";
+      if (r.sale1day === 0) oosLabel = "OOS 1 ngày";
+      if (r.sale1day === 0 && r.sale2day === 0) oosLabel = "OOS 2 ngày";
+      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) oosLabel = "OOS > 3 ngày";
 
       return {
         ...r,
-        daysOOS: days,
-        oosLabel: days === 0 ? "" : (days === 3 ? "OOS > 3 ngày" : `OOS ${days} ngày`)
+        oosLabel
       };
     })
-    .filter(r => r.daysOOS > 0)
-    .sort((a, b) => b.daysOOS - a.daysOOS);
+    .filter(r => r.oosLabel)
+    .sort((a, b) => {
+      const weight = (lbl) => lbl.includes("> 3") ? 3 : lbl.includes("2") ? 2 : 1;
+      return weight(b.oosLabel) - weight(a.oosLabel);
+    });
 
   const outOfStock = allOOS.slice(0, 5);
 
@@ -449,7 +451,6 @@ async function analyzeSalesChange(token) {
 
   return msg;
 }
-
 
 /* ===========================
    EXISTING: checkB2ValueChange
