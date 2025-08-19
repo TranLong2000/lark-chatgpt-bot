@@ -215,16 +215,31 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
 }
 
 /* ===========================
-   SHEETS helper: read sheet range
+   SHEETS helper: read sheet range (with retry + formatted values)
    =========================== */
-async function getSheetData(spreadsheetToken, token, range = 'A:AL') {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${range}`;
-  try {
-    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
-    return resp.data.data.valueRange.values || [];
-  } catch {
-    return [];
+async function getSheetData(spreadsheetToken, token, range = 'A:AK') {
+  const base = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values`;
+  const url = `${base}/${range}${range.includes('?') ? '&' : '?'}valueRenderOption=FormattedValue`;
+
+  const timeout = 60000;   // tăng timeout 60s
+  const maxRetries = 2;    // thử lại 2 lần
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout
+      });
+      return resp?.data?.data?.valueRange?.values || [];
+    } catch (err) {
+      if (attempt === maxRetries) {
+        console.log(`Lỗi getSheetData(${range}):`, err.message);
+        return [];
+      }
+      // chờ ngắn trước khi retry (backoff)
+      await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+    }
   }
+  return [];
 }
 
 /* ===========================
@@ -239,7 +254,7 @@ async function getCellB2Value(token) {
 
     const sum = values.reduce((acc, row) => {
       const value = row[0];
-      const num = parseFloat(value);
+      const num = parseFloat((value ?? '').toString().replace(/,/g, '')); // phòng trường hợp có dấu ,
       return isNaN(num) ? acc : acc + num;
     }, 0);
 
@@ -271,84 +286,106 @@ async function sendMessageToGroup(token, chatId, messageText) {
 }
 
 /* ===========================
+   Utils
+   =========================== */
+function colToIndex(col) {
+  // Convert "A"->0, "B"->1, ..., "Z"->25, "AA"->26, ...
+  let idx = 0;
+  for (let i = 0; i < col.length; i++) {
+    idx = idx * 26 + (col.charCodeAt(i) - 64);
+  }
+  return idx - 1;
+}
+function toNumber(v) {
+  if (v === null || v === undefined) return 0;
+  const s = String(v).trim().replace(/,/g, '');
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/* ===========================
    Function: getSaleComparisonData
+   - Đọc một lần A:AK
+   - Map theo chỉ số cột (thư mục)
    =========================== */
 async function getSaleComparisonData(token, prevCol, currentCol) {
-  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN}/values_batch_get`;
-
   try {
-    const resp = await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      },
-      params: {
-        ranges: `Sales!AL`
-      },
-      timeout: 30000 // tăng timeout lên 30s
-    });
+    const rows = await getSheetData(SPREADSHEET_TOKEN, token, `${SHEET_ID}!A:AK`);
+    if (!rows || rows.length <= 1) return [];
 
-    const sheet = resp.data.data.valueRanges[0].values;
-    if (!sheet || !sheet.length) return [];
+    // Chỉ số cột (0-based)
+    const col = {
+      A: 0,   // SKU (nếu bạn cần)
+      E: 4,   // Product Name
+      F: 5,   // Warehouse
+      G: 6,   // Stock
+      M: 12,  // AVR 7 days (text để check khác trống)
+      N: 13,  // Sale 3 ngày trước
+      O: 14,  // Sale 2 ngày trước
+      P: 15,  // Sale hôm qua
+      Q: 16,  // Sale hôm nay
+      AK: 36  // Final Status
+    };
 
-    // Lấy header
-    const header = sheet[0];
-    const rows = sheet.slice(1);
+    const prevIdx = colToIndex(prevCol);     // ví dụ "M" -> 12
+    const currIdx = colToIndex(currentCol);  // ví dụ "P"/"Q"
 
-    const colIndex = {};
-    header.forEach((h, i) => {
-      colIndex[h.trim()] = i;
-    });
+    const data = [];
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i] || [];
 
-    // Mapping dữ liệu
-    const data = rows.map(r => {
-      const warehouse = r[colIndex["F"]] || "";
-      const productName = r[colIndex["C"]] || "";
-      const finalStatus = r[colIndex["AK"]] || "";
-      const avr7days = Number(r[colIndex["M"]]) || 0;
-      const prev = Number(r[colIndex[prevCol]]) || 0;
-      const current = Number(r[colIndex[currentCol]]) || 0;
-      const stock = Number(r[colIndex["G"]]) || 0;
-      const sale1day = Number(r[colIndex["P"]]) || 0;
-      const sale2day = Number(r[colIndex["O"]]) || 0;
-      const sale3day = Number(r[colIndex["N"]]) || 0;
+      const productName = r[col.E] ?? `Dòng ${i + 1}`;
+      const warehouse   = r[col.F] ?? '';
+      const stock       = toNumber(r[col.G]);
+      const avr7daysRaw = r[col.M] ?? '';           // chỉ cần khác trống
+      const sale3day    = toNumber(r[col.N]);
+      const sale2day    = toNumber(r[col.O]);
+      const sale1day    = toNumber(r[col.P]);
+      const finalStatus = (r[col.AK] ?? '').toString().trim();
+
+      const prev    = toNumber(r[prevIdx]);
+      const current = toNumber(r[currIdx]);
 
       let change = 0;
-      if (prev > 0) change = ((current - prev) / prev) * 100;
-      else if (prev === 0 && current > 0) change = Infinity;
+      if (prev === 0 && current > 0) change = Infinity;
+      else if (prev > 0) change = ((current - prev) / prev) * 100;
 
-      return {
-        warehouse,
+      data.push({
         productName,
+        warehouse,
         finalStatus,
-        avr7days,
+        stock,
+        avr7days: avr7daysRaw, // giữ raw để check khác trống
+        sale3day,
+        sale2day,
+        sale1day,
         prev,
         current,
-        change,
-        stock,
-        sale1day,
-        sale2day,
-        sale3day
-      };
-    });
+        change
+      });
+    }
 
     return data;
   } catch (err) {
-    console.error("❌ Error getSaleComparisonDat", err.message);
+    console.error("❌ Error getSaleComparisonData:", err.message);
     return [];
   }
 }
 
 /* ===========================
    Function: analyzeSalesChange
+   - Tổng SKU tăng/giảm: lọc AK="On sale", F="Binh Tan Warehouse", M≠""
+   - TOP 5: lọc F="Binh Tan Warehouse", M≠""
+   - OOS: (trên tập totalData + stock=0) theo rule P/O/N
    =========================== */
 async function analyzeSalesChange(token) {
+  // Giờ VN
   const now = new Date();
   const nowVN = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
   const hourVN = nowVN.getHours();
 
   const prevCol = "M"; // AVG D-7
   let currentCol, currentLabel;
-
   if (hourVN < 12) {
     currentCol = "P"; // hôm qua
     currentLabel = "hôm qua";
@@ -360,58 +397,64 @@ async function analyzeSalesChange(token) {
   const allData = await getSaleComparisonData(token, prevCol, currentCol);
   if (!allData.length) return "Không lấy được dữ liệu để phân tích.";
 
-  // TOP 5: warehouse + avr7days
+  // TOP 5: warehouse + avr7days (khác trống)
   const topData = allData.filter(r =>
-    r.warehouse === "Binh Tan Warehouse" && r.avr7days
+    r.warehouse === "Binh Tan Warehouse" && String(r.avr7days).trim() !== ""
   );
 
-  // Tổng SKU: On sale + warehouse + avr7days
+  // Tổng SKU: On sale + warehouse + avr7days (khác trống)
   const totalData = allData.filter(r =>
-    r.finalStatus.trim() === "On sale" &&
+    r.finalStatus === "On sale" &&
     r.warehouse === "Binh Tan Warehouse" &&
-    r.avr7days
+    String(r.avr7days).trim() !== ""
   );
 
   if (!topData.length) {
     return `Không có dữ liệu cho Warehouse: Binh Tan Warehouse`;
   }
 
-  // Tổng SKU tăng/giảm
+  // Tổng SKU tăng/giảm (trên totalData)
   const totalIncrease = totalData.filter(r => r.change > 0).length;
   const totalDecrease = totalData.filter(r => r.change < 0).length;
 
-  // TOP tăng mạnh
+  // TOP tăng mạnh (trên topData) – giữ nguyên logic lọc
   const increases = topData
     .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
     .sort((a, b) =>
-      (b.change === Infinity ? Infinity : b.change) -
-      (a.change === Infinity ? Infinity : a.change)
+      (b.change === Infinity ? Number.POSITIVE_INFINITY : b.change) -
+      (a.change === Infinity ? Number.POSITIVE_INFINITY : a.change)
     )
     .slice(0, 5);
 
-  // TOP giảm mạnh
+  // TOP giảm mạnh (trên topData) – giữ nguyên logic lọc
   const decreases = topData
     .filter(r => r.prev > 10 && r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  // SKU OOS
+  // OOS (trên totalData) + stock=0 + rule P/O/N
+  // Rule:
+  // 1) P = 0 -> OOS 1 ngày
+  // 2) P = 0, O = 0 -> OOS 2 ngày
+  // 3) P = 0, O = 0, N = 0 -> OOS > 3 ngày
   const allOOS = totalData
-    .filter(r => r.stock === 0)
+    .filter(r => Number(r.stock) === 0)
     .map(r => {
-      let days = 0;
-      if (r.sale1day === 0) days = 1;
-      if (r.sale1day === 0 && r.sale2day === 0) days = 2;
-      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) days = 3;
-
-      return {
-        ...r,
-        daysOOS: days,
-        oosLabel: days === 0 ? "" : (days === 3 ? "OOS > 3 ngày" : `OOS ${days} ngày`)
-      };
+      let label = "";
+      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) {
+        label = "OOS > 3 ngày";
+      } else if (r.sale1day === 0 && r.sale2day === 0) {
+        label = "OOS 2 ngày";
+      } else if (r.sale1day === 0) {
+        label = "OOS 1 ngày";
+      }
+      return { ...r, oosLabel: label };
     })
-    .filter(r => r.daysOOS > 0)
-    .sort((a, b) => b.daysOOS - a.daysOOS);
+    .filter(r => r.oosLabel) // chỉ giữ các SKU có nhãn OOS
+    .sort((a, b) => {
+      const w = (lbl) => lbl.includes("> 3") ? 3 : lbl.includes("2") ? 2 : 1;
+      return w(b.oosLabel) - w(a.oosLabel);
+    });
 
   const outOfStock = allOOS.slice(0, 5);
 
