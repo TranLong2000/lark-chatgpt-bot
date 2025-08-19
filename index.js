@@ -331,24 +331,30 @@ async function analyzeSalesChange(token) {
   const allData = await getSaleComparisonData(token, prevCol, currentCol);
   if (!allData.length) return null;
 
-  // Tổng số mã tăng/giảm trên toàn bộ dữ liệu
-  const totalIncrease = allData.filter(r => r.change > 0).length;
-  const totalDecrease = allData.filter(r => r.change < 0).length;
+  // 🔎 Chỉ lấy dữ liệu của warehouse = "Binh Tan Warehouse"
+  const filteredData = allData.filter(r => r.warehouse === "Binh Tan Warehouse");
+  if (!filteredData.length) {
+    return `Không có dữ liệu cho Warehouse: Binh Tan Warehouse`;
+  }
 
-  // Top 5 tăng mạnh: prev > 0 && current > 10
-  const increases = allData
+  // Tổng số mã tăng/giảm
+  const totalIncrease = filteredData.filter(r => r.change > 0).length;
+  const totalDecrease = filteredData.filter(r => r.change < 0).length;
+
+  // Top 5 tăng mạnh
+  const increases = filteredData
     .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
     .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
     .slice(0, 5);
 
-  // Top 5 giảm mạnh: prev > 10 && change < 0
-  const decreases = allData
+  // Top 5 giảm mạnh
+  const decreases = filteredData
     .filter(r => r.prev > 10 && r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
   // Tạo tin nhắn
-  let msg = `📊 Biến động Sale: AVG 7 ngày trước → ${currentLabel}:\n`;
+  let msg = `📊 Biến động Sale (Warehouse: Binh Tan Warehouse): AVG 7 ngày trước → ${currentLabel}:\n`;
 
   if (increases.length) {
     msg += `\n🔥 Top 5 HOT SKU tăng mạnh/ Tổng ${totalIncrease} SKU tăng:\n`;
