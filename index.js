@@ -343,7 +343,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 }
 
 /* ===========================
-   UPDATED: analyzeSalesChange
+   UPDATED: analyzeSalesChange (with debug log)
    =========================== */
 async function analyzeSalesChange(token) {
   // Lấy giờ hiện tại theo múi giờ Việt Nam
@@ -389,11 +389,16 @@ async function analyzeSalesChange(token) {
     .slice(0, 5);
 
   // 🚨 SKU Out of Stock (On sale nhưng tồn kho = 0)
-  const allOOS = filteredData.filter(r => {
-    const status = (r.finalStatus || "").trim();
-    const stock = Number(r.stock) || 0;
-    return status === "On sale" && stock === 0;
+  console.log("🔎 Debug finalStatus & stock:");
+  filteredData.forEach(r => {
+    if (Number(r.stock) === 0) {
+      console.log(`SKU=${r.sku}, finalStatus="${r.finalStatus}", stock=${r.stock}`);
+    }
   });
+
+  const allOOS = filteredData.filter(r =>
+    r.finalStatus && r.finalStatus.trim() === "On sale" && Number(r.stock) === 0
+  );
   const outOfStock = allOOS.slice(0, 5);
 
   // Tạo tin nhắn
@@ -426,7 +431,6 @@ async function analyzeSalesChange(token) {
 
   return msg;
 }
-
 
 /* ===========================
    EXISTING: checkB2ValueChange
