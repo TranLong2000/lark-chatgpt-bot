@@ -282,11 +282,15 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
     const colData = {};
     // Lấy từng cột một (đọc theo cột để tối ưu gọi API)
     for (const col of cols) {
-      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${col}:${col}`;
+      const url =
+        `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/` +
+        `${SHEET_ID}!${col}:${col}?valueRenderOption=FormattedValue`;
+
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 20000
       });
+
       // Chuẩn hoá mảng giá trị cho cột
       colData[col] = (resp?.data?.data?.valueRange?.values || []).map(r => (r?.[0] ?? ''));
     }
@@ -296,7 +300,8 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
     const maxLen = Math.max(...Object.values(colData).map(a => a.length));
     const totalRows = lenByE > 0 ? lenByE : maxLen;
 
-    const getCell = (col, i) => (colData[col] && colData[col][i] !== undefined ? colData[col][i] : '');
+    const getCell = (col, i) =>
+      colData[col] && colData[col][i] !== undefined ? colData[col][i] : '';
 
     const toNumber = (v) => {
       if (v === null || v === undefined) return 0;
@@ -312,7 +317,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
       const productName = getCell('E', i) || `Dòng ${i + 1}`;
       const warehouse   = getCell('F', i) || '';
       const stock       = toNumber(getCell('G', i));
-      const finalStatus = getCell('AK', i) || '';
+      const finalStatus = getCell('AK', i) || '';     // bây giờ sẽ là "On sale"/"Not sale", không phải công thức
 
       const prev    = toNumber(getCell(prevCol, i));
       const current = toNumber(getCell(currentCol, i));
@@ -321,7 +326,6 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
       let change = 0;
       if (prev === 0 && current > 0) change = Infinity;
       else if (prev > 0) change = ((current - prev) / prev) * 100;
-      // còn lại mặc định 0
 
       results.push({
         sku,
@@ -433,6 +437,7 @@ async function analyzeSalesChange(token) {
 
   return msg;
 }
+
 
 
 /* ===========================
