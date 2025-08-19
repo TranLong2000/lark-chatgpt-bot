@@ -388,10 +388,9 @@ async function analyzeSalesChange(token) {
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  // 🚨 Top 5 Out of Stock (On sale nhưng tồn kho = 0)
-  const outOfStock = filteredData
-    .filter(r => r.finalStatus === "On sale" && Number(r.stock) === 0)
-    .slice(0, 5);
+  // 🚨 SKU Out of Stock (On sale nhưng tồn kho = 0)
+  const allOOS = filteredData.filter(r => r.finalStatus === "On sale" && Number(r.stock) === 0);
+  const outOfStock = allOOS.slice(0, 5);
 
   // Tạo tin nhắn
   let msg = `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}:\n`;
@@ -402,6 +401,7 @@ async function analyzeSalesChange(token) {
       const pct = r.change === Infinity ? "+∞%" : `+${r.change.toFixed(1)}%`;
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
     });
+    msg += `---\n`;
   }
 
   if (decreases.length) {
@@ -409,13 +409,17 @@ async function analyzeSalesChange(token) {
     decreases.forEach(r => {
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
     });
+    msg += `---\n`;
   }
 
   if (outOfStock.length) {
-    msg += `\n🚨 Top 5 SKU Out of Stock:\n`;
+    msg += `\n🚨 Top 5 SKU hết hàng/ Tổng ${allOOS.length} SKU OOS:\n`;
     outOfStock.forEach(r => {
       msg += `- ${r.productName} (SKU: ${r.sku})\n`;
     });
+    if (allOOS.length > 5) {
+      msg += `... và ${allOOS.length - 5} SKU khác.\n`;
+    }
   }
 
   return msg;
