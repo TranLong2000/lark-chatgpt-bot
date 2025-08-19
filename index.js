@@ -389,7 +389,11 @@ async function analyzeSalesChange(token) {
     .slice(0, 5);
 
   // 🚨 SKU Out of Stock (On sale nhưng tồn kho = 0)
-  const allOOS = filteredData.filter(r => r.finalStatus === "On sale" && Number(r.stock) === 0);
+  const allOOS = filteredData.filter(r => {
+    const status = (r.finalStatus || "").trim();
+    const stock = Number(r.stock) || 0;
+    return status === "On sale" && stock === 0;
+  });
   const outOfStock = allOOS.slice(0, 5);
 
   // Tạo tin nhắn
@@ -401,7 +405,6 @@ async function analyzeSalesChange(token) {
       const pct = r.change === Infinity ? "+∞%" : `+${r.change.toFixed(1)}%`;
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
     });
-    msg += `---\n`;
   }
 
   if (decreases.length) {
@@ -409,7 +412,6 @@ async function analyzeSalesChange(token) {
     decreases.forEach(r => {
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
     });
-    msg += `---\n`;
   }
 
   if (outOfStock.length) {
@@ -424,6 +426,7 @@ async function analyzeSalesChange(token) {
 
   return msg;
 }
+
 
 /* ===========================
    EXISTING: checkB2ValueChange
