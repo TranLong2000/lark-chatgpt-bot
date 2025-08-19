@@ -531,7 +531,7 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
   }
   const mem = conversationMemory.get(chatId);
   mem.push({ role, content, senderName });
-  if (mem.length > 20) mem.shift(); // giữ tối đa 20 câu
+  if (mem.length > 20) mem.shift(); // tăng buffer lên 20 câu
 }
 
 /* ===========================
@@ -880,26 +880,8 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-// ======= XỬ LÝ CHAT AI =========
-if (messageType === 'text') {
-  // Lấy danh sách mentions trong message
-  const mentions = event.message?.mentions || [];
-
-  // Kiểm tra bot có bị mention không
-  const botMentioned = mentions.some(m => m.id?.app_id === process.env.LARK_APP_ID);
-
-  // Nếu không mention bot thì bỏ qua
-  if (!botMentioned) {
-    return res.json({ code: 0 });
-  }
-
-  // Cắt bỏ phần @mention bot khỏi nội dung
-  const contentAfterMention = text.replace(/<at.*?at>/g, '').trim();
-
-  if (!contentAfterMention) {
-    return res.json({ code: 0 });
-  }
-
+      // ======= XỬ LÝ CHAT AI BÌNH THƯỜNG =========
+if (messageType === 'text' && contentAfterMention.trim()) {
   try {
     // Lưu hội thoại kèm tên người gửi
     updateConversationMemory(chatId, 'user', contentAfterMention, mentionUserName);
@@ -911,7 +893,7 @@ if (messageType === 'text') {
       if (m.role === 'user') {
         return { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` };
       } else {
-        return { role: 'assistant', content: `L-GPT: ${m.content}` };
+        return { role: 'assistant', content: m.content };
       }
     });
 
@@ -920,7 +902,7 @@ if (messageType === 'text') {
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là một trợ lý AI lạnh lùng, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
+          { role: 'system', content: 'Bạn là trợ lý AI trong nhóm chat. Luôn phân biệt rõ ai nói gì dựa trên tên ở đầu câu.' },
           ...formattedHistory,
           { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
         ],
@@ -938,17 +920,21 @@ if (messageType === 'text') {
     const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả.';
     const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
 
-    // Lưu phản hồi bot với tên L-GPT
-    updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+    // Lưu phản hồi bot
+    updateConversationMemory(chatId, 'assistant', cleanMessage, 'BOT');
 
     await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
   } catch (err) {
     await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả.', mentionUserId, mentionUserName);
   }
-
   return;
 }
-
+      await replyToLark(messageId, 'Vui lòng sử dụng lệnh Plan, PUR, SALE, FIN kèm dấu phẩy hoặc gửi file/hình ảnh.', mentionUserId, mentionUserName);
+    }
+  } catch {
+    res.status(500).send('Lỗi máy chủ nội bộ');
+  }
+});
 
 /* ===========================
    SHUTDOWN HANDLER
