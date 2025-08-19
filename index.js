@@ -275,29 +275,64 @@ async function sendMessageToGroup(token, chatId, messageText) {
    =========================== */
 async function getSaleComparisonData(token, prevCol, currentCol) {
   try {
-    const cols = ['E', prevCol, currentCol];
-    let data = {};
+    // Các cột cố định + cột động (loại trùng)
+    const baseCols = ['A', 'E', 'F', 'G', 'AK', prevCol, currentCol];
+    const cols = Array.from(new Set(baseCols));
 
+    const colData = {};
+    // Lấy từng cột một (đọc theo cột để tối ưu gọi API)
     for (const col of cols) {
       const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${col}:${col}`;
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 20000
       });
-      data[col] = resp.data.data.valueRange.values.map(r => r[0]);
+      // Chuẩn hoá mảng giá trị cho cột
+      colData[col] = (resp?.data?.data?.valueRange?.values || []).map(r => (r?.[0] ?? ''));
     }
 
-    let results = [];
-    for (let i = 1; i < data['E'].length; i++) {
-      const productName = data['E'][i] || `Dòng ${i+1}`;
-      const prev = parseFloat(data[prevCol][i]) || 0;
-      const current = parseFloat(data[currentCol][i]) || 0;
+    // Xác định số dòng theo cột E (tên sản phẩm) nếu có, fallback theo cột dài nhất
+    const lenByE = (colData['E'] || []).length;
+    const maxLen = Math.max(...Object.values(colData).map(a => a.length));
+    const totalRows = lenByE > 0 ? lenByE : maxLen;
 
-      // bỏ các dòng prev=0 và current=0
-      if (prev === 0 && current === 0) continue;
+    const getCell = (col, i) => (colData[col] && colData[col][i] !== undefined ? colData[col][i] : '');
 
-      const change = prev === 0 ? (current > 0 ? Infinity : 0) : ((current - prev) / prev) * 100;
-      results.push({ productName, prev, current, change });
+    const toNumber = (v) => {
+      if (v === null || v === undefined) return 0;
+      const s = String(v).trim().replace(/,/g, '');
+      const n = parseFloat(s);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    const results = [];
+    // Bỏ header dòng 1
+    for (let i = 1; i < totalRows; i++) {
+      const sku         = getCell('A', i) || '';      // đổi nếu SKU không nằm ở cột A
+      const productName = getCell('E', i) || `Dòng ${i + 1}`;
+      const warehouse   = getCell('F', i) || '';
+      const stock       = toNumber(getCell('G', i));
+      const finalStatus = getCell('AK', i) || '';
+
+      const prev    = toNumber(getCell(prevCol, i));
+      const current = toNumber(getCell(currentCol, i));
+
+      // Tính % thay đổi (vẫn giữ dòng prev=0,current=0 để còn báo OOS)
+      let change = 0;
+      if (prev === 0 && current > 0) change = Infinity;
+      else if (prev > 0) change = ((current - prev) / prev) * 100;
+      // còn lại mặc định 0
+
+      results.push({
+        sku,
+        productName,
+        warehouse,
+        stock,
+        finalStatus,
+        prev,
+        current,
+        change
+      });
     }
 
     return results;
@@ -353,6 +388,9 @@ async function analyzeSalesChange(token) {
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
+  // 🚨 Out of Stock SKU (Trạng thái cuối cùng = On sale, tồn kho = 0)
+  const outOfStock = filteredData.filter(r => r.finalStatus === "On sale" && Number(r.stock || 0) === 0);
+
   // Tạo tin nhắn
   let msg = `📊 Biến động Sale (Warehouse: Binh Tan Warehouse): AVG 7 ngày trước → ${currentLabel}:\n`;
 
@@ -369,6 +407,16 @@ async function analyzeSalesChange(token) {
     decreases.forEach(r => {
       msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
     });
+  }
+
+  if (outOfStock.length) {
+    msg += `\n🚨 Out of Stock (${outOfStock.length} SKU, On sale nhưng tồn kho = 0):\n`;
+    outOfStock.slice(0, 10).forEach(r => { // giới hạn 10 SKU đầu tiên để tránh quá dài
+      msg += `- ${r.productName} (SKU: ${r.sku})\n`;
+    });
+    if (outOfStock.length > 10) {
+      msg += `... và ${outOfStock.length - 10} SKU khác.\n`;
+    }
   }
 
   return msg;
