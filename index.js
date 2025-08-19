@@ -121,9 +121,9 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
 /* ===========================
    HELPERS: extract file/image content
    =========================== */
-async function extractFileContent(fileUrl, fileType, token) {
+async function extractFileContent(fileUrl, fileType) {
   try {
-    const response = await axios.get(fileUrl, { headers: { Authorization: `Bearer ${token}` }, responseType: 'arraybuffer', timeout: 20000 });
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 20000 });
     const buffer = Buffer.from(response.data);
 
     if (fileType === 'pdf') {
@@ -536,6 +536,67 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
 
 /* ===========================
    NEW FUNCTION: interpretSheetQuery
+   =========================== */
+async function interpretSheetQuery(userMessage, columnData) {
+  try {
+    const prompt = `
+Bạn là trợ lý phân tích bảng. Tôi cung cấp:
+1) Câu hỏi user: """${userMessage}"""
+2) Dữ liệu cột (object): ${JSON.stringify(Object.keys(columnData))}
+
+Hãy CHỈ TRẢ VỀ 1 JSON hợp lệ với các trường:
+- action: "value" | "sum" | "avg" | "percent_change" | "count"
+- target_column: tên cột (phù hợp với header trong dữ liệu) hoặc tên cột dạng chữ cái nếu ưu tiên
+- match_column: tên cột dùng để tìm hàng (ví dụ: "E" hoặc header "Sản phẩm") - optional
+- match_value: giá trị để so khớp trong match_column (ví dụ: "Lager") - optional
+- prev_column: tên cột dùng để so sánh percent_change - optional
+- note: string ngắn mô tả hành động (optional)
+
+Nguyên tắc:
+- Nếu câu hỏi rõ ràng hỏi "hôm nay" -> chọn cột tương ứng cho "hôm nay" (ví dụ Q nếu sheet có Q là today).
+- Nếu user hỏi "bao nhiêu thùng Lager" -> action="value", match_column có thể là "E" hoặc header tên sản phẩm.
+- Trả JSON ngắn, không thêm text khác.
+`;
+
+    const aiResp = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn là một trợ lý AI chuyên phân tích column headers và chọn cột phù hợp.' },
+          { role: 'user', content: prompt }
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
+
+    const aiContent = aiResp.data?.choices?.[0]?.message?.content?.trim();
+    if (!aiContent) return null;
+    try {
+      const parsed = JSON.parse(aiContent);
+      return parsed;
+    } catch (e) {
+      const match = aiContent.match(/\{[\s\S]*\}/);
+      if (match) {
+        try { return JSON.parse(match[0]); } catch { return null; }
+      }
+      return null;
+    }
+  } catch (err) {
+    console.log('Lỗi interpretSheetQuery:', err.message);
+    return null;
+  }
+}
+
+/* ===========================
+   NEW FUNCTION: interpretSheetQuery
    - AI đọc câu hỏi và chọn cột, hành động
    =========================== */
 async function interpretSheetQuery(userMessage, columnData) {
@@ -705,7 +766,7 @@ app.post('/webhook', async (req, res) => {
       if (senderId === (process.env.BOT_SENDER_ID || '')) return res.sendStatus(200);
 
       const isBotMentioned = mentions.some(m => m.id.open_id === BOT_OPEN_ID);
-      if (!isBotMentioned) return res.sendStatus(200);
+      if (!isBotMentioned && !['file','image','text'].includes(messageType)) return res.sendStatus(200);
       res.sendStatus(200);
 
       const token = await getAppAccessToken();
@@ -754,15 +815,13 @@ app.post('/webhook', async (req, res) => {
       // ======= XỬ LÝ FILE / IMAGE =========
       if (['file','image'].includes(messageType)) {
         try {
-          const content = JSON.parse(message.content);
-          const keyField = messageType === 'image' ? 'image_key' : 'file_key';
-          const fileKey = content[keyField];
+          const fileKey = message.file_key;
           if (!fileKey) {
-            await replyToLark(messageId, 'Không tìm thấy key file/image. Vui lòng kiểm tra lại.', mentionUserId, mentionUserName);
+            await replyToLark(messageId, 'Không tìm thấy file_key. Vui lòng kiểm tra lại.', mentionUserId, mentionUserName);
             return;
           }
 
-          const fileName = content.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
+          const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
           const ext = path.extname(fileName).slice(1).toLowerCase();
 
           pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
@@ -784,8 +843,12 @@ app.post('/webhook', async (req, res) => {
         const pendingFile = pendingFiles.get(chatId);
         if (pendingFile && pendingFile.messageId === message.parent_id) {
           try {
-            const fileUrl = `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages/${pendingFile.messageId}/resources/${pendingFile.fileKey}`;
-            const extractedText = await extractFileContent(fileUrl, pendingFile.ext, token);
+            const fileUrlResp = await axios.get(
+              `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${pendingFile.fileKey}/download_url`,
+              { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
+            );
+            const fileUrl = fileUrlResp.data.data.download_url;
+            const extractedText = await extractFileContent(fileUrl, pendingFile.ext);
             if (!extractedText || extractedText.startsWith('Lỗi')) {
               await replyToLark(messageId, `Không thể trích xuất nội dung từ file ${pendingFile.fileName}.`, mentionUserId, mentionUserName);
             } else {
@@ -817,81 +880,75 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-      // ======= XỬ LÝ CHAT AI =========
-      if (messageType === 'text') {
-        // Lấy danh sách mentions trong message
-        const mentions = message.mentions || [];
+// ======= XỬ LÝ CHAT AI =========
+if (messageType === 'text') {
+  // Lấy danh sách mentions trong message
+  const mentions = event.message?.mentions || [];
 
-        // Kiểm tra bot có bị mention không
-        const botMentioned = mentions.some(m => m.id.open_id === BOT_OPEN_ID);
+  // Kiểm tra bot có bị mention không
+  const botMentioned = mentions.some(m => m.id?.app_id === process.env.LARK_APP_ID);
 
-        // Nếu không mention bot thì bỏ qua
-        if (!botMentioned) {
-          return;
-        }
-
-        // Cắt bỏ phần @mention bot khỏi nội dung
-        const text = JSON.parse(message.content).text || '';
-        const contentAfterMention = text.replace(/<at.*?<\/at>/g, '').trim();
-
-        if (!contentAfterMention) {
-          return;
-        }
-
-        try {
-          // Lưu hội thoại kèm tên người gửi
-          updateConversationMemory(chatId, 'user', contentAfterMention, mentionUserName);
-
-          const memory = conversationMemory.get(chatId) || [];
-
-          // Biến đổi memory thành prompt với tên người gửi
-          const formattedHistory = memory.map(m => {
-            if (m.role === 'user') {
-              return { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` };
-            } else {
-              return { role: 'assistant', content: `${m.content}` };
-            }
-          });
-
-          const aiResp = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528:free',
-              messages: [
-                { role: 'system', content: 'Bạn là một trợ lý AI phong cách tổng tài bá đạo nhưng vô cùng ngoan ngoãn nghe lời, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
-                ...formattedHistory,
-                { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
-              ],
-              stream: false,
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              timeout: 20000,
-            }
-          );
-
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả.';
-          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-
-          // Lưu phản hồi bot với tên L-GPT
-             updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-
-          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-        } catch (err) {
-          await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả.', mentionUserId, mentionUserName);
-        }
-
-        return;
-      }
-    }
-  } catch (error) {
-    console.error('Webhook error:', error);
-    res.sendStatus(500);
+  // Nếu không mention bot thì bỏ qua
+  if (!botMentioned) {
+    return res.json({ code: 0 });
   }
-});
+
+  // Cắt bỏ phần @mention bot khỏi nội dung
+  const contentAfterMention = text.replace(/<at.*?at>/g, '').trim();
+
+  if (!contentAfterMention) {
+    return res.json({ code: 0 });
+  }
+
+  try {
+    // Lưu hội thoại kèm tên người gửi
+    updateConversationMemory(chatId, 'user', contentAfterMention, mentionUserName);
+
+    const memory = conversationMemory.get(chatId) || [];
+
+    // Biến đổi memory thành prompt với tên người gửi
+    const formattedHistory = memory.map(m => {
+      if (m.role === 'user') {
+        return { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` };
+      } else {
+        return { role: 'assistant', content: `L-GPT: ${m.content}` };
+      }
+    });
+
+    const aiResp = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn là một trợ lý AI lạnh lùng, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
+          ...formattedHistory,
+          { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 20000,
+      }
+    );
+
+    const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả.';
+    const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+
+    // Lưu phản hồi bot với tên L-GPT
+    updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+
+    await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+  } catch (err) {
+    await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả.', mentionUserId, mentionUserName);
+  }
+
+  return;
+}
+
 
 /* ===========================
    SHUTDOWN HANDLER
@@ -925,3 +982,30 @@ setInterval(() => {
     if (now - file.timestamp > 5 * 60 * 1000) pendingFiles.delete(chatId);
   }
 }, 60 * 1000);
+
+
+Lỗi /app/index.js:985
+
+ 
+
+ 
+
+ 
+
+SyntaxError: Unexpected end of input
+
+    at internalCompileFunction (node:internal/vm:76:18)
+
+    at wrapSafe (node:internal/modules/cjs/loader:1283:20)
+
+    at Module._compile (node:internal/modules/cjs/loader:1328:27)
+
+    at Module._extensions..js (node:internal/modules/cjs/loader:1422:10)
+
+    at Module.load (node:internal/modules/cjs/loader:1203:32)
+
+    at Module._load (node:internal/modules/cjs/loader:1019:12)
+
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:128:12)
+
+    at node:internal/main/run_main_module:28:49
