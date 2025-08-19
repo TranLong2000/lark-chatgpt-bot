@@ -901,7 +901,7 @@ app.post('/webhook', async (req, res) => {
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là trợ lý AI có tính cách đa dạng tuỳ vào ngữ cảnh hội thoại, nhưng phải trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
+          { role: 'system', content: 'Bạn là trợ lý AI lạnh lùng, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
           ...formattedHistory,
           { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
         ],
