@@ -276,11 +276,10 @@ async function sendMessageToGroup(token, chatId, messageText) {
 async function getSaleComparisonData(token, prevCol, currentCol) {
   try {
     // Các cột cố định + cột động (loại trùng)
-    const baseCols = ['A', 'E', 'F', 'G', 'AK', prevCol, currentCol];
+    const baseCols = ['A', 'E', 'F', 'G', 'M', 'N', 'O', 'P', 'AK', prevCol, currentCol];
     const cols = Array.from(new Set(baseCols));
 
     const colData = {};
-    // Lấy từng cột một (đọc theo cột để tối ưu gọi API)
     for (const col of cols) {
       const url =
         `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/` +
@@ -291,11 +290,9 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
         timeout: 20000
       });
 
-      // Chuẩn hoá mảng giá trị cho cột
       colData[col] = (resp?.data?.data?.valueRange?.values || []).map(r => (r?.[0] ?? ''));
     }
 
-    // Xác định số dòng theo cột E (tên sản phẩm) nếu có, fallback theo cột dài nhất
     const lenByE = (colData['E'] || []).length;
     const maxLen = Math.max(...Object.values(colData).map(a => a.length));
     const totalRows = lenByE > 0 ? lenByE : maxLen;
@@ -311,18 +308,20 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
     };
 
     const results = [];
-    // Bỏ header dòng 1
     for (let i = 1; i < totalRows; i++) {
-      const sku         = getCell('A', i) || '';      // đổi nếu SKU không nằm ở cột A
+      const sku         = getCell('A', i) || '';
       const productName = getCell('E', i) || `Dòng ${i + 1}`;
       const warehouse   = getCell('F', i) || '';
       const stock       = toNumber(getCell('G', i));
-      const finalStatus = getCell('AK', i) || '';     // bây giờ sẽ là "On sale"/"Not sale", không phải công thức
+      const avr7days    = getCell('M', i) || '';
+      const sale3day    = toNumber(getCell('N', i));
+      const sale2day    = toNumber(getCell('O', i));
+      const sale1day    = toNumber(getCell('P', i));
+      const finalStatus = getCell('AK', i) || '';
 
       const prev    = toNumber(getCell(prevCol, i));
       const current = toNumber(getCell(currentCol, i));
 
-      // Tính % thay đổi (vẫn giữ dòng prev=0,current=0 để còn báo OOS)
       let change = 0;
       if (prev === 0 && current > 0) change = Infinity;
       else if (prev > 0) change = ((current - prev) / prev) * 100;
@@ -332,6 +331,10 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
         productName,
         warehouse,
         stock,
+        avr7days,
+        sale3day,
+        sale2day,
+        sale1day,
         finalStatus,
         prev,
         current,
@@ -347,15 +350,14 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 }
 
 /* ===========================
-   UPDATED: analyzeSalesChange (with debug log)
+   UPDATED: analyzeSalesChange (with OOS days)
    =========================== */
 async function analyzeSalesChange(token) {
-  // Lấy giờ hiện tại theo múi giờ Việt Nam
   const now = new Date();
   const nowVN = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
   const hourVN = nowVN.getHours();
 
-  const prevCol = "M"; // AVG sale 7 ngày trước
+  const prevCol = "M";
   let currentCol, currentLabel;
 
   if (hourVN < 12) {
@@ -366,48 +368,48 @@ async function analyzeSalesChange(token) {
     currentLabel = "hôm nay";
   }
 
-  // Lấy toàn bộ dữ liệu
   const allData = await getSaleComparisonData(token, prevCol, currentCol);
   if (!allData.length) return null;
 
-  // 🔎 Chỉ lấy dữ liệu của warehouse = "Binh Tan Warehouse"
-  const filteredData = allData.filter(r => r.warehouse === "Binh Tan Warehouse");
+  // lọc theo warehouse & có avr7days
+  const filteredData = allData.filter(r => 
+    r.warehouse === "Binh Tan Warehouse" && r.avr7days
+  );
   if (!filteredData.length) {
     return `Không có dữ liệu cho Warehouse: Binh Tan Warehouse`;
   }
 
-  // Tổng số mã tăng/giảm
   const totalIncrease = filteredData.filter(r => r.change > 0).length;
   const totalDecrease = filteredData.filter(r => r.change < 0).length;
 
-  // Top 5 tăng mạnh
   const increases = filteredData
     .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
     .sort((a, b) => (b.change === Infinity ? Infinity : b.change) - (a.change === Infinity ? Infinity : a.change))
     .slice(0, 5);
 
-  // Top 5 giảm mạnh
   const decreases = filteredData
     .filter(r => r.prev > 10 && r.change < 0)
     .sort((a, b) => a.change - b.change)
     .slice(0, 5);
 
-  // 🚨 SKU Out of Stock (On sale nhưng tồn kho = 0)
-  console.log("🔎 Debug finalStatus & stock:");
-  filteredData.forEach(r => {
-    if (Number(r.stock) === 0) {
-      console.log(
-        `SKU=${r.sku}, finalStatus="${r.finalStatus}", stock=${r.stock}, prev=${r.prev}, current=${r.current}`
-      );
-    }
-  });
+  // OOS với số ngày hết hàng
+  const allOOS = filteredData
+    .filter(r => r.finalStatus.trim() === "On sale" && Number(r.stock) === 0)
+    .map(r => {
+      let days = 0;
+      if (r.sale3day === 0) days++;
+      if (r.sale2day === 0) days++;
+      if (r.sale1day === 0) days++;
+      return {
+        ...r,
+        daysOOS: days,
+        oosLabel: days >= 3 ? "OOS > 3 ngày" : `OOS ${days} ngày`
+      };
+    })
+    .sort((a, b) => b.daysOOS - a.daysOOS);
 
-  const allOOS = filteredData.filter(r =>
-    r.finalStatus && r.finalStatus.trim() === "On sale" && Number(r.stock) === 0
-  );
   const outOfStock = allOOS.slice(0, 5);
 
-  // Tạo tin nhắn
   let msg = `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}:\n`;
 
   if (increases.length) {
@@ -428,7 +430,7 @@ async function analyzeSalesChange(token) {
   if (outOfStock.length) {
     msg += `\n🚨 Top 5 SKU hết hàng/ Tổng ${allOOS.length} SKU OOS:\n`;
     outOfStock.forEach(r => {
-      msg += `- ${r.productName} (SKU: ${r.sku})\n`;
+      msg += `- ${r.productName} (${r.oosLabel})\n`;
     });
     if (allOOS.length > 5) {
       msg += `... và ${allOOS.length - 5} SKU khác.\n`;
@@ -437,8 +439,6 @@ async function analyzeSalesChange(token) {
 
   return msg;
 }
-
-
 
 /* ===========================
    EXISTING: checkB2ValueChange
