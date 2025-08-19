@@ -880,7 +880,26 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-       if (messageType === 'text' && contentAfterMention.trim()) {
+// ======= XỬ LÝ CHAT AI =========
+if (messageType === 'text') {
+  // Lấy danh sách mentions trong message
+  const mentions = event.message?.mentions || [];
+
+  // Kiểm tra bot có bị mention không
+  const botMentioned = mentions.some(m => m.id?.app_id === process.env.LARK_APP_ID);
+
+  // Nếu không mention bot thì bỏ qua
+  if (!botMentioned) {
+    return res.json({ code: 0 });
+  }
+
+  // Cắt bỏ phần @mention bot khỏi nội dung
+  const contentAfterMention = text.replace(/<at.*?at>/g, '').trim();
+
+  if (!contentAfterMention) {
+    return res.json({ code: 0 });
+  }
+
   try {
     // Lưu hội thoại kèm tên người gửi
     updateConversationMemory(chatId, 'user', contentAfterMention, mentionUserName);
@@ -901,7 +920,7 @@ app.post('/webhook', async (req, res) => {
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
-          { role: 'system', content: 'Bạn là trợ lý AI lạnh lùng, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
+          { role: 'system', content: 'Bạn là một trợ lý AI lạnh lùng, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
           ...formattedHistory,
           { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
         ],
@@ -926,14 +945,10 @@ app.post('/webhook', async (req, res) => {
   } catch (err) {
     await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả.', mentionUserId, mentionUserName);
   }
+
   return;
 }
-      await replyToLark(messageId, 'Vui lòng sử dụng lệnh Plan, PUR, SALE, FIN kèm dấu phẩy hoặc gửi file/hình ảnh.', mentionUserId, mentionUserName);
-    }
-  } catch {
-    res.status(500).send('Lỗi máy chủ nội bộ');
-  }
-});
+
 
 /* ===========================
    SHUTDOWN HANDLER
