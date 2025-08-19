@@ -531,7 +531,7 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
   }
   const mem = conversationMemory.get(chatId);
   mem.push({ role, content, senderName });
-  if (mem.length > 20) mem.shift(); // giữ tối đa 20 câu
+  if (mem.length > 20) mem.shift();
 }
 
 /* ===========================
@@ -818,74 +818,54 @@ app.post('/webhook', async (req, res) => {
       }
 
       // ======= XỬ LÝ CHAT AI =========
-      if (messageType === 'text') {
-        // Lấy danh sách mentions trong message
-        const mentions = message.mentions || [];
+      if (messageType === 'text' && contentAfterMention.trim()) {
+  try {
+    // Lưu hội thoại kèm tên người gửi
+    updateConversationMemory(chatId, 'user', contentAfterMention, mentionUserName);
 
-        // Kiểm tra bot có bị mention không
-        const botMentioned = mentions.some(m => m.id.open_id === BOT_OPEN_ID);
+    const memory = conversationMemory.get(chatId) || [];
 
-        // Nếu không mention bot thì bỏ qua
-        if (!botMentioned) {
-          return;
-        }
-
-        // Cắt bỏ phần @mention bot khỏi nội dung
-        const text = JSON.parse(message.content).text || '';
-        const contentAfterMention = text.replace(/<at.*?<\/at>/g, '').trim();
-
-        if (!contentAfterMention) {
-          return;
-        }
-
-        try {
-          // Lưu hội thoại kèm tên người gửi
-          updateConversationMemory(chatId, 'user', contentAfterMention, mentionUserName);
-
-          const memory = conversationMemory.get(chatId) || [];
-
-          // Biến đổi memory thành prompt với tên người gửi
-          const formattedHistory = memory.map(m => {
-            if (m.role === 'user') {
-              return { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` };
-            } else {
-              return { role: 'assistant', content: `${m.content}` };
-            }
-          });
-
-          const aiResp = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528:free',
-              messages: [
-                { role: 'system', content: 'Bạn là một trợ lý AI phong cách tuỳ vào cuộc hội thoại đối phương, luôn trả lời ngắn gọn, súc tích.' },
-                ...formattedHistory,
-                { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
-              ],
-              stream: false,
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json',
-              },
-              timeout: 20000,
-            }
-          );
-
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả.';
-          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-
-          // Lưu phản hồi bot với tên L-GPT
-             updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-
-          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-        } catch (err) {
-          await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả.', mentionUserId, mentionUserName);
-        }
-
-        return;
+    // Biến đổi memory thành prompt với tên người gửi
+    const formattedHistory = memory.map(m => {
+      if (m.role === 'user') {
+        return { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` };
+      } else {
+        return { role: 'assistant', content: `${m.content}` };
       }
+    });
+
+    const aiResp = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn là trợ lý AI lạnh lùng, đáng yêu tuỳ vào cảm xúc của người hội thoại, trả lời ngắn gọn, súc tích, luôn xưng danh là L-GPT.' },
+          ...formattedHistory,
+          { role: 'user', content: `${mentionUserName}: ${contentAfterMention}` }
+        ],
+        stream: false,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 20000,
+      }
+    );
+
+    const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Xin lỗi, tôi chưa tìm ra được kết quả.';
+    const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+
+    // Lưu phản hồi bot với tên L-GPT
+    updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+
+    await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+  } catch (err) {
+    await replyToLark(messageId, 'Xin lỗi, tôi chưa tìm ra được kết quả.', mentionUserId, mentionUserName);
+  }
+  return;
+}
     }
   } catch (error) {
     console.error('Webhook error:', error);
