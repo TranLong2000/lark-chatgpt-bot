@@ -547,8 +547,11 @@ app.post('/webhook', async (req, res) => {
     let decryptedData = {};
     try { decryptedData = decryptMessage(JSON.parse(bodyRaw).encrypt || ''); } catch {}
 
-    if (decryptedData.header?.event_type === 'url_verification') {
-      return res.json({ challenge: decryptedData.event.challenge });
+    /* ---- Log khi BOT được thêm vào nhóm ---- */
+    if (decryptedData.header?.event_type === 'im.chat.member.bot.added_v1') {
+      const chatIdAdded = decryptedData.event?.chat_id;
+      console.log(`🚀 BOT vừa được thêm vào nhóm, chatId: ${chatIdAdded}`);
+      return res.sendStatus(200);
     }
 
     if (decryptedData.header?.event_type === 'im.message.receive_v1') {
@@ -556,11 +559,11 @@ app.post('/webhook', async (req, res) => {
       const messageId = message.message_id;
       const chatId = message.chat_id;
       const chatType = message.chat_type; // "group" | "p2p"
-      const messageType = message.message_type; // "text" | "image" | "file" | ...
+      const messageType = message.message_type;
       const senderId = decryptedData.event.sender.sender_id.open_id;
       const mentions = message.mentions || [];
 
-      // Idempotent
+      // idempotent
       if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
 
@@ -573,10 +576,15 @@ app.post('/webhook', async (req, res) => {
         (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
       );
 
-      // Trong group: nếu KHÔNG @mention thì bỏ qua
+      // Nếu trong group và mention bot → in log chatId
+      if (chatType === 'group' && botMentioned) {
+        console.log(`💬 Tin nhắn mention BOT trong group ${chatId}`);
+      }
+
+      // Nếu group mà không mention bot thì bỏ qua
       if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
 
-      // OK trả 200 sớm để Lark không retry
+      // OK trả 200 để Lark không retry
       res.sendStatus(200);
 
       // Lấy token
