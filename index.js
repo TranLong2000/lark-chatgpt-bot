@@ -534,245 +534,245 @@
    }
    
    /* ===========================================
-      SECTION 14 — Webhook (ONLY on @mention) — FIXED
-      - Group: chỉ phản hồi khi có @bot
-      - P2P: luôn phản hồi
-      - Chủ ngữ luôn là NGƯỜI GỬI (sender), không dùng mention khác
-      - Log chatId của group
-      =========================================== */
-   app.post('/webhook', async (req, res) => {
-     try {
-       const bodyRaw   = req.body.toString('utf8');
-       const signature = req.headers['x-lark-signature'];
-       const timestamp = req.headers['x-lark-request-timestamp'];
-       const nonce     = req.headers['x-lark-request-nonce'];
-   
-       if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
-         return res.sendStatus(401);
-       }
-   
-       let decryptedData = {};
-       try {
-         const { encrypt } = JSON.parse(bodyRaw);
-         decryptedData = decryptMessage(encrypt || '');
-       } catch {}
-   
-       // 1) URL verification
-       if (decryptedData.header?.event_type === 'url_verification') {
-         return res.json({ challenge: decryptedData.event.challenge });
-       }
-   
-       // 2) Message receive
-       if (decryptedData.header?.event_type === 'im.message.receive_v1') {
-         const message     = decryptedData.event.message;
-         const messageId   = message.message_id;
-         const chatId      = message.chat_id;
-         const chatType    = message.chat_type;      // "group" | "p2p"
-         const messageType = message.message_type;   // "text" | "image" | "file" | "post" ...
-         const senderId    = decryptedData.event.sender?.sender_id?.open_id || '';
-         const mentions    = message.mentions || [];
-   
-         // Log chỉ ChatID của group
-         if (chatType === 'group') console.log(`[L-GPT] Group chat ID: ${chatId}`);
-   
-         // Idempotent
-         if (processedMessageIds.has(messageId)) return res.sendStatus(200);
-         processedMessageIds.add(messageId);
-   
-         // Bỏ qua phản hồi chính mình
-         if (senderId === (process.env.BOT_SENDER_ID || '')) return res.sendStatus(200);
-   
-         // Bot có được @mention?
-         const botMentioned = mentions.some(m =>
-           (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
-           (m.id?.app_id  && m.id.app_id  === process.env.LARK_APP_ID)
-         );
-   
-         // Trong group: không @bot thì bỏ qua ngay
-         if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
-   
-         // Trả 200 sớm để Lark không retry
-         res.sendStatus(200);
-   
-         // Lấy token + thông tin NGƯỜI GỬI (chủ ngữ duy nhất)
-         const token = await getAppAccessToken();
-         const askerOpenId  = senderId;                                // luôn là sender
-         const askerName    = await getUserInfo(askerOpenId, token);    // tên người hỏi
-   
-         // Lấy text sau khi loại bỏ toàn bộ <at>...</at>
-         let textAfterMention = '';
-         try {
-           const raw = JSON.parse(message.content).text || '';
-           textAfterMention = raw.replace(/<at.*?<\/at>/g, '').trim();
-         } catch {
-           textAfterMention = '';
-         }
-   
-         /* ---------------------------------------
-            Branch A: Plan
-            --------------------------------------- */
-         if (/^Plan[,，]/i.test(textAfterMention)) {
-           await processPlanQuery(
-             messageId,
-             SPREADSHEET_TOKEN,
-             textAfterMention,
-             token,
-             askerOpenId,
-             askerName
-           );
-           return;
-         }
-   
-         /* ---------------------------------------
-            Branch B: Base
-            --------------------------------------- */
-         let baseId = '', tableId = '';
-         const keyRegex    = new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|，)`, 'i');
-         const reportMatch = textAfterMention.match(keyRegex);
-         if (reportMatch) {
-           const reportName = reportMatch[1].toUpperCase();
-           const reportUrl  = BASE_MAPPINGS[reportName];
-           if (reportUrl) {
-             const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
-             if (urlMatch) { baseId = urlMatch[1]; tableId = urlMatch[2]; }
-           }
-         }
-         if (baseId && tableId) {
-           await processBaseData(messageId, baseId, tableId, textAfterMention, token);
-           return;
-         }
-   
-         /* ---------------------------------------
-            Branch C: File / Image receive
-            - Group: chỉ xử lý khi có @bot
-            - P2P: cho phép
-            --------------------------------------- */
-         if (['file','image'].includes(messageType)) {
-           try {
-             const fileKey  = message.file_key;
-             if (!fileKey) {
-               await replyToLark(messageId, 'Thiếu file_key.', askerOpenId, askerName);
-               return;
-             }
-             const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
-             const ext      = path.extname(fileName).slice(1).toLowerCase();
-             pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
-             await replyToLark(messageId, 'Đã nhận file. Reply kèm yêu cầu trong 5 phút.', askerOpenId, askerName);
-           } catch {
-             await replyToLark(messageId, 'Lỗi nhận file.', askerOpenId, askerName);
-           }
-           return;
-         }
-   
-         /* ---------------------------------------
-            Branch D: Reply vào file (post có parent_id)
-            --------------------------------------- */
-         if (messageType === 'post' && message.parent_id) {
-           const pendingFile = pendingFiles.get(chatId);
-           if (pendingFile && pendingFile.messageId === message.parent_id) {
-             try {
-               const fileUrlResp = await axios.get(
-                 `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${pendingFile.fileKey}/download_url`,
-                 { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
-               );
-               const fileUrl = fileUrlResp.data.data.download_url;
-               const extractedText = await extractFileContent(fileUrl, pendingFile.ext);
-   
-               if (!extractedText || extractedText.startsWith('Lỗi')) {
-                 await replyToLark(messageId, `Không trích xuất được nội dung ${pendingFile.fileName}.`, askerOpenId, askerName);
-               } else {
-                 const combined = (textAfterMention || '') + `\nNội dung file: ${extractedText}`;
-   
-                 // lưu hội thoại: người hỏi luôn là sender
-                 updateConversationMemory(chatId, 'user', combined, askerName);
-                 const memory = conversationMemory.get(chatId) || [];
-                 const formattedHistory = memory.map(m =>
-                   m.role === 'user'
-                     ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
-                     : { role: 'assistant', content: `L-GPT: ${m.content}` }
-                 );
-   
-                 const aiResp = await axios.post(
-                   'https://openrouter.ai/api/v1/chat/completions',
-                   {
-                     model: 'deepseek/deepseek-r1-0528:free',
-                     messages: [
-                       { role: 'system', content: 'Bạn là L-GPT: lạnh lùng, ngắn gọn, súc tích.' },
-                       ...formattedHistory,
-                       { role: 'user', content: `${askerName}: ${combined}` }
-                     ],
-                     stream: false
-                   },
-                   { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-                 );
-   
-                 const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
-                 const clean = assistantMessage.replace(/[\*_`~]/g, '').trim();
-                 updateConversationMemory(chatId, 'assistant', clean, 'L-GPT');
-                 await replyToLark(messageId, clean, askerOpenId, askerName);
-               }
-               pendingFiles.delete(chatId);
-             } catch {
-               await replyToLark(messageId, 'Lỗi xử lý file.', askerOpenId, askerName);
-               pendingFiles.delete(chatId);
-             }
-           } else {
-             await replyToLark(messageId, 'Hãy reply trực tiếp vào tin chứa file.', askerOpenId, askerName);
-           }
-           return;
-         }
-   
-         /* ---------------------------------------
-            Branch E: Chat AI (text)
-            --------------------------------------- */
-         if (messageType === 'text') {
-           if (!textAfterMention) return;
-   
-           try {
-             updateConversationMemory(chatId, 'user', textAfterMention, askerName);
-             const memory = conversationMemory.get(chatId) || [];
-             const formattedHistory = memory.map(m =>
-               m.role === 'user'
-                 ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
-                 : { role: 'assistant', content: `L-GPT: ${m.content}` }
-             );
-   
-             const aiResp = await axios.post(
-               'https://openrouter.ai/api/v1/chat/completions',
-               {
-                 model: 'deepseek/deepseek-r1-0528:free',
-                 messages: [
-                   { role: 'system', content: 'Bạn là một trợ lý AI lạnh lùng, ngắn gọn, súc tích. Luôn xưng là L-GPT.' },
-                   ...formattedHistory,
-                   { role: 'user', content: `${askerName}: ${textAfterMention}` }
-                 ],
-                 stream: false
-               },
-               { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-             );
-   
-             const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
-             const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-             updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-   
-             await replyToLark(messageId, cleanMessage, askerOpenId, askerName);
-           } catch {
-             await replyToLark(messageId, 'Lỗi.', askerOpenId, askerName);
-           }
-           return;
-         }
-   
-         // Hết nhánh
-         return;
-       }
-   
-       // fallback
-       return res.sendStatus(200);
-     } catch (error) {
-       console.error('Webhook error:', error);
-       return res.sendStatus(500);
-     }
-   });
+   SECTION 14 — Webhook (ONLY on @mention) — FIXED
+   - Group: chỉ phản hồi khi có @bot
+   - P2P: luôn phản hồi
+   - Chủ ngữ luôn là NGƯỜI GỬI (sender), không dùng mention khác
+   - Log chatId của group
+   =========================================== */
+app.post('/webhook', async (req, res) => {
+  try {
+    const bodyRaw   = req.body.toString('utf8');
+    const signature = req.headers['x-lark-signature'];
+    const timestamp = req.headers['x-lark-request-timestamp'];
+    const nonce     = req.headers['x-lark-request-nonce'];
+
+    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      return res.sendStatus(401);
+    }
+
+    let decryptedData = {};
+    try {
+      const { encrypt } = JSON.parse(bodyRaw);
+      decryptedData = decryptMessage(encrypt || '');
+    } catch {}
+
+    // 1) URL verification
+    if (decryptedData.header?.event_type === 'url_verification') {
+      return res.json({ challenge: decryptedData.event.challenge });
+    }
+
+    // 2) Message receive
+    if (decryptedData.header?.event_type === 'im.message.receive_v1') {
+      const message     = decryptedData.event.message;
+      const messageId   = message.message_id;
+      const chatId      = message.chat_id;
+      const chatType    = message.chat_type;      // "group" | "p2p"
+      const messageType = message.message_type;   // "text" | "image" | "file" | "post" ...
+      const senderId    = decryptedData.event.sender?.sender_id?.open_id || '';
+      const mentions    = message.mentions || [];
+
+      // Log chỉ ChatID của group
+      if (chatType === 'group') console.log(`[L-GPT] Group chat ID: ${chatId}`);
+
+      // Idempotent
+      if (processedMessageIds.has(messageId)) return res.sendStatus(200);
+      processedMessageIds.add(messageId);
+
+      // Bỏ qua phản hồi chính mình
+      if (senderId === (process.env.BOT_SENDER_ID || '')) return res.sendStatus(200);
+
+      // Bot có được @mention?
+      const botMentioned = mentions.some(m =>
+        (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
+        (m.id?.app_id  && m.id.app_id  === process.env.LARK_APP_ID)
+      );
+
+      // Trong group: không @bot thì bỏ qua ngay
+      if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
+
+      // Trả 200 sớm để Lark không retry
+      res.sendStatus(200);
+
+      // Lấy token + thông tin NGƯỜI GỬI (chủ ngữ duy nhất)
+      const token = await getAppAccessToken();
+      const askerOpenId  = senderId;                                // luôn là sender
+      const askerName    = await getUserInfo(askerOpenId, token);    // tên người hỏi
+
+      // Lấy text sau khi loại bỏ toàn bộ <at>...</at>
+      let textAfterMention = '';
+      try {
+        const raw = JSON.parse(message.content).text || '';
+        textAfterMention = raw.replace(/<at.*?<\/at>/g, '').trim();
+      } catch {
+        textAfterMention = '';
+      }
+
+      /* ---------------------------------------
+         Branch A: Plan
+         --------------------------------------- */
+      if (/^Plan[,，]/i.test(textAfterMention)) {
+        await processPlanQuery(
+          messageId,
+          SPREADSHEET_TOKEN,
+          textAfterMention,
+          token,
+          askerOpenId,
+          askerName
+        );
+        return;
+      }
+
+      /* ---------------------------------------
+         Branch B: Base
+         --------------------------------------- */
+      let baseId = '', tableId = '';
+      const keyRegex    = new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|，)`, 'i');
+      const reportMatch = textAfterMention.match(keyRegex);
+      if (reportMatch) {
+        const reportName = reportMatch[1].toUpperCase();
+        const reportUrl  = BASE_MAPPINGS[reportName];
+        if (reportUrl) {
+          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
+          if (urlMatch) { baseId = urlMatch[1]; tableId = urlMatch[2]; }
+        }
+      }
+      if (baseId && tableId) {
+        await processBaseData(messageId, baseId, tableId, textAfterMention, token);
+        return;
+      }
+
+      /* ---------------------------------------
+         Branch C: File / Image receive
+         - Group: chỉ xử lý khi có @bot
+         - P2P: cho phép
+         --------------------------------------- */
+      if (['file','image'].includes(messageType)) {
+        try {
+          const fileKey  = message.file_key;
+          if (!fileKey) {
+            await replyToLark(messageId, 'Thiếu file_key.', askerOpenId, askerName);
+            return;
+          }
+          const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
+          const ext      = path.extname(fileName).slice(1).toLowerCase();
+          pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
+          await replyToLark(messageId, 'Đã nhận file. Reply kèm yêu cầu trong 5 phút.', askerOpenId, askerName);
+        } catch {
+          await replyToLark(messageId, 'Lỗi nhận file.', askerOpenId, askerName);
+        }
+        return;
+      }
+
+      /* ---------------------------------------
+         Branch D: Reply vào file (post có parent_id)
+         --------------------------------------- */
+      if (messageType === 'post' && message.parent_id) {
+        const pendingFile = pendingFiles.get(chatId);
+        if (pendingFile && pendingFile.messageId === message.parent_id) {
+          try {
+            const fileUrlResp = await axios.get(
+              `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${pendingFile.fileKey}/download_url`,
+              { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
+            );
+            const fileUrl = fileUrlResp.data.data.download_url;
+            const extractedText = await extractFileContent(fileUrl, pendingFile.ext);
+
+            if (!extractedText || extractedText.startsWith('Lỗi')) {
+              await replyToLark(messageId, `Không trích xuất được nội dung ${pendingFile.fileName}.`, askerOpenId, askerName);
+            } else {
+              const combined = (textAfterMention || '') + `\nNội dung file: ${extractedText}`;
+
+              // lưu hội thoại: người hỏi luôn là sender
+              updateConversationMemory(chatId, 'user', combined, askerName);
+              const memory = conversationMemory.get(chatId) || [];
+              const formattedHistory = memory.map(m =>
+                m.role === 'user'
+                  ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
+                  : { role: 'assistant', content: `L-GPT: ${m.content}` }
+              );
+
+              const aiResp = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                  model: 'deepseek/deepseek-r1-0528:free',
+                  messages: [
+                    { role: 'system', content: 'Bạn là L-GPT: lạnh lùng, ngắn gọn, súc tích.' },
+                    ...formattedHistory,
+                    { role: 'user', content: `${askerName}: ${combined}` }
+                  ],
+                  stream: false
+                },
+                { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+              );
+
+              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
+              const clean = assistantMessage.replace(/[\*_`~]/g, '').trim();
+              updateConversationMemory(chatId, 'assistant', clean, 'L-GPT');
+              await replyToLark(messageId, clean, askerOpenId, askerName);
+            }
+            pendingFiles.delete(chatId);
+          } catch {
+            await replyToLark(messageId, 'Lỗi xử lý file.', askerOpenId, askerName);
+            pendingFiles.delete(chatId);
+          }
+        } else {
+          await replyToLark(messageId, 'Hãy reply trực tiếp vào tin chứa file.', askerOpenId, askerName);
+        }
+        return;
+      }
+
+      /* ---------------------------------------
+         Branch E: Chat AI (text)
+         --------------------------------------- */
+      if (messageType === 'text') {
+        if (!textAfterMention) return;
+
+        try {
+          updateConversationMemory(chatId, 'user', textAfterMention, askerName);
+          const memory = conversationMemory.get(chatId) || [];
+          const formattedHistory = memory.map(m =>
+            m.role === 'user'
+              ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
+              : { role: 'assistant', content: `L-GPT: ${m.content}` }
+          );
+
+          const aiResp = await axios.post(
+            'https://openrouter.ai/api/v1/chat/completions',
+            {
+              model: 'deepseek/deepseek-r1-0528:free',
+              messages: [
+                { role: 'system', content: 'Bạn là một trợ lý AI lạnh lùng, ngắn gọn, súc tích. Luôn xưng là L-GPT.' },
+                ...formattedHistory,
+                { role: 'user', content: `${askerName}: ${textAfterMention}` }
+              ],
+              stream: false
+            },
+            { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+          );
+
+          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
+          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+          updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+
+          await replyToLark(messageId, cleanMessage, askerOpenId, askerName);
+        } catch {
+          await replyToLark(messageId, 'Lỗi.', askerOpenId, askerName);
+        }
+        return;
+      }
+
+      // Hết nhánh
+      return;
+    }
+
+    // fallback
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('Webhook error:', error);
+    return res.sendStatus(500);
+  }
+});
    
    /* ===========================================
       SECTION 15 — Housekeeping & Schedules
