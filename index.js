@@ -547,6 +547,12 @@ app.post('/webhook', async (req, res) => {
     let decryptedData = {};
     try { decryptedData = decryptMessage(JSON.parse(bodyRaw).encrypt || ''); } catch {}
 
+    // === Log chatId khi BOT được thêm vào group ===
+    if (decryptedData.header?.event_type === 'im.chat.member.bot.added_v1') {
+      console.log(`🚀 BOT vừa được thêm vào group. Chat ID: ${decryptedData.event.chat_id}`);
+      return res.sendStatus(200);
+    }
+
     if (decryptedData.header?.event_type === 'url_verification') {
       return res.json({ challenge: decryptedData.event.challenge });
     }
@@ -601,7 +607,6 @@ app.post('/webhook', async (req, res) => {
 
       /* ---- Branch A: Plan ---- */
       if (/^Plan[,，]/i.test(textAfterMention)) {
-        // Trong group phải @bot; trong p2p thì cho phép
         await processPlanQuery(messageId, SPREADSHEET_TOKEN, textAfterMention, token, mentionUserId, mentionUserName);
         return;
       }
@@ -625,7 +630,6 @@ app.post('/webhook', async (req, res) => {
 
       /* ---- Branch C: File/Image receive ---- */
       if (['file','image'].includes(messageType)) {
-        // Trong group: chỉ xử lý nếu @bot; p2p thì OK
         try {
           const fileKey = message.file_key;
           if (!fileKey) {
@@ -664,7 +668,6 @@ app.post('/webhook', async (req, res) => {
                   ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
                   : { role: 'assistant', content: `L-GPT: ${m.content}` }
               ));
-
               const aiResp = await axios.post(
                 'https://openrouter.ai/api/v1/chat/completions',
                 {
@@ -696,9 +699,7 @@ app.post('/webhook', async (req, res) => {
 
       /* ---- Branch E: Chat AI (text) ---- */
       if (messageType === 'text') {
-        // Tới được đây nghĩa là: p2p hoặc group+@mention
         if (!textAfterMention) return;
-
         try {
           updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
           const memory = conversationMemory.get(chatId) || [];
@@ -707,7 +708,6 @@ app.post('/webhook', async (req, res) => {
               ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
               : { role: 'assistant', content: `L-GPT: ${m.content}` }
           ));
-
           const aiResp = await axios.post(
             'https://openrouter.ai/api/v1/chat/completions',
             {
@@ -721,7 +721,6 @@ app.post('/webhook', async (req, res) => {
             },
             { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
           );
-
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
@@ -733,7 +732,6 @@ app.post('/webhook', async (req, res) => {
       }
     }
 
-    // fallback
     return res.sendStatus(200);
   } catch (error) {
     console.error('Webhook error:', error);
