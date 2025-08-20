@@ -712,7 +712,7 @@ app.post('/webhook', async (req, res) => {
             {
               model: 'deepseek/deepseek-r1-0528:free',
               messages: [
-                { role: 'system', content: 'Bạn là L-GPT: lạnh lùng, ngắn gọn, súc tích.' },
+                { role: 'system', content: 'Bạn là L-GPT: đáng yêu nhưng chat ngắn gọn, súc tích.' },
                 ...formattedHistory,
                 { role: 'user', content: `${actorName}: ${textAfterMention}` }
               ],
