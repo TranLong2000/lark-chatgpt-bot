@@ -578,7 +578,8 @@
            (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
            (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
          );
-   
+         if (!botMentioned && chatType === 'group') return res.sendStatus(200);
+
          // Trong group: nếu KHÔNG @mention thì bỏ qua tất cả
          const inGroup = chatType === 'group';
          if (inGroup && !botMentioned) return res.sendStatus(200);
@@ -590,13 +591,6 @@
          const token = await getAppAccessToken();
          let mentionUserId = senderId;
          let mentionUserName = await getUserInfo(senderId, token);
-   
-         // Nếu có mention 1 người khác (không phải bot, không phải chính người gửi) thì reply mention họ
-         const userMention = mentions.find(m => m.id?.open_id && m.id.open_id !== BOT_OPEN_ID && m.id.open_id !== senderId);
-         if (userMention) {
-           mentionUserId = userMention.id.open_id;
-           mentionUserName = await getUserInfo(mentionUserId, token);
-         }
    
          // Lấy text đã loại bỏ thẻ <at>
          let textAfterMention = '';
@@ -673,7 +667,7 @@
                    {
                      model: 'deepseek/deepseek-r1-0528:free',
                      messages: [
-                       { role: 'system', content: `Bạn là L-GPT: một trợ lý AI lạnh lùng, ngắn gọn, súc tích. Khi nhận tin nhắn có @L-GPT, hãy hiểu rằng người dùng đang nói chuyện trực tiếp với bạn. Mọi đại từ ngôi 2 (bạn, mày, cậu, ...) đều ám chỉ L-GPT.` },
+                       { role: 'system', content: `Bạn là L-GPT: một trợ lý AI lạnh lùng, đôi lúc đáng yêu, ngắn gọn, súc tích.` },
                        ...formattedHistory,
                        { role: 'user', content: `${mentionUserName}: ${combined}` }
                      ],
@@ -715,9 +709,7 @@
                messages: [
                  { 
                    role: 'system', 
-                   content: `Bạn là L-GPT: một trợ lý AI lạnh lùng, ngắn gọn, súc tích. 
-               Khi nhận tin nhắn có @L-GPT, hãy hiểu rằng người dùng đang nói chuyện trực tiếp với bạn. 
-               Mọi đại từ ngôi 2 (bạn, mày, cậu, ...) đều ám chỉ L-GPT.` 
+                   content: `Bạn là L-GPT: một trợ lý AI lạnh lùng, đôi lúc đáng yêu, ngắn gọn, súc tích.` 
                  },
                  ...formattedHistory,
                  { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
