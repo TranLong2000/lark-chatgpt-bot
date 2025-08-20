@@ -732,6 +732,14 @@ app.post('/webhook', async (req, res) => {
       }
     }
 
+         /* ---- Branch: BOT được thêm vào nhóm ---- */
+    if (decryptedData.header?.event_type === 'im.chat.member.user.added_v1') {
+      const event = decryptedData.event;
+      const chatIdAdded = event?.chat_id;
+      console.log(`BOT vừa được thêm vào nhóm, chatId: ${chatIdAdded}`);
+      return res.sendStatus(200);
+    }
+     
     return res.sendStatus(200);
   } catch (error) {
     console.error('Webhook error:', error);
