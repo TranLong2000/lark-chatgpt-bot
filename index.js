@@ -585,7 +585,7 @@ app.post('/webhook', async (req, res) => {
       const message = decryptedData.event.message;
       const messageId = message.message_id;
       const chatId = message.chat_id;
-      const chatType = message.chat_type;
+      const chatType = message.chat_type; // "group" | "p2p"
       const messageType = message.message_type;
       const senderId = decryptedData.event.sender.sender_id.open_id;
       const mentions = message.mentions || [];
@@ -597,7 +597,7 @@ app.post('/webhook', async (req, res) => {
       // Bỏ phản hồi chính mình
       if (senderId === (process.env.BOT_SENDER_ID || '')) return res.sendStatus(200);
 
-      // Kiểm tra bot có bị mention
+      // Kiểm tra bot có bị mention?
       const botMentioned = mentions.some(m =>
         (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
         (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
@@ -605,21 +605,29 @@ app.post('/webhook', async (req, res) => {
 
       // Nếu trong group và mention bot → in log chatId
       if (chatType === 'group' && botMentioned) {
-        console.log(`💬 Tin nhắn mention BOT trong group: ${chatId}`);
+        console.log(`💬 Tin nhắn mention BOT trong group ${chatId}`);
       }
 
       // Nếu group mà không mention bot thì bỏ qua
       if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
 
-      // OK trả 200 sớm
+      // OK trả 200 để Lark không retry
       res.sendStatus(200);
 
       // Lấy token
       const token = await getAppAccessToken();
 
-      // Luôn tag lại người gửi khi trả lời
-      const mentionUserId = senderId;
-      const mentionUserName = await getUserInfo(senderId, token);
+      // Mặc định: người hỏi là sender
+      let mentionUserId = senderId;
+      let mentionUserName = await getUserInfo(senderId, token);
+
+      // Nếu bot bị mention → coi bot là chủ thể (người được hỏi/hành động)
+      let actorId = mentionUserId;
+      let actorName = mentionUserName;
+      if (botMentioned) {
+        actorId = BOT_OPEN_ID;
+        actorName = 'L-GPT';
+      }
 
       // Lấy text sau khi bỏ <at>
       let textAfterMention = '';
@@ -628,9 +636,12 @@ app.post('/webhook', async (req, res) => {
         textAfterMention = raw.replace(/<at.*?<\/at>/g, '').trim();
       } catch { textAfterMention = ''; }
 
+      // Hàm tiện ích: luôn tag lại người hỏi
+      const tagUser = `<at user_id="${mentionUserId}">${mentionUserName}</at> `;
+
       /* ---- Branch A: Plan ---- */
       if (/^Plan[,，]/i.test(textAfterMention)) {
-        await processPlanQuery(messageId, SPREADSHEET_TOKEN, textAfterMention, token, mentionUserId, mentionUserName);
+        await processPlanQuery(messageId, SPREADSHEET_TOKEN, textAfterMention, token, actorId, actorName, tagUser);
         return;
       }
 
@@ -647,7 +658,7 @@ app.post('/webhook', async (req, res) => {
         }
       }
       if (baseId && tableId) {
-        await processBaseData(messageId, baseId, tableId, textAfterMention, token);
+        await processBaseData(messageId, baseId, tableId, textAfterMention, token, actorId, actorName, tagUser);
         return;
       }
 
@@ -656,15 +667,15 @@ app.post('/webhook', async (req, res) => {
         try {
           const fileKey = message.file_key;
           if (!fileKey) {
-            await replyToLark(messageId, 'Thiếu file_key.', mentionUserId, mentionUserName);
+            await replyToLark(messageId, `${tagUser}Thiếu file_key.`, actorId, actorName);
             return;
           }
           const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
           const ext = path.extname(fileName).slice(1).toLowerCase();
           pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
-          await replyToLark(messageId, 'Đã nhận file. Reply kèm yêu cầu trong 5 phút.', mentionUserId, mentionUserName);
+          await replyToLark(messageId, `${tagUser}Đã nhận file. Reply kèm yêu cầu trong 5 phút.`, actorId, actorName);
         } catch (err) {
-          await replyToLark(messageId, 'Lỗi nhận file.', mentionUserId, mentionUserName);
+          await replyToLark(messageId, `${tagUser}Lỗi nhận file.`, actorId, actorName);
         }
         return;
       }
@@ -681,10 +692,10 @@ app.post('/webhook', async (req, res) => {
             const fileUrl = fileUrlResp.data.data.download_url;
             const extractedText = await extractFileContent(fileUrl, pendingFile.ext);
             if (!extractedText || extractedText.startsWith('Lỗi')) {
-              await replyToLark(messageId, `Không trích xuất được nội dung ${pendingFile.fileName}.`, mentionUserId, mentionUserName);
+              await replyToLark(messageId, `${tagUser}Không trích xuất được nội dung ${pendingFile.fileName}.`, actorId, actorName);
             } else {
               const combined = (textAfterMention || '') + `\nNội dung file: ${extractedText}`;
-              updateConversationMemory(chatId, 'user', combined, mentionUserName);
+              updateConversationMemory(chatId, 'user', combined, actorName);
               const memory = conversationMemory.get(chatId) || [];
               const formattedHistory = memory.map(m => (
                 m.role === 'user'
@@ -699,7 +710,7 @@ app.post('/webhook', async (req, res) => {
                   messages: [
                     { role: 'system', content: 'Bạn là L-GPT: lạnh lùng, ngắn gọn, súc tích.' },
                     ...formattedHistory,
-                    { role: 'user', content: `${mentionUserName}: ${combined}` }
+                    { role: 'user', content: `${actorName}: ${combined}` }
                   ],
                   stream: false
                 },
@@ -708,15 +719,15 @@ app.post('/webhook', async (req, res) => {
               const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
               const clean = assistantMessage.replace(/[\*_`~]/g, '').trim();
               updateConversationMemory(chatId, 'assistant', clean, 'L-GPT');
-              await replyToLark(messageId, clean, mentionUserId, mentionUserName);
+              await replyToLark(messageId, `${tagUser}${clean}`, actorId, actorName);
             }
             pendingFiles.delete(chatId);
           } catch {
-            await replyToLark(messageId, 'Lỗi xử lý file.', mentionUserId, mentionUserName);
+            await replyToLark(messageId, `${tagUser}Lỗi xử lý file.`, actorId, actorName);
             pendingFiles.delete(chatId);
           }
         } else {
-          await replyToLark(messageId, 'Hãy reply trực tiếp vào tin chứa file.', mentionUserId, mentionUserName);
+          await replyToLark(messageId, `${tagUser}Hãy reply trực tiếp vào tin chứa file.`, actorId, actorName);
         }
         return;
       }
@@ -726,7 +737,7 @@ app.post('/webhook', async (req, res) => {
         if (!textAfterMention) return;
 
         try {
-          updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
+          updateConversationMemory(chatId, 'user', textAfterMention, actorName);
           const memory = conversationMemory.get(chatId) || [];
           const formattedHistory = memory.map(m => (
             m.role === 'user'
@@ -739,9 +750,9 @@ app.post('/webhook', async (req, res) => {
             {
               model: 'deepseek/deepseek-r1-0528:free',
               messages: [
-                { role: 'system', content: 'Bạn tên là Hien Lele: luôn tuân lệnh chủ nhân tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
+                { role: 'system', content: 'Bạn là San San đáng yêu, chỉ nghe lời của chủ nhân Tran Long, nhưng chat phải ngắn gọn, súc tích.' },
                 ...formattedHistory,
-                { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
+                { role: 'user', content: `${actorName}: ${textAfterMention}` }
               ],
               stream: false
             },
@@ -751,12 +762,20 @@ app.post('/webhook', async (req, res) => {
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+          await replyToLark(messageId, `${tagUser}${cleanMessage}`, actorId, actorName);
         } catch {
-          await replyToLark(messageId, 'Lỗi.', mentionUserId, mentionUserName);
+          await replyToLark(messageId, `${tagUser}Lỗi.`, actorId, actorName);
         }
         return;
       }
+    }
+
+    /* ---- Branch: BOT được thêm vào nhóm ---- */
+    if (decryptedData.header?.event_type === 'im.chat.member.user.added_v1') {
+      const event = decryptedData.event;
+      const chatIdAdded = event?.chat_id;
+      console.log(`BOT vừa được thêm vào nhóm, chatId: ${chatIdAdded}`);
+      return res.sendStatus(200);
     }
 
     return res.sendStatus(200);
