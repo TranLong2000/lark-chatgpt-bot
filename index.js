@@ -236,15 +236,14 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const rows = await getSheetData(SPREADSHEET_TOKEN, token, `${SHEET_ID}!A:AK`);
+      // Luôn lấy token mới
+      const freshToken = await getAppAccessToken();
+      const rows = await getSheetData(SPREADSHEET_TOKEN, freshToken, `${SHEET_ID}!A:AK`);
       console.log(`DEBUG attempt ${attempt} - sheet rows length:`, rows.length);
-      console.log("DEBUG first 3 rows:", rows.slice(0, 3));
 
       if (rows && rows.length > 1) {
-        const data = [];
-        for (let i = 1; i < rows.length; i++) {
-          const r = rows[i] || [];
-          const productName = r[col.E] ?? `Dòng ${i + 1}`;
+        return rows.slice(1).map((r, i) => {
+          const productName = r[col.E] ?? `Dòng ${i + 2}`;
           const warehouse   = r[col.F] ?? '';
           const stock       = toNumber(r[col.G]);
           const avr7daysRaw = r[col.M] ?? '';
@@ -258,27 +257,19 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
           if (prev === 0 && current > 0) change = Infinity;
           else if (prev > 0) change = ((current - prev) / prev) * 100;
 
-          data.push({
-            productName, warehouse, finalStatus, stock,
-            avr7days: avr7daysRaw, sale3day, sale2day, sale1day,
-            prev, current, change
-          });
-        }
-        return data;
+          return { productName, warehouse, finalStatus, stock, avr7days: avr7daysRaw, sale3day, sale2day, sale1day, prev, current, change };
+        });
       }
 
-      // Nếu chưa có dữ liệu, chờ 60s rồi thử lại
-      if (attempt < 3) {
-        console.log("⚠ Chưa có dữ liệu, đợi 60s rồi thử lại...");
-        await new Promise(r => setTimeout(r, 60000));
-      }
+      console.warn(`⚠ Attempt ${attempt}: Dữ liệu rỗng, thử lại...`);
+      await new Promise(r => setTimeout(r, 2000)); // chờ 2s rồi thử lại
     } catch (err) {
       console.error(`Lỗi khi lấy dữ liệu sheet (attempt ${attempt}):`, err);
-      if (attempt < 3) await new Promise(r => setTimeout(r, 60000));
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
 
-  return []; // Sau 3 lần vẫn rỗng thì trả về mảng trống
+  return [];
 }
 
 async function analyzeSalesChange(token) {
