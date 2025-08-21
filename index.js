@@ -230,44 +230,55 @@
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 async function getSaleComparisonData(token, prevCol, currentCol) {
-  try {
-    const rows = await getSheetData(SPREADSHEET_TOKEN, token, `${SHEET_ID}!A:AK`);
-    console.log("DEBUG sheet rows length:", rows.length);
-    console.log("DEBUG first 3 rows:", rows.slice(0, 3));
+  const col = { A:0,E:4,F:5,G:6,M:12,N:13,O:14,P:15,Q:16,AK:36 };
+  const prevIdx = colToIndex(prevCol);
+  const currIdx = colToIndex(currentCol);
 
-    if (!rows || rows.length <= 1) return [];
-    const col = { A:0,E:4,F:5,G:6,M:12,N:13,O:14,P:15,Q:16,AK:36 };
-    const prevIdx = colToIndex(prevCol);
-    const currIdx = colToIndex(currentCol);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const rows = await getSheetData(SPREADSHEET_TOKEN, token, `${SHEET_ID}!A:AK`);
+      console.log(`DEBUG attempt ${attempt} - sheet rows length:`, rows.length);
+      console.log("DEBUG first 3 rows:", rows.slice(0, 3));
 
-    const data = [];
-    for (let i = 1; i < rows.length; i++) {
-      const r = rows[i] || [];
-      const productName = r[col.E] ?? `Dòng ${i + 1}`;
-      const warehouse   = r[col.F] ?? '';
-      const stock       = toNumber(r[col.G]);
-      const avr7daysRaw = r[col.M] ?? '';
-      const sale3day    = toNumber(r[col.N]);
-      const sale2day    = toNumber(r[col.O]);
-      const sale1day    = toNumber(r[col.P]);
-      const finalStatus = (r[col.AK] ?? '').toString().trim();
-      const prev    = toNumber(r[prevIdx]);
-      const current = toNumber(r[currIdx]);
-      let change = 0;
-      if (prev === 0 && current > 0) change = Infinity;
-      else if (prev > 0) change = ((current - prev) / prev) * 100;
+      if (rows && rows.length > 1) {
+        const data = [];
+        for (let i = 1; i < rows.length; i++) {
+          const r = rows[i] || [];
+          const productName = r[col.E] ?? `Dòng ${i + 1}`;
+          const warehouse   = r[col.F] ?? '';
+          const stock       = toNumber(r[col.G]);
+          const avr7daysRaw = r[col.M] ?? '';
+          const sale3day    = toNumber(r[col.N]);
+          const sale2day    = toNumber(r[col.O]);
+          const sale1day    = toNumber(r[col.P]);
+          const finalStatus = (r[col.AK] ?? '').toString().trim();
+          const prev    = toNumber(r[prevIdx]);
+          const current = toNumber(r[currIdx]);
+          let change = 0;
+          if (prev === 0 && current > 0) change = Infinity;
+          else if (prev > 0) change = ((current - prev) / prev) * 100;
 
-      data.push({
-        productName, warehouse, finalStatus, stock,
-        avr7days: avr7daysRaw, sale3day, sale2day, sale1day,
-        prev, current, change
-      });
+          data.push({
+            productName, warehouse, finalStatus, stock,
+            avr7days: avr7daysRaw, sale3day, sale2day, sale1day,
+            prev, current, change
+          });
+        }
+        return data;
+      }
+
+      // Nếu chưa có dữ liệu, chờ 60s rồi thử lại
+      if (attempt < 3) {
+        console.log("⚠ Chưa có dữ liệu, đợi 60s rồi thử lại...");
+        await new Promise(r => setTimeout(r, 60000));
+      }
+    } catch (err) {
+      console.error(`Lỗi khi lấy dữ liệu sheet (attempt ${attempt}):`, err);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 60000));
     }
-    return data;
-  } catch (err) { 
-    console.error("Lỗi khi lấy dữ liệu sheet:", err);
-    return [];
   }
+
+  return []; // Sau 3 lần vẫn rỗng thì trả về mảng trống
 }
 
 async function analyzeSalesChange(token) {
