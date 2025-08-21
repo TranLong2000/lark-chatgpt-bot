@@ -226,7 +226,7 @@
      return Number.isFinite(n) ? n : 0;
    }
    
-  /* ==========================================================
+/* ==========================================================
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 async function getSaleComparisonData(token, prevCol, currentCol) {
@@ -354,48 +354,53 @@ async function safeAnalyzeSalesChange(token) {
   return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
 }
 
-   
-   async function getCellB2Value(token) {
-     try {
-       const targetColumn = 'G';
-       const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${targetColumn}:${targetColumn}`;
-       const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
-       const values = resp.data.data.valueRange.values || [];
-       const sum = values.reduce((acc, row) => {
-         const v = row[0];
-         const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
-         return isNaN(num) ? acc : acc + num;
-       }, 0);
-       return (sum || sum === 0) ? sum.toString() : null;
-     } catch { return null; }
-   }
-   
-   async function sendMessageToGroup(token, chatId, messageText) {
-     try {
-       const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
-       await axios.post(
-         `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
-         payload,
-         { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-       );
-     } catch (err) { console.log('Lỗi gửi tin nhắn:', err.message); }
-   }
-   
-   async function checkB2ValueChange() {
-     try {
-       const token = await getAppAccessToken();
-       const currentB2Value = await getCellB2Value(token);
-       console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
-   
-       if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-         const messageText = `✅ Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
-         for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, messageText);
-         const salesMsg = await analyzeSalesChange(token);
-         if (salesMsg) for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, salesMsg);
-       }
-       lastB2Value = currentB2Value;
-     } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
-   }
+async function getCellB2Value(token) {
+  try {
+    const targetColumn = 'G';
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${targetColumn}:${targetColumn}`;
+    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
+    const values = resp.data.data.valueRange.values || [];
+    const sum = values.reduce((acc, row) => {
+      const v = row[0];
+      const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
+      return isNaN(num) ? acc : acc + num;
+    }, 0);
+    return (sum || sum === 0) ? sum.toString() : null;
+  } catch { return null; }
+}
+
+async function sendMessageToGroup(token, chatId, messageText) {
+  try {
+    const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+  } catch (err) { console.log('Lỗi gửi tin nhắn:', err.message); }
+}
+
+async function checkB2ValueChange() {
+  try {
+    const token = await getAppAccessToken();
+    const currentB2Value = await getCellB2Value(token);
+    console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
+
+    if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
+      // Gửi thông báo stock ngay lập tức
+      const messageText = `✅ Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
+      for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, messageText);
+
+      // Lấy dữ liệu TOP 5 / OOS với retry
+      const salesMsg = await safeAnalyzeSalesChange(token);
+      if (salesMsg) {
+        for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, salesMsg);
+      }
+    }
+    lastB2Value = currentB2Value;
+  } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
+}
+
    
    /* =======================================================
       SECTION 11 — Conversation memory (short, rolling window)
