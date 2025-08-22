@@ -468,6 +468,18 @@ cron.schedule('0 9 * * 6', async () => {
   await sendPaymentMethodReport();
 });
 
+// Trigger thủ công khi mention bot với "Gửi rebate"
+async function handleManualRebateCommand(text, chatId) {
+  if (text.toLowerCase().includes("gửi rebate")) {
+    console.log("📩 Nhận lệnh Gửi rebate từ người dùng...");
+    const token = await getAppAccessToken();
+    const reportMsg = await analyzePaymentMethod(token);
+    await sendMessageToGroup(token, chatId, reportMsg);
+    return true; // đã xử lý
+  }
+  return false; // chưa xử lý
+}
+
    /* =======================================================
       SECTION 11 — Conversation memory (short, rolling window)
       ======================================================= */
@@ -704,6 +716,17 @@ app.post('/webhook', async (req, res) => {
 
       // Hàm tiện ích: luôn tag lại người hỏi
       const tagUser = `<at user_id="${mentionUserId}">${mentionUserName}</at> `;
+
+       /* ---- Branch đặc biệt: Gửi rebate ngay ---- */
+      if (/gửi rebate/i.test(textAfterMention)) {
+        try {
+          const reportMsg = await analyzePaymentMethod(token);
+          await replyToLark(messageId, `${tagUser}${reportMsg}`, actorId, actorName);
+        } catch (err) {
+          await replyToLark(messageId, `${tagUser}Lỗi khi tạo báo cáo rebate.`, actorId, actorName);
+        }
+        return;
+      }
 
       /* ---- Branch A: Plan ---- */
       if (/^Plan[,，]/i.test(textAfterMention)) {
