@@ -407,25 +407,36 @@ async function checkB2ValueChange() {
 
 /* ====== Payment Method report (unique PO count, retry 3 lần) ====== */
 async function getPaymentMethodData(token) {
+  const col = {
+    PO: 1,            // cột B
+    Supplier: 19,     // cột T
+    ActualRebate: 21, // cột V
+    PaymentMethod: 23,// cột X
+    PaymentMethod2: 26,// cột AA
+    RemainsDay: 27    // cột AB
+  };
+
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
+      // Lấy token mới mỗi lần thử
       const freshToken = await getAppAccessToken();
       const rows = await getSheetData(PAYMENT_SHEET_TOKEN, freshToken, `${PAYMENT_SHEET_ID}!A:AC`);
-      console.log(`DEBUG Payment attempt ${attempt} - sheet rows length:`, rows.length);
+      console.log(`DEBUG Payment sheet attempt ${attempt} - rows length:`, rows.length);
 
       if (rows && rows.length > 1) {
         return rows.slice(1).map(r => ({
-          po: r[1] || '',               // B - PO
-          supplier: r[19] || '',        // T - Supplier
-          paymentMethodGroup: r[23] || '', // X - Payment Method (group)
-          actualRebate: toNumber(r[21]),// V - Actual Rebate
-          paymentMethod: r[26] || '',   // AA - Payment Method (detail)
-          remainsDay: Number(r[27]) || 0 // AB - Remains day
+          supplier: r[col.Supplier] || '',
+          paymentMethod: r[col.PaymentMethod] || '',
+          po: r[col.PO] || '',
+          actualRebate: r[col.ActualRebate] || '',
+          paymentMethod2: r[col.PaymentMethod2] || '',
+          remainsDay: Number(r[col.RemainsDay]) || 0
         }));
       }
 
       console.warn(`⚠ Attempt ${attempt}: Dữ liệu Payment Method rỗng, thử lại...`);
       await new Promise(r => setTimeout(r, 2000));
+
     } catch (err) {
       console.error(`Lỗi khi lấy dữ liệu Payment Method (attempt ${attempt}):`, err);
       await new Promise(r => setTimeout(r, 2000));
@@ -434,6 +445,7 @@ async function getPaymentMethodData(token) {
 
   return [];
 }
+
 
 async function analyzePaymentMethod(token) {
   const data = await getPaymentMethodData(token);
