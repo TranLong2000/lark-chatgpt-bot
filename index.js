@@ -405,30 +405,22 @@ async function checkB2ValueChange() {
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
 
-/* ====== Payment Method report (fix IMPORTRANGE) ====== */
-async function getPaymentMethodData(token) {
-  const col = { 
-    B: 1,   // PO
-    T: 19,  // Supplier
-    V: 21,  // Actual Rebate
-    X: 23,  // Rebate Method (trước là Payment Method)
-    AA: 26, // Payment Method
-    AB: 27  // Remains day
-  };
+/* ====== Payment Method report ====== */
+async function getPaymentMethodData() {
+  const col = { B: 1, T: 19, V: 21, X: 23, AA: 26, AB: 27 };
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      // Luôn lấy token mới
       const freshToken = await getAppAccessToken();
       const range = `${PAYMENT_SHEET_ID}!A:AC`;
-      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values/${range}?valueRenderOption=FormattedValue`;
-      
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(range)}&valueRenderOption=ToString`;
+
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${freshToken}` },
         timeout: 20000
       });
-      
-      const rows = resp.data.data?.valueRange?.values || [];
+
+      const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
       console.log(`DEBUG attempt ${attempt} - payment sheet rows length:`, rows.length);
 
       if (rows && rows.length > 1) {
@@ -436,42 +428,75 @@ async function getPaymentMethodData(token) {
           supplier: r[col.T] || '',
           rebateMethod: r[col.X] || '',
           po: r[col.B] || '',
-          actualRebate: Number(r[col.V]) || 0,
+          actualRebate: parseFloat(r[col.V] || 0),
           paymentMethod2: r[col.AA] || '',
           remainsDay: Number(r[col.AB]) || 0
         }));
       }
 
-      console.warn(`⚠ Attempt ${attempt}: Dữ liệu payment rỗng, thử lại...`);
+      console.warn(`⚠ Attempt ${attempt}: Payment data rỗng hoặc quá ít, thử lại...`);
       await new Promise(r => setTimeout(r, 2000));
+
     } catch (err) {
-      console.error(`Lỗi khi lấy dữ liệu Payment Method (attempt ${attempt}):`, err.message);
+      console.error(`Lỗi khi lấy dữ liệu Payment sheet (attempt ${attempt}):`, err.message);
       await new Promise(r => setTimeout(r, 2000));
     }
   }
+
   return [];
 }
 
 async function analyzePaymentMethod(token) {
-  const data = await getPaymentMethodData(token);
-  if (!data.length) return "⚠ Không có dữ liệu Rebate Method.";
+  const data = await getPaymentMethodData();
+  if (!data.length) return "⚠ Không có dữ liệu Payment Method.";
 
   // Gom nhóm theo rebateMethod
-  const grouped = {};
+  const groupedByMethod = {};
   data.forEach(row => {
-    if (!grouped[row.rebateMethod]) grouped[row.rebateMethod] = [];
-    grouped[row.rebateMethod].push(row);
+    if (!groupedByMethod[row.rebateMethod]) groupedByMethod[row.rebateMethod] = [];
+    groupedByMethod[row.rebateMethod].push(row);
   });
 
-  let msg = `📋 Báo cáo Rebate Method:\n`;
-  Object.keys(grouped).forEach(method => {
+  let msg = `📋 Báo cáo Payment Method:\n`;
+  for (const method of Object.keys(groupedByMethod)) {
     msg += `\n💳 ${method || 'Không xác định'}\n`;
-    grouped[method]
-      .sort((a, b) => a.remainsDay - b.remainsDay)
-      .forEach(r => {
-        msg += `- ${r.supplier}: ${r.po} | ${r.actualRebate} | ${r.paymentMethod2} | ${r.remainsDay}\n`;
+
+    // Gom tiếp theo supplier + remainsDay
+    const supplierRows = [];
+    groupedByMethod[method].forEach(r => {
+      supplierRows.push({
+        supplier: r.supplier,
+        po: r.po,
+        actualRebate: r.actualRebate,
+        paymentMethod2: r.paymentMethod2,
+        remainsDay: r.remainsDay
       });
-  });
+    });
+
+    // Gom unique PO, tính tổng rebate
+    const supplierMap = {};
+    supplierRows.forEach(r => {
+      const key = `${r.supplier}|${r.remainsDay}`;
+      if (!supplierMap[key]) {
+        supplierMap[key] = {
+          supplier: r.supplier,
+          remainsDay: r.remainsDay,
+          poSet: new Set(),
+          totalRebate: 0,
+          paymentMethod2: r.paymentMethod2
+        };
+      }
+      supplierMap[key].poSet.add(r.po);
+      supplierMap[key].totalRebate += r.actualRebate;
+    });
+
+    // Sắp xếp theo remainsDay
+    const sorted = Object.values(supplierMap).sort((a, b) => a.remainsDay - b.remainsDay);
+
+    sorted.forEach(r => {
+      msg += `- ${r.supplier}: ${r.poSet.size} PO | ${r.totalRebate} | ${r.paymentMethod2} | ${r.remainsDay}\n`;
+    });
+  }
 
   return msg;
 }
@@ -484,7 +509,7 @@ async function sendPaymentMethodReport() {
       await sendMessageToGroup(token, chatId, reportMsg);
     }
   } catch (err) {
-    console.log('Lỗi gửi báo cáo Rebate Method:', err.message);
+    console.log('Lỗi gửi báo cáo Payment Method:', err.message);
   }
 }
 
@@ -743,16 +768,16 @@ app.post('/webhook', async (req, res) => {
       // Hàm tiện ích: luôn tag lại người hỏi
       const tagUser = `<at user_id="${mentionUserId}">${mentionUserName}</at> `;
 
-      /* ---- Branch đặc biệt: Gửi rebate ngay ---- */
-      if (/gửi rebate/i.test(textAfterMention)) {
-        try {
-          const reportMsg = await analyzePaymentMethod(token);
-          await replyToLark(messageId, `${tagUser}${reportMsg}`, actorId, actorName);
-        } catch (err) {
-          await replyToLark(messageId, `${tagUser}Lỗi khi tạo báo cáo rebate.`, actorId, actorName);
-        }
-        return;
-      }
+/* ---- Branch đặc biệt: Gửi rebate ngay ---- */
+if (/gửi rebate/i.test(textAfterMention)) {
+  try {
+    const reportMsg = await analyzePaymentMethod(token);
+    await replyToLark(messageId, `${tagUser}${reportMsg}`, actorId, actorName);
+  } catch (err) {
+    await replyToLark(messageId, `${tagUser}Lỗi khi tạo báo cáo rebate.`, actorId, actorName);
+  }
+  return;
+}
 
       /* ---- Branch A: Plan ---- */
       if (/^Plan[,，]/i.test(textAfterMention)) {
