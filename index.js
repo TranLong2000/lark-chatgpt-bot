@@ -14,6 +14,7 @@
    const Tesseract = require('tesseract.js');
    const moment = require('moment-timezone');
    const QuickChart = require('quickchart-js');
+   const cron = require('node-cron');
    require('dotenv').config();
    
    /* ===== App boot ===== */
