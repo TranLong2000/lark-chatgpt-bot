@@ -46,8 +46,8 @@ const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = '48e2fd';
 
 // ===== Sheet Payment Method =====
-const PAYMENT_SHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
-const PAYMENT_SHEET_ID = '5cr5RK';
+const PAYMENT_SHEET_TOKEN = 'UMU1s9pS9hqtkft1yQvlfRqpgqc';
+const PAYMENT_SHEET_ID = 'ExK78P';
 
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')
   .split(',')
@@ -407,7 +407,7 @@ async function checkB2ValueChange() {
 
 /* ====== Payment Method report ====== */
 async function getPaymentMethodData() {
-  const col = { B: 1, T: 19, V: 21, X: 23, AA: 26, AB: 27 };
+  const col = { A: 0, B: 1, T: 19, V: 21, W: 22, X: 23, AA: 26, AB: 27 };
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -424,14 +424,22 @@ async function getPaymentMethodData() {
       console.log(`DEBUG attempt ${attempt} - payment sheet rows length:`, rows.length);
 
       if (rows && rows.length > 1) {
-        return rows.slice(1).map(r => ({
-          supplier: r[col.T] || '',
-          rebateMethod: r[col.X] || '',
-          po: r[col.B] || '',
-          actualRebate: parseFloat(r[col.V] || 0),
-          paymentMethod2: r[col.AA] || '',
-          remainsDay: Number(r[col.AB]) || 0
-        }));
+        return rows
+          .slice(1)
+          .filter(r => {
+            const rebateDone = Number(r[col.W]) || 0;  // W
+            const actualRebate = Number(r[col.V]);     // V
+            const createDate = r[col.A];               // A
+            return rebateDone === 0 && !isNaN(actualRebate) && createDate && createDate.toString().trim() !== '';
+          })
+          .map(r => ({
+            supplier: r[col.T] || '',
+            rebateMethod: r[col.X] || '',
+            po: r[col.B] || '',
+            actualRebate: Math.round(Number(r[col.V]) || 0), // integer
+            paymentMethod2: r[col.AA] || '',
+            remainsDay: Number(r[col.AB]) || 0
+          }));
       }
 
       console.warn(`⚠ Attempt ${attempt}: Payment data rỗng hoặc quá ít, thử lại...`);
