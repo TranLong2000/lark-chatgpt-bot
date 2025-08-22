@@ -35,17 +35,25 @@
      PUR_SHEET: 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
    };
    
-   /* ===============================
-      SECTION 2 — Global constants
-      =============================== */
-   let lastB2Value = null;
-   const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
-   const SHEET_ID = '48e2fd';
-   const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')
-     .split(',')
-     .map(s => s.trim())
-     .filter(Boolean);
-   const BOT_OPEN_ID = process.env.BOT_OPEN_ID;
+/* ===============================
+   SECTION 2 — Global constants
+   =============================== */
+let lastB2Value = null;
+
+// ===== Sheet so sánh sale =====
+const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
+const SHEET_ID = '48e2fd';
+
+// ===== Sheet Payment Method =====
+const PAYMENT_SHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
+const PAYMENT_SHEET_ID = '5cr5RK';
+
+const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const BOT_OPEN_ID = process.env.BOT_OPEN_ID;
    
    /* ===============================
       SECTION 3 — Runtime stores
@@ -227,7 +235,7 @@
    }
    
 /* ==========================================================
-   SECTION 10 — Sales compare + message (scheduled analysis)
+   SECTION 10 — Sales compare + Payment Method (scheduled analysis)
    ========================================================== */
 async function getSaleComparisonData(token, prevCol, currentCol) {
   const col = { A:0,E:4,F:5,G:6,M:12,N:13,O:14,P:15,Q:16,AK:36 };
@@ -236,7 +244,6 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      // Luôn lấy token mới
       const freshToken = await getAppAccessToken();
       const rows = await getSheetData(SPREADSHEET_TOKEN, freshToken, `${SHEET_ID}!A:AK`);
       console.log(`DEBUG attempt ${attempt} - sheet rows length:`, rows.length);
@@ -262,7 +269,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
       }
 
       console.warn(`⚠ Attempt ${attempt}: Dữ liệu rỗng, thử lại...`);
-      await new Promise(r => setTimeout(r, 2000)); // chờ 2s rồi thử lại
+      await new Promise(r => setTimeout(r, 2000));
     } catch (err) {
       console.error(`Lỗi khi lấy dữ liệu sheet (attempt ${attempt}):`, err);
       await new Promise(r => setTimeout(r, 2000));
@@ -280,7 +287,7 @@ async function analyzeSalesChange(token) {
   const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
   const allData = await getSaleComparisonData(token, prevCol, currentCol);
-  if (!allData.length) return null; // để null thay vì chuỗi lỗi
+  if (!allData.length) return null;
 
   const topData = allData.filter(r =>
     r.warehouse === 'Binh Tan Warehouse' && String(r.avr7days).trim() !== ''
@@ -304,15 +311,14 @@ async function analyzeSalesChange(token) {
     .sort((a,b) => a.change - b.change)
     .slice(0,5);
 
-  // Logic OOS mới — tính số ngày liên tiếp không bán được
+  // OOS mới — tính số ngày liên tiếp
   const allOOS = totalData
     .filter(r => Number(r.stock) === 0)
     .map(r => {
-      let daysOOS = 1; // hôm nay = 1 ngày
+      let daysOOS = 1;
       if (r.sale1day === 0) daysOOS++;
       if (r.sale2day === 0) daysOOS++;
       if (r.sale3day === 0) daysOOS++;
-
       let label = daysOOS > 3 ? 'OOS > 3 ngày' : `OOS ${daysOOS} ngày`;
       return { ...r, oosLabel: label, daysOOS };
     })
@@ -341,14 +347,13 @@ async function analyzeSalesChange(token) {
   return msg;
 }
 
-// Hàm an toàn: thử lại 3 lần nếu chưa có dữ liệu
 async function safeAnalyzeSalesChange(token) {
   let tries = 3;
   while (tries > 0) {
     const msg = await analyzeSalesChange(token);
-    if (msg && typeof msg === "string") return msg; // có dữ liệu hợp lệ thì trả về
+    if (msg && typeof msg === "string") return msg;
     console.log("⚠ Dữ liệu TOP 5/OOS chưa sẵn sàng, thử lại sau 1 phút...");
-    await new Promise(r => setTimeout(r, 60000)); // chờ 1 phút
+    await new Promise(r => setTimeout(r, 60000));
     tries--;
   }
   return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
@@ -387,11 +392,9 @@ async function checkB2ValueChange() {
     console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
 
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-      // Gửi thông báo stock ngay lập tức
       const messageText = `✅ Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
       for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, messageText);
 
-      // Lấy dữ liệu TOP 5 / OOS với retry
       const salesMsg = await safeAnalyzeSalesChange(token);
       if (salesMsg) {
         for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, salesMsg);
@@ -400,6 +403,69 @@ async function checkB2ValueChange() {
     lastB2Value = currentB2Value;
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
+
+/* ====== Payment Method report ====== */
+async function getPaymentMethodData(token) {
+  try {
+    const rows = await getSheetData(PAYMENT_SHEET_TOKEN, token, `${PAYMENT_SHEET_ID}!A:AC`);
+    console.log(`DEBUG Payment sheet rows length:`, rows.length);
+
+    if (!rows || rows.length <= 1) return [];
+
+    return rows.slice(1).map(r => ({
+      supplier: r[19] || '',
+      paymentMethod: r[23] || '',
+      po: r[1] || '',
+      actualRebate: r[21] || '',
+      paymentMethod2: r[26] || '',
+      remainsDay: Number(r[27]) || 0
+    }));
+  } catch (err) {
+    console.error("Lỗi khi lấy dữ liệu Payment Method sheet:", err);
+    return [];
+  }
+}
+
+async function analyzePaymentMethod(token) {
+  const data = await getPaymentMethodData(token);
+  if (!data.length) return "⚠ Không có dữ liệu Payment Method.";
+
+  const grouped = {};
+  data.forEach(row => {
+    if (!grouped[row.paymentMethod]) grouped[row.paymentMethod] = [];
+    grouped[row.paymentMethod].push(row);
+  });
+
+  let msg = `📋 Báo cáo Payment Method:\n`;
+  Object.keys(grouped).forEach(method => {
+    msg += `\n💳 ${method || 'Không xác định'}\n`;
+    grouped[method]
+      .sort((a, b) => a.remainsDay - b.remainsDay)
+      .forEach(r => {
+        msg += `- ${r.supplier}: ${r.po} | ${r.actualRebate} | ${r.paymentMethod2} | ${r.remainsDay}\n`;
+      });
+  });
+
+  return msg;
+}
+
+async function sendPaymentMethodReport() {
+  try {
+    const token = await getAppAccessToken();
+    const reportMsg = await analyzePaymentMethod(token);
+    for (const chatId of GROUP_CHAT_IDS) {
+      await sendMessageToGroup(token, chatId, reportMsg);
+    }
+  } catch (err) {
+    console.log('Lỗi gửi báo cáo Payment Method:', err.message);
+  }
+}
+
+// Cron: gửi Payment Method vào 9h sáng thứ 7
+cron.schedule('0 9 * * 6', async () => {
+  console.log("⏰ Gửi báo cáo Payment Method (9h sáng Thứ 7)...");
+  await sendPaymentMethodReport();
+});
 
    /* =======================================================
       SECTION 11 — Conversation memory (short, rolling window)
