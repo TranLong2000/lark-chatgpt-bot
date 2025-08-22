@@ -405,33 +405,40 @@ async function checkB2ValueChange() {
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
 
-/* ====== Payment Method report (unique PO count) ====== */
+/* ====== Payment Method report (unique PO count, retry 3 lần) ====== */
 async function getPaymentMethodData(token) {
-  try {
-    const rows = await getSheetData(PAYMENT_SHEET_TOKEN, token, `${PAYMENT_SHEET_ID}!A:AC`);
-    console.log(`DEBUG Payment sheet rows length:`, rows.length);
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const freshToken = await getAppAccessToken();
+      const rows = await getSheetData(PAYMENT_SHEET_TOKEN, freshToken, `${PAYMENT_SHEET_ID}!A:AC`);
+      console.log(`DEBUG Payment attempt ${attempt} - sheet rows length:`, rows.length);
 
-    if (!rows || rows.length <= 1) return [];
+      if (rows && rows.length > 1) {
+        return rows.slice(1).map(r => ({
+          po: r[1] || '',               // B - PO
+          supplier: r[19] || '',        // T - Supplier
+          paymentMethodGroup: r[23] || '', // X - Payment Method (group)
+          actualRebate: toNumber(r[21]),// V - Actual Rebate
+          paymentMethod: r[26] || '',   // AA - Payment Method (detail)
+          remainsDay: Number(r[27]) || 0 // AB - Remains day
+        }));
+      }
 
-    return rows.slice(1).map(r => ({
-      po: r[1] || '',               // B - PO
-      supplier: r[19] || '',        // T - Supplier
-      paymentMethodGroup: r[23] || '', // X - Payment Method (group)
-      actualRebate: toNumber(r[21]),// V - Actual Rebate
-      paymentMethod: r[26] || '',   // AA - Payment Method (detail)
-      remainsDay: Number(r[27]) || 0 // AB - Remains day
-    }));
-  } catch (err) {
-    console.error("Lỗi khi lấy dữ liệu Payment Method sheet:", err);
-    return [];
+      console.warn(`⚠ Attempt ${attempt}: Dữ liệu Payment Method rỗng, thử lại...`);
+      await new Promise(r => setTimeout(r, 2000));
+    } catch (err) {
+      console.error(`Lỗi khi lấy dữ liệu Payment Method (attempt ${attempt}):`, err);
+      await new Promise(r => setTimeout(r, 2000));
+    }
   }
+
+  return [];
 }
 
 async function analyzePaymentMethod(token) {
   const data = await getPaymentMethodData(token);
   if (!data.length) return "⚠ Không có dữ liệu Payment Method.";
 
-  // Nhóm theo Payment Method Group (X)
   const groupedByPM = {};
   data.forEach(row => {
     if (!groupedByPM[row.paymentMethodGroup]) {
@@ -445,7 +452,6 @@ async function analyzePaymentMethod(token) {
   Object.keys(groupedByPM).forEach(method => {
     msg += `\n💳 ${method || 'Không xác định'}\n`;
 
-    // Nhóm tiếp theo Supplier + Remains day
     const supplierDayMap = {};
     groupedByPM[method].forEach(row => {
       const key = `${row.supplier}||${row.remainsDay}`;
@@ -462,11 +468,9 @@ async function analyzePaymentMethod(token) {
       supplierDayMap[key].totalRebate += row.actualRebate;
     });
 
-    // Chuyển sang mảng và sort theo remainsDay
     const supplierDayArr = Object.values(supplierDayMap)
       .sort((a, b) => a.remainsDay - b.remainsDay);
 
-    // Xuất dữ liệu
     supplierDayArr.forEach(item => {
       msg += `- ${item.supplier}: ${item.poSet.size} PO | ${item.totalRebate.toLocaleString()} | ${item.paymentMethod} | ${item.remainsDay}\n`;
     });
