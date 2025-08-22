@@ -405,7 +405,7 @@ async function checkB2ValueChange() {
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
 
-/* ====== Payment Method report ====== */
+/* ====== Payment Method report (unique PO count) ====== */
 async function getPaymentMethodData(token) {
   try {
     const rows = await getSheetData(PAYMENT_SHEET_TOKEN, token, `${PAYMENT_SHEET_ID}!A:AC`);
@@ -414,12 +414,12 @@ async function getPaymentMethodData(token) {
     if (!rows || rows.length <= 1) return [];
 
     return rows.slice(1).map(r => ({
-      supplier: r[19] || '',
-      paymentMethod: r[23] || '',
-      po: r[1] || '',
-      actualRebate: r[21] || '',
-      paymentMethod2: r[26] || '',
-      remainsDay: Number(r[27]) || 0
+      po: r[1] || '',               // B - PO
+      supplier: r[19] || '',        // T - Supplier
+      paymentMethodGroup: r[23] || '', // X - Payment Method (group)
+      actualRebate: toNumber(r[21]),// V - Actual Rebate
+      paymentMethod: r[26] || '',   // AA - Payment Method (detail)
+      remainsDay: Number(r[27]) || 0 // AB - Remains day
     }));
   } catch (err) {
     console.error("Lỗi khi lấy dữ liệu Payment Method sheet:", err);
@@ -431,20 +431,45 @@ async function analyzePaymentMethod(token) {
   const data = await getPaymentMethodData(token);
   if (!data.length) return "⚠ Không có dữ liệu Payment Method.";
 
-  const grouped = {};
+  // Nhóm theo Payment Method Group (X)
+  const groupedByPM = {};
   data.forEach(row => {
-    if (!grouped[row.paymentMethod]) grouped[row.paymentMethod] = [];
-    grouped[row.paymentMethod].push(row);
+    if (!groupedByPM[row.paymentMethodGroup]) {
+      groupedByPM[row.paymentMethodGroup] = [];
+    }
+    groupedByPM[row.paymentMethodGroup].push(row);
   });
 
   let msg = `📋 Báo cáo Payment Method:\n`;
-  Object.keys(grouped).forEach(method => {
+
+  Object.keys(groupedByPM).forEach(method => {
     msg += `\n💳 ${method || 'Không xác định'}\n`;
-    grouped[method]
-      .sort((a, b) => a.remainsDay - b.remainsDay)
-      .forEach(r => {
-        msg += `- ${r.supplier}: ${r.po} | ${r.actualRebate} | ${r.paymentMethod2} | ${r.remainsDay}\n`;
-      });
+
+    // Nhóm tiếp theo Supplier + Remains day
+    const supplierDayMap = {};
+    groupedByPM[method].forEach(row => {
+      const key = `${row.supplier}||${row.remainsDay}`;
+      if (!supplierDayMap[key]) {
+        supplierDayMap[key] = {
+          supplier: row.supplier,
+          poSet: new Set(),
+          totalRebate: 0,
+          paymentMethod: row.paymentMethod,
+          remainsDay: row.remainsDay
+        };
+      }
+      supplierDayMap[key].poSet.add(row.po);
+      supplierDayMap[key].totalRebate += row.actualRebate;
+    });
+
+    // Chuyển sang mảng và sort theo remainsDay
+    const supplierDayArr = Object.values(supplierDayMap)
+      .sort((a, b) => a.remainsDay - b.remainsDay);
+
+    // Xuất dữ liệu
+    supplierDayArr.forEach(item => {
+      msg += `- ${item.supplier}: ${item.poSet.size} PO | ${item.totalRebate.toLocaleString()} | ${item.paymentMethod} | ${item.remainsDay}\n`;
+    });
   });
 
   return msg;
@@ -461,6 +486,7 @@ async function sendPaymentMethodReport() {
     console.log('Lỗi gửi báo cáo Payment Method:', err.message);
   }
 }
+
 
 // Cron: gửi Payment Method vào 9h sáng thứ 7
 cron.schedule('0 9 * * 6', async () => {
