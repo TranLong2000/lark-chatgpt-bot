@@ -406,14 +406,14 @@ async function checkB2ValueChange() {
 }
 
 /* ====== Payment Method report ====== */
-async function getPaymentMethodData() {
+async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) { // 4 lần x 15 phút = 1 giờ
   const col = { A: 0, B: 1, T: 19, V: 21, W: 22, X: 23, AA: 26, AB: 27 };
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const freshToken = await getAppAccessToken();
       const range = `${PAYMENT_SHEET_ID}!A:AC`;
-      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(range)}&valueRenderOption=ToString`;
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(range)}`;
 
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${freshToken}` },
@@ -421,16 +421,28 @@ async function getPaymentMethodData() {
       });
 
       const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
-      console.log(`DEBUG attempt ${attempt} - payment sheet rows length:`, rows.length);
+      console.log(`DEBUG attempt ${attempt}/${maxAttempts} - payment sheet rows length:`, rows.length);
 
-      if (rows && rows.length > 1) {
-        return rows
+      if (rows.length > 1) {
+        const filtered = rows
           .slice(1)
           .filter(r => {
-            const rebateDone = Number(r[col.W]) || 0;  // W
-            const actualRebate = Number(r[col.V]);     // V
-            const createDate = r[col.A];               // A
-            return rebateDone === 0 && !isNaN(actualRebate) && createDate && createDate.toString().trim() !== '';
+            const rebateDone = Number(r[col.W]) || 0;               // W
+            const actualRebateStr = (r[col.V] ?? '').toString().trim(); // V
+            const createDate = (r[col.A] ?? '').toString().trim();      // A
+
+            // Loại bỏ dữ liệu đang loading hoặc rỗng
+            if (
+              actualRebateStr === '' ||
+              actualRebateStr.toLowerCase() === 'loading...' ||
+              createDate === '' ||
+              createDate.toLowerCase() === 'loading...'
+            ) {
+              return false;
+            }
+
+            const actualRebate = Number(actualRebateStr);
+            return rebateDone === 0 && !isNaN(actualRebate);
           })
           .map(r => ({
             supplier: r[col.T] || '',
@@ -440,19 +452,35 @@ async function getPaymentMethodData() {
             paymentMethod2: r[col.AA] || '',
             remainsDay: Number(r[col.AB]) || 0
           }));
+
+        if (filtered.length > 0) {
+          console.log(`✅ Lấy được ${filtered.length} dòng dữ liệu hợp lệ.`);
+          return filtered;
+        } else {
+          console.warn(`⚠ Attempt ${attempt}: Có dữ liệu nhưng rebate vẫn đang "Loading..." hoặc rỗng, thử lại sau.`);
+        }
+      } else {
+        console.warn(`⚠ Attempt ${attempt}: Payment data rỗng hoặc quá ít, thử lại...`);
       }
 
-      console.warn(`⚠ Attempt ${attempt}: Payment data rỗng hoặc quá ít, thử lại...`);
-      await new Promise(r => setTimeout(r, 2000));
+      if (attempt < maxAttempts) {
+        console.log(`⏳ Chờ ${waitMs / 60000} phút trước khi thử lại...`);
+        await new Promise(r => setTimeout(r, waitMs));
+      }
 
     } catch (err) {
-      console.error(`Lỗi khi lấy dữ liệu Payment sheet (attempt ${attempt}):`, err.message);
-      await new Promise(r => setTimeout(r, 2000));
+      console.error(`❌ Lỗi khi lấy dữ liệu Payment sheet (attempt ${attempt}):`, err.message);
+      if (attempt < maxAttempts) {
+        console.log(`⏳ Chờ ${waitMs / 60000} phút trước khi thử lại...`);
+        await new Promise(r => setTimeout(r, waitMs));
+      }
     }
   }
 
+  console.error(`⛔ Hết thời gian chờ (${(maxAttempts * waitMs) / 60000} phút) mà không lấy đủ dữ liệu rebate.`);
   return [];
 }
+
 
 async function analyzePaymentMethod(token) {
   const data = await getPaymentMethodData();
