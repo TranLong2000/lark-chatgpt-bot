@@ -405,109 +405,171 @@ async function checkB2ValueChange() {
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
 
-// Hàm ép refresh sheet bằng cách ghi vào ô A1
-async function refreshPaymentSheet() {
-  try {
-    const freshToken = await getAppAccessToken();
-    const updateUrl = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values`;
-    const body = {
-      valueRange: {
-        range: `${PAYMENT_SHEET_ID}!A1:A1`,
-        values: [[`refresh_${Date.now()}`]]
-      }
-    };
+// ===== Helpers: Export sheet to CSV & parse =====
+async function createExportTaskCSV(spreadsheetToken, sheetId) {
+  const url = `${process.env.LARK_DOMAIN}/open-apis/drive/v1/export_tasks`;
+  const token = await getAppAccessToken();
 
-    await axios.put(updateUrl, body, {
-      headers: { Authorization: `Bearer ${freshToken}` },
-      timeout: 10000
-    });
+  // Một số tài liệu ghi là sheet_id, số khác là subtable_id → thử sheet_id trước, lỗi 4xx thì fallback.
+  const tryBodies = [
+    { file_token: spreadsheetToken, type: 'sheet', file_extension: 'csv', sheet_id: sheetId },
+    { file_token: spreadsheetToken, type: 'sheet', file_extension: 'csv', subtable_id: sheetId },
+  ];
 
-    console.log("🔄 Đã ghi giá trị dummy để ép refresh sheet.");
-  } catch (err) {
-    console.error("❌ Lỗi khi refresh sheet:", err.message);
+  for (const body of tryBodies) {
+    try {
+      const resp = await axios.post(url, body, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 15000,
+      });
+      const ticket = resp?.data?.data?.ticket;
+      if (!ticket) throw new Error('No export ticket');
+      return ticket;
+    } catch (e) {
+      // thử body tiếp theo
+      if (body === tryBodies[tryBodies.length - 1]) throw e;
+    }
   }
 }
 
-async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) {
+async function pollExportResult(ticket, { maxTries = 30, intervalMs = 2000 } = {}) {
+  const url = `${process.env.LARK_DOMAIN}/open-apis/drive/v1/export_tasks/${ticket}`;
+  const token = await getAppAccessToken();
+
+  for (let i = 0; i < maxTries; i++) {
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 15000,
+    });
+
+    const status = resp?.data?.data?.status; // success / processing / failed
+    if (status === 'success') {
+      const fileToken = resp?.data?.data?.result?.file_token || resp?.data?.data?.file_token;
+      if (!fileToken) throw new Error('Export success but missing file_token');
+      return fileToken;
+    }
+    if (status === 'failed') throw new Error('Export task failed');
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  throw new Error('Export polling timeout');
+}
+
+async function downloadExportedCSV(fileToken) {
+  const url = `${process.env.LARK_DOMAIN}/open-apis/drive/v1/export_tasks/file/${fileToken}/download`;
+  const token = await getAppAccessToken();
+  const resp = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    responseType: 'arraybuffer',
+    timeout: 30000,
+  });
+
+  // Giải mã buffer → string, loại BOM nếu có
+  let csv = Buffer.from(resp.data).toString('utf8');
+  if (csv.charCodeAt(0) === 0xFEFF) csv = csv.slice(1);
+  return csv;
+}
+
+// CSV parser đơn giản, xử lý dấu phẩy trong dấu ngoặc kép & escape ""
+function parseCSV(text) {
+  const rows = [];
+  let cur = [];
+  let val = '';
+  let inQuotes = false;
+
+  const pushVal = () => { cur.push(val); val = ''; };
+  const pushRow = () => { rows.push(cur); cur = []; };
+
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { val += '"'; i++; } // escaped quote
+        else { inQuotes = false; }
+      } else {
+        val += c;
+      }
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') pushVal();
+      else if (c === '\n') { pushVal(); pushRow(); }
+      else if (c === '\r') {
+        if (text[i + 1] === '\n') { i++; }
+        pushVal(); pushRow();
+      } else {
+        val += c;
+      }
+    }
+  }
+  // last value/row
+  pushVal();
+  if (cur.length > 1 || (cur.length === 1 && cur[0] !== '')) pushRow();
+  return rows;
+}
+
+// ====== Payment Method report (dùng Export CSV thay vì đọc ô công thức trực tiếp) ======
+async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) { // 4 lần x 15' = 1 giờ
   const col = { A: 0, B: 1, T: 19, V: 21, W: 22, X: 23, AA: 26, AB: 27 };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      // Ép refresh trước mỗi lần đọc
-      await refreshPaymentSheet();
+      console.log(`🔁 [${attempt}/${maxAttempts}] Export CSV sheet để lấy dữ liệu đã tính...`);
 
-      // Chờ 10s để Lark tính lại công thức
-      console.log("⏳ Đang đợi Lark cập nhật công thức (10s)...");
-      await new Promise(r => setTimeout(r, 10000));
-
-      const freshToken = await getAppAccessToken();
-      const range = `${PAYMENT_SHEET_ID}!A:AC`;
-      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(range)}`;
-
-      const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${freshToken}` },
-        timeout: 20000
-      });
-
-      const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
-      console.log(`DEBUG attempt ${attempt}/${maxAttempts} - payment sheet rows length:`, rows.length);
+      // 1) Tạo export task CSV cho tab Payment
+      const ticket = await createExportTaskCSV(PAYMENT_SHEET_TOKEN, PAYMENT_SHEET_ID);
+      // 2) Poll kết quả → lấy file_token
+      const fileToken = await pollExportResult(ticket);
+      // 3) Tải CSV & parse
+      const csv = await downloadExportedCSV(fileToken);
+      const rows = parseCSV(csv);
+      console.log(`DEBUG export-csv rows length: ${rows.length}`);
 
       if (rows.length > 1) {
         const filtered = rows
           .slice(1)
           .filter(r => {
-            const rebateDone = Number(r[col.W]) || 0;
-            const actualRebateStr = (r[col.V] ?? '').toString().trim();
-            const createDate = (r[col.A] ?? '').toString().trim();
+            const rebateDone = Number(r[col.W]) || 0;                     // W
+            const actualRebateStr = (r[col.V] ?? '').toString().trim();   // V
+            const createDate = (r[col.A] ?? '').toString().trim();        // A
 
-            if (
-              actualRebateStr === '' ||
-              actualRebateStr.toLowerCase() === 'loading...' ||
-              createDate === '' ||
-              createDate.toLowerCase() === 'loading...'
-            ) {
-              return false;
-            }
+            // Sau export CSV thường không còn "Loading...", nhưng vẫn loại rỗng
+            if (actualRebateStr === '' || createDate === '') return false;
 
-            const actualRebate = Number(actualRebateStr);
+            const actualRebate = Number(actualRebateStr.replace(/,/g, '')); // nếu CSV có format dấu phẩy
             return rebateDone === 0 && !isNaN(actualRebate);
           })
           .map(r => ({
             supplier: r[col.T] || '',
             rebateMethod: r[col.X] || '',
             po: r[col.B] || '',
-            actualRebate: Math.round(Number(r[col.V]) || 0),
+            actualRebate: Math.round(Number((r[col.V] ?? '0').toString().replace(/,/g, '')) || 0),
             paymentMethod2: r[col.AA] || '',
-            remainsDay: Number(r[col.AB]) || 0
+            remainsDay: Number((r[col.AB] ?? '0').toString().replace(/,/g, '')) || 0
           }));
 
         if (filtered.length > 0) {
-          console.log(`✅ Lấy được ${filtered.length} dòng dữ liệu hợp lệ.`);
+          console.log(`✅ Lấy được ${filtered.length} dòng dữ liệu hợp lệ từ CSV export.`);
           return filtered;
-        } else {
-          console.warn(`⚠ Attempt ${attempt}: Có dữ liệu nhưng rebate vẫn đang "Loading...", thử lại sau.`);
         }
+        console.warn(`⚠ Có dữ liệu nhưng không có dòng hợp lệ, sẽ retry...`);
       } else {
-        console.warn(`⚠ Attempt ${attempt}: Payment data rỗng hoặc quá ít, thử lại...`);
+        console.warn(`⚠ CSV rỗng hoặc quá ít dòng, sẽ retry...`);
       }
-
-      if (attempt < maxAttempts) {
-        console.log(`⏳ Chờ ${waitMs / 60000} phút trước khi thử lại...`);
-        await new Promise(r => setTimeout(r, waitMs));
-      }
-
     } catch (err) {
-      console.error(`❌ Lỗi khi lấy dữ liệu Payment sheet (attempt ${attempt}):`, err.message);
-      if (attempt < maxAttempts) {
-        console.log(`⏳ Chờ ${waitMs / 60000} phút trước khi thử lại...`);
-        await new Promise(r => setTimeout(r, waitMs));
-      }
+      console.error(`❌ Lỗi vòng ${attempt}:`, err?.response?.data || err.message);
+    }
+
+    if (attempt < maxAttempts) {
+      console.log(`⏳ Chờ ${waitMs / 60000} phút trước khi thử lại...`);
+      await new Promise(r => setTimeout(r, waitMs));
     }
   }
 
   console.error(`⛔ Hết thời gian chờ (${(maxAttempts * waitMs) / 60000} phút) mà không lấy đủ dữ liệu rebate.`);
   return [];
 }
+
+// Giữ nguyên các hàm analyzePaymentMethod, sendPaymentMethodReport, cron như cũ.
+
 
 async function analyzePaymentMethod(token) {
   const data = await getPaymentMethodData();
