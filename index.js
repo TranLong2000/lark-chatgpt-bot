@@ -46,8 +46,8 @@ const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = '48e2fd';
 
 // ===== Sheet Payment Method =====
-const PAYMENT_SHEET_TOKEN = 'UMU1s9pS9hqtkft1yQvlfRqpgqc';
-const PAYMENT_SHEET_ID = 'ExK78P';
+const PAYMENT_SHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
+const PAYMENT_SHEET_ID = 'ZjkcXx';
 
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')
   .split(',')
