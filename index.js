@@ -405,12 +405,41 @@ async function checkB2ValueChange() {
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
 
-/* ====== Payment Method report ====== */
-async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) { // 4 lần x 15 phút = 1 giờ
+// Hàm ép refresh sheet bằng cách ghi vào ô A1
+async function refreshPaymentSheet() {
+  try {
+    const freshToken = await getAppAccessToken();
+    const updateUrl = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values`;
+    const body = {
+      valueRange: {
+        range: `${PAYMENT_SHEET_ID}!A1:A1`,
+        values: [[`refresh_${Date.now()}`]]
+      }
+    };
+
+    await axios.put(updateUrl, body, {
+      headers: { Authorization: `Bearer ${freshToken}` },
+      timeout: 10000
+    });
+
+    console.log("🔄 Đã ghi giá trị dummy để ép refresh sheet.");
+  } catch (err) {
+    console.error("❌ Lỗi khi refresh sheet:", err.message);
+  }
+}
+
+async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) {
   const col = { A: 0, B: 1, T: 19, V: 21, W: 22, X: 23, AA: 26, AB: 27 };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      // Ép refresh trước mỗi lần đọc
+      await refreshPaymentSheet();
+
+      // Chờ 10s để Lark tính lại công thức
+      console.log("⏳ Đang đợi Lark cập nhật công thức (10s)...");
+      await new Promise(r => setTimeout(r, 10000));
+
       const freshToken = await getAppAccessToken();
       const range = `${PAYMENT_SHEET_ID}!A:AC`;
       const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(range)}`;
@@ -427,11 +456,10 @@ async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) { 
         const filtered = rows
           .slice(1)
           .filter(r => {
-            const rebateDone = Number(r[col.W]) || 0;               // W
-            const actualRebateStr = (r[col.V] ?? '').toString().trim(); // V
-            const createDate = (r[col.A] ?? '').toString().trim();      // A
+            const rebateDone = Number(r[col.W]) || 0;
+            const actualRebateStr = (r[col.V] ?? '').toString().trim();
+            const createDate = (r[col.A] ?? '').toString().trim();
 
-            // Loại bỏ dữ liệu đang loading hoặc rỗng
             if (
               actualRebateStr === '' ||
               actualRebateStr.toLowerCase() === 'loading...' ||
@@ -448,7 +476,7 @@ async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) { 
             supplier: r[col.T] || '',
             rebateMethod: r[col.X] || '',
             po: r[col.B] || '',
-            actualRebate: Math.round(Number(r[col.V]) || 0), // integer
+            actualRebate: Math.round(Number(r[col.V]) || 0),
             paymentMethod2: r[col.AA] || '',
             remainsDay: Number(r[col.AB]) || 0
           }));
@@ -457,7 +485,7 @@ async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) { 
           console.log(`✅ Lấy được ${filtered.length} dòng dữ liệu hợp lệ.`);
           return filtered;
         } else {
-          console.warn(`⚠ Attempt ${attempt}: Có dữ liệu nhưng rebate vẫn đang "Loading..." hoặc rỗng, thử lại sau.`);
+          console.warn(`⚠ Attempt ${attempt}: Có dữ liệu nhưng rebate vẫn đang "Loading...", thử lại sau.`);
         }
       } else {
         console.warn(`⚠ Attempt ${attempt}: Payment data rỗng hoặc quá ít, thử lại...`);
@@ -480,7 +508,6 @@ async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) { 
   console.error(`⛔ Hết thời gian chờ (${(maxAttempts * waitMs) / 60000} phút) mà không lấy đủ dữ liệu rebate.`);
   return [];
 }
-
 
 async function analyzePaymentMethod(token) {
   const data = await getPaymentMethodData();
