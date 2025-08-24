@@ -635,18 +635,17 @@ async function readSheetValuesV3(spreadsheetToken, a1Range) {
 }
 
 // ===================== Payment Method: lấy dữ liệu (2 tầng) =====================
-async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) {
-  // cột 0-based
+// ===================== Payment Method: lấy dữ liệu (2 tầng, retry 1h) =====================
+async function getPaymentMethodData() {
   const col = { A: 0, B: 1, T: 19, V: 21, W: 22, X: 23, AA: 26, AB: 27 };
+  const maxAttempts = 4;              // 4 lần thử
+  const waitMs = 15 * 60 * 1000;       // mỗi lần cách 15 phút
+  const totalMin = msToMinutesSafe(maxAttempts * waitMs);
 
-  const totalMs = Number(maxAttempts) * Number(waitMs);
-  const totalMin = msToMinutesSafe(totalMs);
-
-  for (let attempt = 1; attempt <= Number(maxAttempts); attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     console.log(`🔁 Attempt ${attempt}/${maxAttempts} ...`);
-
     try {
-      // === Tầng 1: đọc bằng Sheets v3 (FormattedValue) ===
+      // === Tầng 1: đọc bằng Sheets v3 ===
       const a1 = `${PAYMENT_SHEET_ID}!A:AC`;
       const rowsV3 = await readSheetValuesV3(PAYMENT_SHEET_TOKEN, a1);
       console.log(`📄 Sheets v3 rows length = ${rowsV3.length}`);
@@ -679,7 +678,7 @@ async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) {
 
       console.warn(`⚠ Sheets v3 chưa có dữ liệu hợp lệ, fallback → Export CSV`);
 
-      // === Tầng 2: Export CSV rồi parse ===
+      // === Tầng 2: Export CSV ===
       const ticket = await createExportTaskCSV(PAYMENT_SHEET_TOKEN, PAYMENT_SHEET_ID);
       const fileToken = await pollExportResult(ticket);
       const csv = await downloadExportedCSV(fileToken);
@@ -692,7 +691,7 @@ async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) {
           const actualRebateStr = safeCell(r, col.V);
           const createDateStr = safeCell(r, col.A);
 
-          if (!actualRebateStr) return false; // CSV thường không còn "Loading..."
+          if (!actualRebateStr) return false;
           if (!createDateStr) return false;
 
           const actualRebate = toNumber(actualRebateStr);
@@ -712,16 +711,15 @@ async function getPaymentMethodData(maxAttempts = 4, waitMs = 15 * 60 * 1000) {
         return filteredCSV;
       }
 
-      console.warn(`⚠ Attempt ${attempt}: Không có dòng hợp lệ (v3 & CSV).`);
+      console.warn(`⚠ Attempt ${attempt}: Không có dòng hợp lệ ở cả v3 & CSV.`);
 
     } catch (err) {
       console.error(`❌ Attempt ${attempt} error:`, err?.response?.data || err.message);
     }
 
-    if (attempt < Number(maxAttempts)) {
-      const mins = msToMinutesSafe(waitMs);
-      console.log(`⏳ Chờ ${mins} phút trước khi retry...`);
-      await new Promise((r) => setTimeout(r, Number(waitMs)));
+    if (attempt < maxAttempts) {
+      console.log(`⏳ Chờ ${msToMinutesSafe(waitMs)} phút trước khi retry...`);
+      await new Promise((r) => setTimeout(r, waitMs));
     }
   }
 
