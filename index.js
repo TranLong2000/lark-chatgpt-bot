@@ -405,237 +405,27 @@ async function checkB2ValueChange() {
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
 
-// ===== Helpers: Export sheet to CSV & parse =====
-async function createExportTaskCSV(spreadsheetToken, sheetId) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/drive/v1/export_tasks`;
-  const token = await getAppAccessToken();
+// ===================== Helpers chung =====================
+const LOADING_RE = /Loading|#N\/A/i;
 
-  // Một số tài liệu ghi là sheet_id, số khác là subtable_id → thử sheet_id trước, lỗi 4xx thì fallback.
-  const tryBodies = [
-    { file_token: spreadsheetToken, type: 'sheet', file_extension: 'csv', sheet_id: sheetId },
-    { file_token: spreadsheetToken, type: 'sheet', file_extension: 'csv', subtable_id: sheetId },
-  ];
+function safeCell(row, idx) {
+  return (row && row[idx] !== undefined && row[idx] !== null) ? String(row[idx]).trim() : '';
+}
 
-  for (const body of tryBodies) {
-    try {
-      const resp = await axios.post(url, body, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 15000,
-      });
-      const ticket = resp?.data?.data?.ticket;
-      if (!ticket) throw new Error('No export ticket');
-      return ticket;
-    } catch (e) {
-      // thử body tiếp theo
-      if (body === tryBodies[tryBodies.length - 1]) throw e;
-    }
+function toNumber(val) {
+  if (typeof val === 'number') return val;
+  if (typeof val === 'string') {
+    const num = parseFloat(val.replace(/,/g, ''));
+    return isNaN(num) ? NaN : num;
   }
+  return NaN;
 }
 
-async function pollExportResult(ticket, { maxTries = 30, intervalMs = 2000 } = {}) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/drive/v1/export_tasks/${ticket}`;
-  const token = await getAppAccessToken();
-
-  for (let i = 0; i < maxTries; i++) {
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 15000,
-    });
-
-    const status = resp?.data?.data?.status; // success / processing / failed
-    if (status === 'success') {
-      const fileToken = resp?.data?.data?.result?.file_token || resp?.data?.data?.file_token;
-      if (!fileToken) throw new Error('Export success but missing file_token');
-      return fileToken;
-    }
-    if (status === 'failed') throw new Error('Export task failed');
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
-  throw new Error('Export polling timeout');
+function msToMinutesSafe(ms) {
+  return Math.round(ms / 60000);
 }
 
-async function downloadExportedCSV(fileToken) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/drive/v1/export_tasks/file/${fileToken}/download`;
-  const token = await getAppAccessToken();
-  const resp = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    responseType: 'arraybuffer',
-    timeout: 30000,
-  });
-
-  // Giải mã buffer → string, loại BOM nếu có
-  let csv = Buffer.from(resp.data).toString('utf8');
-  if (csv.charCodeAt(0) === 0xFEFF) csv = csv.slice(1);
-  return csv;
-}
-
-// CSV parser đơn giản, xử lý dấu phẩy trong dấu ngoặc kép & escape ""
-function parseCSV(text) {
-  const rows = [];
-  let cur = [];
-  let val = '';
-  let inQuotes = false;
-
-  const pushVal = () => { cur.push(val); val = ''; };
-  const pushRow = () => { rows.push(cur); cur = []; };
-
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { val += '"'; i++; } // escaped quote
-        else { inQuotes = false; }
-      } else {
-        val += c;
-      }
-    } else {
-      if (c === '"') inQuotes = true;
-      else if (c === ',') pushVal();
-      else if (c === '\n') { pushVal(); pushRow(); }
-      else if (c === '\r') {
-        if (text[i + 1] === '\n') { i++; }
-        pushVal(); pushRow();
-      } else {
-        val += c;
-      }
-    }
-  }
-  // last value/row
-  pushVal();
-  if (cur.length > 1 || (cur.length === 1 && cur[0] !== '')) pushRow();
-  return rows;
-}
-
-// ===================== Utils chung =====================
-const LOADING_RE = /(loading\.\.\.|đang tải|加载中)/i;
-
-const toNumber = (x) => {
-  if (x == null) return NaN;
-  const s = String(x).replace(/[, ]/g, '').trim();
-  const n = Number(s);
-  return Number.isFinite(n) ? n : NaN;
-};
-const safeCell = (row, idx) => (row && row[idx] != null ? String(row[idx]).trim() : '');
-
-// Tính phút an toàn (tránh NaN)
-const msToMinutesSafe = (ms) => {
-  const n = Number(ms);
-  if (!Number.isFinite(n)) return '?';
-  return Math.round(n / 60000);
-};
-
-// ===================== CSV export helpers =====================
-// Tạo export task CSV cho 1 worksheet (cần quyền Drive Export)
-async function createExportTaskCSV(spreadsheetToken, sheetId) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/drive/v1/export_tasks`;
-  const token = await getAppAccessToken();
-
-  // Thử dùng sheet_id, nếu API môi trường yêu cầu tên khác sẽ fallback sang subtable_id
-  const bodies = [
-    { file_token: spreadsheetToken, type: 'sheet', file_extension: 'csv', sheet_id: sheetId },
-    { file_token: spreadsheetToken, type: 'sheet', file_extension: 'csv', subtable_id: sheetId },
-  ];
-
-  let lastErr;
-  for (const body of bodies) {
-    try {
-      const resp = await axios.post(url, body, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 20000,
-      });
-      const ticket = resp?.data?.data?.ticket;
-      if (!ticket) throw new Error('Không nhận được ticket export');
-      return ticket;
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr || new Error('Tạo export task thất bại');
-}
-
-async function pollExportResult(ticket, { maxTries = 30, intervalMs = 2000 } = {}) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/drive/v1/export_tasks/${ticket}`;
-  const token = await getAppAccessToken();
-
-  for (let i = 0; i < maxTries; i++) {
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000,
-    });
-    const status = resp?.data?.data?.status; // processing | success | failed
-    if (status === 'success') {
-      const fileToken = resp?.data?.data?.result?.file_token || resp?.data?.data?.file_token;
-      if (!fileToken) throw new Error('Export success nhưng thiếu file_token');
-      return fileToken;
-    }
-    if (status === 'failed') throw new Error('Export task failed');
-    await new Promise(r => setTimeout(r, intervalMs));
-  }
-  throw new Error('Hết hạn poll export (timeout)');
-}
-
-async function downloadExportedCSV(fileToken) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/drive/v1/export_tasks/file/${fileToken}/download`;
-  const token = await getAppAccessToken();
-  const resp = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    responseType: 'arraybuffer',
-    timeout: 60000,
-  });
-  let csv = Buffer.from(resp.data).toString('utf8');
-  if (csv.charCodeAt(0) === 0xFEFF) csv = csv.slice(1); // bỏ BOM nếu có
-  return csv;
-}
-
-// Parser CSV tối giản, giữ cả dòng header kể cả trống
-function parseCSV(text) {
-  const rows = [];
-  let cur = [];
-  let val = '';
-  let inQuotes = false;
-
-  const pushVal = () => { cur.push(val); val = ''; };
-  const pushRow = () => { rows.push(cur); cur = []; };
-
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { val += '"'; i++; }
-        else inQuotes = false;
-      } else val += c;
-    } else {
-      if (c === '"') inQuotes = true;
-      else if (c === ',') pushVal();
-      else if (c === '\n') { pushVal(); pushRow(); }
-      else if (c === '\r') {
-        if (text[i + 1] === '\n') i++;
-        pushVal(); pushRow();
-      } else val += c;
-    }
-  }
-  // đẩy phần còn lại
-  pushVal(); pushRow();
-  return rows;
-}
-
-// ===================== Sheets v3 read helper (ưu tiên) =====================
-async function readSheetValuesV3(spreadsheetToken, a1Range) {
-  const token = await getAppAccessToken();
-  const url =
-    `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/` +
-    `${spreadsheetToken}/values_batch_get` +
-    `?ranges=${encodeURIComponent(a1Range)}&valueRenderOption=FormattedValue&dateTimeRenderOption=FormattedString`;
-
-  const resp = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-    timeout: 30000,
-  });
-  return resp?.data?.data?.valueRanges?.[0]?.values || [];
-}
-
-// ===================== Payment Method: lấy dữ liệu (2 tầng) =====================
-// ===================== Payment Method: lấy dữ liệu (2 tầng, retry 1h) =====================
+// ===================== Hàm chính =====================
 async function getPaymentMethodData() {
   const col = { A: 0, B: 1, T: 19, V: 21, W: 22, X: 23, AA: 26, AB: 27 };
   const maxAttempts = 4;              // 4 lần thử
@@ -644,6 +434,7 @@ async function getPaymentMethodData() {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     console.log(`🔁 Attempt ${attempt}/${maxAttempts} ...`);
+
     try {
       // === Tầng 1: đọc bằng Sheets v3 ===
       const a1 = `${PAYMENT_SHEET_ID}!A:AC`;
@@ -726,6 +517,7 @@ async function getPaymentMethodData() {
   console.error(`⛔ Hết thời gian chờ (${totalMin} phút) mà không lấy đủ dữ liệu rebate.`);
   return [];
 }
+
 
 async function analyzePaymentMethod(token) {
   const data = await getPaymentMethodData();
