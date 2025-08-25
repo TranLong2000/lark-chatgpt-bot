@@ -772,8 +772,10 @@ if (messageType === 'text') {
     console.error('AI API error:', error); // Log chi tiết lỗi
     await replyToLark(messageId, 'Lỗi khi gọi AI.', senderId, senderName);
   }
+
   return;
 }
+
 
    /* ===========================================
       SECTION 15 — Housekeeping & Schedules
