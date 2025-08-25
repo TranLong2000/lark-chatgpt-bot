@@ -343,7 +343,6 @@ async function analyzeSalesChange(token) {
   if (outOfStock.length) {
     msg += `\n🚨 SKU hết hàng / Tổng ${allOOS.length} SKU OOS:\n`;
     outOfStock.forEach(r => { msg += `- ${r.productName} (${r.oosLabel})\n`; });
-    if (allOOS.length > 5) msg += `... và ${allOOS.length - 5} SKU khác.\n`;
   }
   return msg;
 }
