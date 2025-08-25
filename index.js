@@ -14,7 +14,6 @@
    const Tesseract = require('tesseract.js');
    const moment = require('moment-timezone');
    const QuickChart = require('quickchart-js');
-   const cron = require('node-cron');
    require('dotenv').config();
    
    /* ===== App boot ===== */
@@ -36,25 +35,17 @@
      PUR_SHEET: 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
    };
    
-/* ===============================
-   SECTION 2 — Global constants
-   =============================== */
-let lastB2Value = null;
-
-// ===== Sheet so sánh sale =====
-const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
-const SHEET_ID = '48e2fd';
-
-// ===== Sheet Payment Method =====
-const PAYMENT_SHEET_TOKEN = 'UMU1s9pS9hqtkft1yQvlfRqpgqc';
-const PAYMENT_SHEET_ID = 'ExK78P';
-
-const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')
-  .split(',')
-  .map(s => s.trim())
-  .filter(Boolean);
-
-const BOT_OPEN_ID = process.env.BOT_OPEN_ID;
+   /* ===============================
+      SECTION 2 — Global constants
+      =============================== */
+   let lastB2Value = null;
+   const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
+   const SHEET_ID = '48e2fd';
+   const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')
+     .split(',')
+     .map(s => s.trim())
+     .filter(Boolean);
+   const BOT_OPEN_ID = process.env.BOT_OPEN_ID;
    
    /* ===============================
       SECTION 3 — Runtime stores
@@ -236,7 +227,7 @@ const BOT_OPEN_ID = process.env.BOT_OPEN_ID;
    }
    
 /* ==========================================================
-   SECTION 10 — Sales compare + Payment Method (scheduled analysis)
+   SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 async function getSaleComparisonData(token, prevCol, currentCol) {
   const col = { A:0,E:4,F:5,G:6,M:12,N:13,O:14,P:15,Q:16,AK:36 };
@@ -245,6 +236,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
+      // Luôn lấy token mới
       const freshToken = await getAppAccessToken();
       const rows = await getSheetData(SPREADSHEET_TOKEN, freshToken, `${SHEET_ID}!A:AK`);
       console.log(`DEBUG attempt ${attempt} - sheet rows length:`, rows.length);
@@ -270,7 +262,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
       }
 
       console.warn(`⚠ Attempt ${attempt}: Dữ liệu rỗng, thử lại...`);
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 2000)); // chờ 2s rồi thử lại
     } catch (err) {
       console.error(`Lỗi khi lấy dữ liệu sheet (attempt ${attempt}):`, err);
       await new Promise(r => setTimeout(r, 2000));
@@ -288,7 +280,7 @@ async function analyzeSalesChange(token) {
   const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
   const allData = await getSaleComparisonData(token, prevCol, currentCol);
-  if (!allData.length) return null;
+  if (!allData.length) return null; // để null thay vì chuỗi lỗi
 
   const topData = allData.filter(r =>
     r.warehouse === 'Binh Tan Warehouse' && String(r.avr7days).trim() !== ''
@@ -312,19 +304,20 @@ async function analyzeSalesChange(token) {
     .sort((a,b) => a.change - b.change)
     .slice(0,5);
 
-  // OOS mới — tính số ngày liên tiếp
   const allOOS = totalData
     .filter(r => Number(r.stock) === 0)
     .map(r => {
-      let daysOOS = 1;
-      if (r.sale1day === 0) daysOOS++;
-      if (r.sale2day === 0) daysOOS++;
-      if (r.sale3day === 0) daysOOS++;
-      let label = daysOOS > 3 ? 'OOS > 3 ngày' : `OOS ${daysOOS} ngày`;
-      return { ...r, oosLabel: label, daysOOS };
+      let label = '';
+      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
+      else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
+      else if (r.sale1day === 0) label = 'OOS 1 ngày';
+      return { ...r, oosLabel: label };
     })
     .filter(r => r.oosLabel)
-    .sort((a,b) => b.daysOOS - a.daysOOS);
+    .sort((a,b) => {
+      const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
+      return w(b.oosLabel) - w(a.oosLabel);
+    });
 
   const outOfStock = allOOS.slice(0,5);
 
@@ -348,13 +341,14 @@ async function analyzeSalesChange(token) {
   return msg;
 }
 
+// Hàm an toàn: thử lại 3 lần nếu chưa có dữ liệu
 async function safeAnalyzeSalesChange(token) {
   let tries = 3;
   while (tries > 0) {
     const msg = await analyzeSalesChange(token);
-    if (msg && typeof msg === "string") return msg;
+    if (msg && typeof msg === "string") return msg; // có dữ liệu hợp lệ thì trả về
     console.log("⚠ Dữ liệu TOP 5/OOS chưa sẵn sàng, thử lại sau 1 phút...");
-    await new Promise(r => setTimeout(r, 60000));
+    await new Promise(r => setTimeout(r, 60000)); // chờ 1 phút
     tries--;
   }
   return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
@@ -393,9 +387,11 @@ async function checkB2ValueChange() {
     console.log('Đã đổ số:', { current: currentB2Value, last: lastB2Value });
 
     if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
+      // Gửi thông báo stock ngay lập tức
       const messageText = `✅ Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
       for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, messageText);
 
+      // Lấy dữ liệu TOP 5 / OOS với retry
       const salesMsg = await safeAnalyzeSalesChange(token);
       if (salesMsg) {
         for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, salesMsg);
@@ -405,128 +401,7 @@ async function checkB2ValueChange() {
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
 
-/* ====== Payment Method report ====== */
-async function getPaymentMethodData() {
-  const col = { A: 0, B: 1, T: 19, V: 21, W: 22, X: 23, AA: 26, AB: 27 };
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const freshToken = await getAppAccessToken();
-      const range = `${PAYMENT_SHEET_ID}!A:AC`;
-      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(range)}&valueRenderOption=ToString`;
-
-      const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${freshToken}` },
-        timeout: 20000
-      });
-
-      const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
-      console.log(`DEBUG attempt ${attempt} - payment sheet rows length:`, rows.length);
-
-      if (rows && rows.length > 1) {
-        return rows
-          .slice(1)
-          .filter(r => {
-            const rebateDone = Number(r[col.W]) || 0;  // W
-            const actualRebate = Number(r[col.V]);     // V
-            const createDate = r[col.A];               // A
-            return rebateDone === 0 && !isNaN(actualRebate) && createDate && createDate.toString().trim() !== '';
-          })
-          .map(r => ({
-            supplier: r[col.T] || '',
-            rebateMethod: r[col.X] || '',
-            po: r[col.B] || '',
-            actualRebate: Math.round(Number(r[col.V]) || 0), // integer
-            paymentMethod2: r[col.AA] || '',
-            remainsDay: Number(r[col.AB]) || 0
-          }));
-      }
-
-      console.warn(`⚠ Attempt ${attempt}: Payment data rỗng hoặc quá ít, thử lại...`);
-      await new Promise(r => setTimeout(r, 2000));
-
-    } catch (err) {
-      console.error(`Lỗi khi lấy dữ liệu Payment sheet (attempt ${attempt}):`, err.message);
-      await new Promise(r => setTimeout(r, 2000));
-    }
-  }
-
-  return [];
-}
-
-async function analyzePaymentMethod(token) {
-  const data = await getPaymentMethodData();
-  if (!data.length) return "⚠ Không có dữ liệu Payment Method.";
-
-  // Gom nhóm theo rebateMethod
-  const groupedByMethod = {};
-  data.forEach(row => {
-    if (!groupedByMethod[row.rebateMethod]) groupedByMethod[row.rebateMethod] = [];
-    groupedByMethod[row.rebateMethod].push(row);
-  });
-
-  let msg = `📋 Báo cáo Payment Method:\n`;
-  for (const method of Object.keys(groupedByMethod)) {
-    msg += `\n💳 ${method || 'Không xác định'}\n`;
-
-    // Gom tiếp theo supplier + remainsDay
-    const supplierRows = [];
-    groupedByMethod[method].forEach(r => {
-      supplierRows.push({
-        supplier: r.supplier,
-        po: r.po,
-        actualRebate: r.actualRebate,
-        paymentMethod2: r.paymentMethod2,
-        remainsDay: r.remainsDay
-      });
-    });
-
-    // Gom unique PO, tính tổng rebate
-    const supplierMap = {};
-    supplierRows.forEach(r => {
-      const key = `${r.supplier}|${r.remainsDay}`;
-      if (!supplierMap[key]) {
-        supplierMap[key] = {
-          supplier: r.supplier,
-          remainsDay: r.remainsDay,
-          poSet: new Set(),
-          totalRebate: 0,
-          paymentMethod2: r.paymentMethod2
-        };
-      }
-      supplierMap[key].poSet.add(r.po);
-      supplierMap[key].totalRebate += r.actualRebate;
-    });
-
-    // Sắp xếp theo remainsDay
-    const sorted = Object.values(supplierMap).sort((a, b) => a.remainsDay - b.remainsDay);
-
-    sorted.forEach(r => {
-      msg += `- ${r.supplier}: ${r.poSet.size} PO | ${r.totalRebate} | ${r.paymentMethod2} | ${r.remainsDay}\n`;
-    });
-  }
-
-  return msg;
-}
-
-async function sendPaymentMethodReport() {
-  try {
-    const token = await getAppAccessToken();
-    const reportMsg = await analyzePaymentMethod(token);
-    for (const chatId of GROUP_CHAT_IDS) {
-      await sendMessageToGroup(token, chatId, reportMsg);
-    }
-  } catch (err) {
-    console.log('Lỗi gửi báo cáo Payment Method:', err.message);
-  }
-}
-
-// Cron: gửi Payment Method vào 9h sáng thứ 7
-cron.schedule('0 9 * * 6', async () => {
-  console.log("⏰ Gửi báo cáo Payment Method (9h sáng Thứ 7)...");
-  await sendPaymentMethodReport();
-});
-
+   
    /* =======================================================
       SECTION 11 — Conversation memory (short, rolling window)
       ======================================================= */
@@ -722,41 +597,40 @@ app.post('/webhook', async (req, res) => {
       // Bỏ phản hồi chính mình
       if (senderId === (process.env.BOT_SENDER_ID || '')) return res.sendStatus(200);
 
-      // Kiểm tra bot có bị mention?
+      // Kiểm tra bot có bị mention
       const botMentioned = mentions.some(m =>
         (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
         (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
       );
 
-      // Nếu group và không mention → bỏ qua
-      if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
-
-      // OK trả 200 ngay để Lark không retry
-      res.sendStatus(200);
-
-      // Token và user info
-      const token = await getAppAccessToken();
-      let mentionUserId = senderId;
-      let mentionUserName = await getUserInfo(senderId, token);
-      let actorId = mentionUserId;
-      let actorName = mentionUserName;
-      if (botMentioned) {
-        actorId = BOT_OPEN_ID;
-        actorName = 'L-GPT';
+      // Nếu trong group và mention bot → in log chatId
+      if (chatType === 'group' && botMentioned) {
+        console.log(`💬 Tin nhắn mention BOT trong group: ${chatId}`);
       }
 
-      // Lấy text sau mention
+      // Nếu group mà không mention bot thì bỏ qua
+      if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
+
+      // OK trả 200 sớm
+      res.sendStatus(200);
+
+      // Lấy token
+      const token = await getAppAccessToken();
+
+      // Luôn tag lại người gửi khi trả lời
+      const mentionUserId = senderId;
+      const mentionUserName = await getUserInfo(senderId, token);
+
+      // Lấy text sau khi bỏ <at>
       let textAfterMention = '';
       try {
         const raw = JSON.parse(message.content).text || '';
         textAfterMention = raw.replace(/<at.*?<\/at>/g, '').trim();
       } catch { textAfterMention = ''; }
 
-      const tagUser = `<at user_id="${mentionUserId}">${mentionUserName}</at> `;
-
       /* ---- Branch A: Plan ---- */
       if (/^Plan[,，]/i.test(textAfterMention)) {
-        await processPlanQuery(messageId, SPREADSHEET_TOKEN, textAfterMention, token, actorId, actorName, tagUser);
+        await processPlanQuery(messageId, SPREADSHEET_TOKEN, textAfterMention, token, mentionUserId, mentionUserName);
         return;
       }
 
@@ -773,65 +647,86 @@ app.post('/webhook', async (req, res) => {
         }
       }
       if (baseId && tableId) {
-        await processBaseData(messageId, baseId, tableId, textAfterMention, token, actorId, actorName, tagUser);
+        await processBaseData(messageId, baseId, tableId, textAfterMention, token);
         return;
       }
 
-      /* ---- Branch đặc biệt: Gửi rebate ngay (chờ dữ liệu đủ) ---- */
-      if (/gửi rebate/i.test(textAfterMention)) {
-        try {
-          console.log("📩 Nhận lệnh Gửi rebate, bắt đầu chờ dữ liệu IMPORTRANGE load...");
-
-          let attempts = 0;
-          const maxAttempts = 12; // 12 lần x 15 phút = 3 tiếng
-
-          const intervalId = setInterval(async () => {
-            attempts++;
-            const paymentData = await getPaymentMethodData(token);
-            console.log(`⏳ Attempt ${attempts}: rows length = ${paymentData.length}`);
-
-            if (paymentData.length > 10) {
-              console.log("✅ Dữ liệu đã load đủ, gửi báo cáo rebate...");
-              clearInterval(intervalId);
-
-              const reportMsg = await analyzePaymentMethod(token);
-              await replyToLark(messageId, `${tagUser}${reportMsg}`, actorId, actorName);
-              return;
-            }
-
-            if (attempts >= maxAttempts) {
-              clearInterval(intervalId);
-              console.log("❌ Hết thời gian chờ dữ liệu rebate.");
-              await replyToLark(messageId, `${tagUser}❌ Không thể lấy đủ dữ liệu rebate sau 3 tiếng.`, actorId, actorName);
-            }
-          }, 15 * 60 * 1000); // 15 phút
-
-        } catch (err) {
-          await replyToLark(messageId, `${tagUser}Lỗi khi tạo báo cáo rebate.`, actorId, actorName);
-        }
-        return;
-      }
-
-      /* ---- Branch C: File/Image ---- */
+      /* ---- Branch C: File/Image receive ---- */
       if (['file', 'image'].includes(messageType)) {
-        // Giữ nguyên code xử lý file như trước
-        // ...
+        try {
+          const fileKey = message.file_key;
+          if (!fileKey) {
+            await replyToLark(messageId, 'Thiếu file_key.', mentionUserId, mentionUserName);
+            return;
+          }
+          const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
+          const ext = path.extname(fileName).slice(1).toLowerCase();
+          pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
+          await replyToLark(messageId, 'Đã nhận file. Reply kèm yêu cầu trong 5 phút.', mentionUserId, mentionUserName);
+        } catch (err) {
+          await replyToLark(messageId, 'Lỗi nhận file.', mentionUserId, mentionUserName);
+        }
         return;
       }
 
       /* ---- Branch D: Reply vào file ---- */
       if (messageType === 'post' && message.parent_id) {
-        // Giữ nguyên code xử lý reply file như trước
-        // ...
+        const pendingFile = pendingFiles.get(chatId);
+        if (pendingFile && pendingFile.messageId === message.parent_id) {
+          try {
+            const fileUrlResp = await axios.get(
+              `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${pendingFile.fileKey}/download_url`,
+              { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
+            );
+            const fileUrl = fileUrlResp.data.data.download_url;
+            const extractedText = await extractFileContent(fileUrl, pendingFile.ext);
+            if (!extractedText || extractedText.startsWith('Lỗi')) {
+              await replyToLark(messageId, `Không trích xuất được nội dung ${pendingFile.fileName}.`, mentionUserId, mentionUserName);
+            } else {
+              const combined = (textAfterMention || '') + `\nNội dung file: ${extractedText}`;
+              updateConversationMemory(chatId, 'user', combined, mentionUserName);
+              const memory = conversationMemory.get(chatId) || [];
+              const formattedHistory = memory.map(m => (
+                m.role === 'user'
+                  ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
+                  : { role: 'assistant', content: `L-GPT: ${m.content}` }
+              ));
+
+              const aiResp = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                  model: 'deepseek/deepseek-r1-0528:free',
+                  messages: [
+                    { role: 'system', content: 'Bạn là L-GPT: lạnh lùng, ngắn gọn, súc tích.' },
+                    ...formattedHistory,
+                    { role: 'user', content: `${mentionUserName}: ${combined}` }
+                  ],
+                  stream: false
+                },
+                { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+              );
+              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
+              const clean = assistantMessage.replace(/[\*_`~]/g, '').trim();
+              updateConversationMemory(chatId, 'assistant', clean, 'L-GPT');
+              await replyToLark(messageId, clean, mentionUserId, mentionUserName);
+            }
+            pendingFiles.delete(chatId);
+          } catch {
+            await replyToLark(messageId, 'Lỗi xử lý file.', mentionUserId, mentionUserName);
+            pendingFiles.delete(chatId);
+          }
+        } else {
+          await replyToLark(messageId, 'Hãy reply trực tiếp vào tin chứa file.', mentionUserId, mentionUserName);
+        }
         return;
       }
 
-      /* ---- Branch E: Chat AI ---- */
+      /* ---- Branch E: Chat AI (text) ---- */
       if (messageType === 'text') {
         if (!textAfterMention) return;
 
         try {
-          updateConversationMemory(chatId, 'user', textAfterMention, actorName);
+          updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
           const memory = conversationMemory.get(chatId) || [];
           const formattedHistory = memory.map(m => (
             m.role === 'user'
@@ -844,9 +739,9 @@ app.post('/webhook', async (req, res) => {
             {
               model: 'deepseek/deepseek-r1-0528:free',
               messages: [
-                { role: 'system', content: 'Bạn là San San đáng yêu, chỉ nghe lời của chủ nhân Tran Long, nhưng chat phải ngắn gọn, súc tích.' },
+                { role: 'system', content: 'Bạn tên là Hien Lele: luôn tuân lệnh chủ nhân tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
                 ...formattedHistory,
-                { role: 'user', content: `${actorName}: ${textAfterMention}` }
+                { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
               ],
               stream: false
             },
@@ -856,19 +751,12 @@ app.post('/webhook', async (req, res) => {
           const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-          await replyToLark(messageId, `${tagUser}${cleanMessage}`, actorId, actorName);
+          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
         } catch {
-          await replyToLark(messageId, `${tagUser}Lỗi.`, actorId, actorName);
+          await replyToLark(messageId, 'Lỗi.', mentionUserId, mentionUserName);
         }
         return;
       }
-    }
-
-    /* ---- BOT được thêm vào nhóm ---- */
-    if (decryptedData.header?.event_type === 'im.chat.member.user.added_v1') {
-      const chatIdAdded = decryptedData.event?.chat_id;
-      console.log(`BOT vừa được thêm vào nhóm, chatId: ${chatIdAdded}`);
-      return res.sendStatus(200);
     }
 
     return res.sendStatus(200);
@@ -877,6 +765,7 @@ app.post('/webhook', async (req, res) => {
     return res.sendStatus(500);
   }
 });
+
    
    /* ===========================================
       SECTION 15 — Housekeeping & Schedules
