@@ -721,52 +721,60 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-      /* ---- Branch E: Chat AI (text) ---- */
-      if (messageType === 'text') {
-        if (!textAfterMention) return;
+/* ---- Branch E: Chat AI (text) ---- */
+if (messageType === 'text') {
+  if (!textAfterMention) return;
 
-        try {
-          updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
-          const memory = conversationMemory.get(chatId) || [];
-          const formattedHistory = memory.map(m => (
-            m.role === 'user'
-              ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
-              : { role: 'assistant', content: `L-GPT: ${m.content}` }
-          ));
+  // Lấy thông tin người gửi từ webhook thay vì từ mention
+  const senderName = event.sender?.sender_name || 'User';
+  const senderId = event.sender?.sender_id?.open_id || 'unknown_id';
 
-          const aiResp = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528:free',
-              messages: [
-                { role: 'system', content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
-                ...formattedHistory,
-                { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
-              ],
-              stream: false
-            },
-            { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-          );
+  try {
+    // Cập nhật bộ nhớ hội thoại
+    updateConversationMemory(chatId, 'user', textAfterMention, senderName);
 
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
-          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-          updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-        } catch {
-          await replyToLark(messageId, 'Lỗi.', mentionUserId, mentionUserName);
-        }
-        return;
+    const memory = conversationMemory.get(chatId) || [];
+    const formattedHistory = memory.map(m => (
+      m.role === 'user'
+        ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
+        : { role: 'assistant', content: `L-GPT: ${m.content}` }
+    ));
+
+    const aiResp = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
+          ...formattedHistory,
+          { role: 'user', content: `${senderName}: ${textAfterMention}` }
+        ],
+        stream: false
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 20000
       }
-    }
+    );
 
-    return res.sendStatus(200);
+    const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
+    const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+
+    updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+
+    // Gửi trả lời kèm tag người gửi
+    await replyToLark(messageId, cleanMessage, senderId, senderName);
+
   } catch (error) {
-    console.error('Webhook error:', error);
-    return res.sendStatus(500);
+    console.error('AI API error:', error); // Log chi tiết lỗi
+    await replyToLark(messageId, 'Lỗi khi gọi AI.', senderId, senderName);
   }
-});
+  return;
+}
 
-   
    /* ===========================================
       SECTION 15 — Housekeeping & Schedules
       =========================================== */
