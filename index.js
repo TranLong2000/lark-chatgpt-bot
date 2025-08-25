@@ -739,7 +739,7 @@ app.post('/webhook', async (req, res) => {
             {
               model: 'deepseek/deepseek-r1-0528:free',
               messages: [
-                { role: 'system', content: 'Bạn tên là Hien Lele: luôn tuân lệnh chủ nhân tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
+                { role: 'system', content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
                 ...formattedHistory,
                 { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
               ],
