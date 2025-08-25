@@ -721,7 +721,7 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-/* ---- Branch E: Chat AI (text) ---- */
+      /* ---- Branch E: Chat AI (text) ---- */
 if (messageType === 'text') {
   if (!textAfterMention) return;
 
@@ -775,8 +775,16 @@ if (messageType === 'text') {
 
   return;
 }
+    }
 
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('Webhook error:', error);
+    return res.sendStatus(500);
+  }
+});
 
+   
    /* ===========================================
       SECTION 15 — Housekeeping & Schedules
       =========================================== */
