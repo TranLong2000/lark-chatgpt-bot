@@ -405,88 +405,52 @@ async function checkB2ValueChange() {
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
 
-// ====== Payment Method report — đọc kiểu "finalStatus" (string trước, parse sau) ======
-async function getPaymentMethodData(maxAttempts = 4, waitMinutes = 15) {
-  // Map cột 0-based theo file của bạn
+/* ====== Payment Method report ====== */
+async function getPaymentMethodData() {
   const col = { A: 0, B: 1, T: 19, V: 21, W: 22, X: 23, AA: 26, AB: 27 };
 
-  // regex phát hiện trạng thái chưa tải xong
-  const LOADING_RE = /(loading\.\.\.|loading|đang tải|#n\/a|#ref!|加载中)/i;
-
-  // ép chuỗi -> số an toàn (chấp nhận "1,234" hoặc "  123 ")
-  const toNum = (s) => {
-    const raw = (s ?? '').toString().trim();
-    if (!raw) return NaN;
-    const n = Number(raw.replace(/[, ]/g, ''));
-    return Number.isFinite(n) ? n : NaN;
-  };
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const freshToken = await getAppAccessToken();
+      const range = `${PAYMENT_SHEET_ID}!A:AC`;
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${PAYMENT_SHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(range)}&valueRenderOption=ToString`;
 
-      // Quan trọng: getSheetData của bạn nên dùng valueRenderOption=ToString
-      // để mọi ô (kể cả công thức) trả về dạng chuỗi -> giống cách đọc finalStatus.
-      const range = `${PAYMENT_SHEET_ID}!A:AF`;
-      const rows = await getSheetData(PAYMENT_SHEET_TOKEN, freshToken, range);
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${freshToken}` },
+        timeout: 20000
+      });
 
-      const len = Array.isArray(rows) ? rows.length : 0;
-      console.log(`🔁 Attempt ${attempt}/${maxAttempts} - payment rows length: ${len}`);
+      const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
+      console.log(`DEBUG attempt ${attempt} - payment sheet rows length:`, rows.length);
 
-      if (len > 1) {
-        // BỎ header – xử lý từng dòng theo "string-first"
-        const body = rows.slice(1);
-
-        const filtered = body
-          .filter((r) => {
-            // đọc kiểu finalStatus: luôn ép về string trước
-            const rebateDoneStr   = (r?.[col.W]  ?? '').toString().trim();
-            const actualRebateStr = (r?.[col.V]  ?? '').toString().trim();
-            const createDateStr   = (r?.[col.A]  ?? '').toString().trim();
-
-            // loại bỏ rỗng / đang load
-            if (!actualRebateStr || LOADING_RE.test(actualRebateStr)) return false;
-            if (!createDateStr   || LOADING_RE.test(createDateStr))   return false;
-
-            // parse số sau khi chắc chắn có chuỗi
-            const rebateDone   = Number(rebateDoneStr.replace(/[, ]/g, '')) || 0;
-            const actualRebate = toNum(actualRebateStr);
-
-            return rebateDone === 0 && Number.isFinite(actualRebate);
+      if (rows && rows.length > 1) {
+        return rows
+          .slice(1)
+          .filter(r => {
+            const rebateDone = Number(r[col.W]) || 0;  // W
+            const actualRebate = Number(r[col.V]);     // V
+            const createDate = r[col.A];               // A
+            return rebateDone === 0 && !isNaN(actualRebate) && createDate && createDate.toString().trim() !== '';
           })
-          .map((r) => {
-            // luôn đọc string trước (giống finalStatus), rồi mới parse số cần thiết
-            const supplier       = (r?.[col.T]  ?? '').toString().trim();
-            const rebateMethod   = (r?.[col.X]  ?? '').toString().trim();
-            const po             = (r?.[col.B]  ?? '').toString().trim();
-            const paymentMethod2 = (r?.[col.AA] ?? '').toString().trim();
-
-            const actualRebate = Math.round(toNum((r?.[col.V] ?? '').toString()));
-            const remainsDay   = toNum((r?.[col.AB] ?? '').toString()) || 0;
-
-            return { supplier, rebateMethod, po, actualRebate, paymentMethod2, remainsDay };
-          });
-
-        if (filtered.length > 0) {
-          console.log(`✅ Lấy được ${filtered.length} dòng dữ liệu hợp lệ (string-first).`);
-          return filtered;
-        }
-
-        console.warn(`⚠ Attempt ${attempt}: Có dữ liệu nhưng không có dòng hợp lệ (IMPORTRANGE/VLOOKUP có thể chưa hoàn tất).`);
-      } else {
-        console.warn(`⚠ Attempt ${attempt}: Dữ liệu rỗng hoặc chỉ có header.`);
+          .map(r => ({
+            supplier: r[col.T] || '',
+            rebateMethod: r[col.X] || '',
+            po: r[col.B] || '',
+            actualRebate: Math.round(Number(r[col.V]) || 0), // integer
+            paymentMethod2: r[col.AA] || '',
+            remainsDay: Number(r[col.AB]) || 0
+          }));
       }
-    } catch (err) {
-      console.error(`❌ Lỗi khi lấy Payment sheet (attempt ${attempt}):`, err?.response?.data || err.message);
-    }
 
-    if (attempt < maxAttempts) {
-      console.log(`⏳ Chờ ${waitMinutes} phút trước khi thử lại...`);
-      await new Promise((r) => setTimeout(r, waitMinutes * 60 * 1000));
+      console.warn(`⚠ Attempt ${attempt}: Payment data rỗng hoặc quá ít, thử lại...`);
+      await new Promise(r => setTimeout(r, 2000));
+
+    } catch (err) {
+      console.error(`Lỗi khi lấy dữ liệu Payment sheet (attempt ${attempt}):`, err.message);
+      await new Promise(r => setTimeout(r, 2000));
     }
   }
 
-  console.error(`⛔ Hết thời gian chờ (${maxAttempts * waitMinutes} phút) mà không lấy đủ dữ liệu rebate.`);
   return [];
 }
 
