@@ -304,20 +304,20 @@ async function analyzeSalesChange(token) {
     .sort((a,b) => a.change - b.change)
     .slice(0,5);
 
-  // Logic OOS mới — tính số ngày liên tiếp không bán được
   const allOOS = totalData
     .filter(r => Number(r.stock) === 0)
     .map(r => {
-      let daysOOS = 1; // hôm nay = 1 ngày
-      if (r.sale1day === 0) daysOOS++;
-      if (r.sale2day === 0) daysOOS++;
-      if (r.sale3day === 0) daysOOS++;
-
-      let label = daysOOS > 3 ? 'OOS > 3 ngày' : `OOS ${daysOOS} ngày`;
-      return { ...r, oosLabel: label, daysOOS };
+      let label = '';
+      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
+      else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
+      else if (r.sale1day === 0) label = 'OOS 1 ngày';
+      return { ...r, oosLabel: label };
     })
     .filter(r => r.oosLabel)
-    .sort((a,b) => b.daysOOS - a.daysOOS);
+    .sort((a,b) => {
+      const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
+      return w(b.oosLabel) - w(a.oosLabel);
+    });
 
   const outOfStock = allOOS.slice(0,5);
 
@@ -401,6 +401,7 @@ async function checkB2ValueChange() {
   } catch (err) { console.log('Lỗi checkB2ValueChange:', err.message); }
 }
 
+   
    /* =======================================================
       SECTION 11 — Conversation memory (short, rolling window)
       ======================================================= */
