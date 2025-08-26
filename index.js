@@ -754,8 +754,8 @@ app.post('/webhook', async (req, res) => {
               const memory = conversationMemory.get(chatId) || [];
               const formattedHistory = memory.map(m => (
                 m.role === 'user'
-                  ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
-                  : { role: 'assistant', content: `${m.content}` }
+                  ? { role: 'user', content: m.content }  // Removed senderName prefix
+                  : { role: 'assistant', content: m.content }
               ));
               let assistantMessage = '';
               try {
@@ -764,9 +764,9 @@ app.post('/webhook', async (req, res) => {
                   {
                     model: 'deepseek/deepseek-r1-0528:free',
                     messages: [
-                      { role: 'system', content: 'Bạn là San San: lạnh lùng, ngắn gọn, súc tích.' },
+                      { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
                       ...formattedHistory,
-                      { role: 'user', content: `${mentionUserName}: ${combined}` }
+                      { role: 'user', content: combined }  // Removed mentionUserName prefix
                     ],
                     stream: false
                   },
@@ -799,8 +799,8 @@ app.post('/webhook', async (req, res) => {
           const memory = conversationMemory.get(chatId) || [];
           const formattedHistory = memory.map(m => (
             m.role === 'user'
-              ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
-              : { role: 'assistant', content: `${m.content}` }
+              ? { role: 'user', content: m.content }  // Removed senderName prefix
+              : { role: 'assistant', content: m.content }
           ));
           let assistantMessage = 'Không có kết quả.';
           try {
@@ -809,9 +809,9 @@ app.post('/webhook', async (req, res) => {
               {
                 model: 'deepseek/deepseek-r1-0528:free',
                 messages: [
-                  { role: 'system', content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
+                  { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
                   ...formattedHistory,
-                  { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
+                  { role: 'user', content: textAfterMention }  // Removed mentionUserName prefix
                 ],
                 stream: false
               },
