@@ -229,8 +229,26 @@ function toNumber(v) {
 /* ==========================================================
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
+
+const SALE_COL_MAP = { A:0,E:4,F:5,G:6,M:12,N:13,O:14,P:15,Q:16,AK:36 };
+let lastTotalStock = null; // giữ tổng stock lần trước
+let sendingTotalStockLock = false; // lock để tránh gửi song song
+let lastSalesMsgHash = null; // optional: tránh gửi msg sale giống hệt lặp lại
+
+function colToIndex(col) {
+  // giữ nguyên function colToIndex nếu bạn có sẵn; nếu không, dùng simple map:
+  // giả sử col là letter 'M','P','Q'...
+  return ('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.indexOf(col.toUpperCase()));
+}
+
+function toNumber(v) {
+  if (v === undefined || v === null || v === '') return 0;
+  const n = parseFloat(String(v).replace(/,/g, '')) ;
+  return isNaN(n) ? 0 : n;
+}
+
 async function getSaleComparisonData(token, prevCol, currentCol) {
-  const col = { A:0,E:4,F:5,G:6,M:12,N:13,O:14,P:15,Q:16,AK:36 };
+  const col = SALE_COL_MAP;
   const prevIdx = colToIndex(prevCol);
   const currIdx = colToIndex(currentCol);
 
@@ -243,7 +261,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
         return rows.slice(1).map((r, i) => {
           const productName = r[col.E] ?? `Dòng ${i + 2}`;
           const warehouse   = r[col.F] ?? '';
-          const totalStock  = toNumber(r[col.G]); // Đổi stock -> totalStock
+          const totalStock  = toNumber(r[col.G]);
           const avr7daysRaw = r[col.M] ?? '';
           const sale3day    = toNumber(r[col.N]);
           const sale2day    = toNumber(r[col.O]);
@@ -259,8 +277,10 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
         });
       }
 
+      // nếu chưa có rows đủ, đợi rồi thử lại
       await new Promise(r => setTimeout(r, 2000));
     } catch (err) {
+      console.error('❌ getSaleComparisonData error attempt', attempt, err?.message || err);
       await new Promise(r => setTimeout(r, 2000));
     }
   }
@@ -269,72 +289,77 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 }
 
 async function analyzeSalesChange(token) {
-  const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
-  const hourVN = nowVN.getHours();
-  const prevCol = 'M';
-  const currentCol = hourVN < 12 ? 'P' : 'Q';
-  const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
+  try {
+    const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
+    const hourVN = nowVN.getHours();
+    const prevCol = 'M';
+    const currentCol = hourVN < 12 ? 'P' : 'Q';
+    const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
-  const allData = await getSaleComparisonData(token, prevCol, currentCol);
-  if (!allData.length) return null;
+    const allData = await getSaleComparisonData(token, prevCol, currentCol);
+    if (!allData.length) return null;
 
-  const topData = allData.filter(r =>
-    r.warehouse === 'Binh Tan Warehouse' && String(r.avr7days).trim() !== ''
-  );
-  const totalData = allData.filter(r =>
-    r.finalStatus === 'On sale' && r.warehouse === 'Binh Tan Warehouse' && String(r.avr7days).trim() !== ''
-  );
+    const topData = allData.filter(r =>
+      r.warehouse === 'Binh Tan Warehouse' && String(r.avr7days).trim() !== ''
+    );
+    const totalData = allData.filter(r =>
+      r.finalStatus === 'On sale' && r.warehouse === 'Binh Tan Warehouse' && String(r.avr7days).trim() !== ''
+    );
 
-  if (!topData.length) return 'Không có dữ liệu cho Warehouse: Binh Tan Warehouse';
+    if (!topData.length) return 'Không có dữ liệu cho Warehouse: Binh Tan Warehouse';
 
-  const totalIncrease = totalData.filter(r => r.change > 0).length;
-  const totalDecrease = totalData.filter(r => r.change < 0).length;
+    const totalIncrease = totalData.filter(r => r.change > 0).length;
+    const totalDecrease = totalData.filter(r => r.change < 0).length;
 
-  const increases = topData
-    .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
-    .sort((a,b) => (b.change === Infinity ? 1e12 : b.change) - (a.change === Infinity ? 1e12 : a.change))
-    .slice(0,5);
+    const increases = topData
+      .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
+      .sort((a,b) => (b.change === Infinity ? 1e12 : b.change) - (a.change === Infinity ? 1e12 : a.change))
+      .slice(0,5);
 
-  const decreases = topData
-    .filter(r => r.prev > 10 && r.change < 0)
-    .sort((a,b) => a.change - b.change)
-    .slice(0,5);
+    const decreases = topData
+      .filter(r => r.prev > 10 && r.change < 0)
+      .sort((a,b) => a.change - b.change)
+      .slice(0,5);
 
-  const allOOS = totalData
-    .filter(r => Number(r.totalStock) === 0)
-    .map(r => {
-      let label = '';
-      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
-      else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
-      else if (r.sale1day === 0) label = 'OOS 1 ngày';
-      return { ...r, oosLabel: label };
-    })
-    .filter(r => r.oosLabel)
-    .sort((a,b) => {
-      const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
-      return w(b.oosLabel) - w(a.oosLabel);
-    });
+    const allOOS = totalData
+      .filter(r => Number(r.totalStock) === 0)
+      .map(r => {
+        let label = '';
+        if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
+        else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
+        else if (r.sale1day === 0) label = 'OOS 1 ngày';
+        return { ...r, oosLabel: label };
+      })
+      .filter(r => r.oosLabel)
+      .sort((a,b) => {
+        const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
+        return w(b.oosLabel) - w(a.oosLabel);
+      });
 
-  const outOfStock = allOOS.slice(0,5);
+    const outOfStock = allOOS.slice(0,5);
 
-  let msg = `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}:\n`;
-  if (increases.length) {
-    msg += `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n`;
-    increases.forEach(r => {
-      const pct = r.change === Infinity ? '+∞%' : `+${r.change.toFixed(1)}%`;
-      msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
-    });
+    let msg = `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}:\n`;
+    if (increases.length) {
+      msg += `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n`;
+      increases.forEach(r => {
+        const pct = r.change === Infinity ? '+∞%' : `+${r.change.toFixed(1)}%`;
+        msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
+      });
+    }
+    if (decreases.length) {
+      msg += `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n`;
+      decreases.forEach(r => { msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`; });
+    }
+    if (outOfStock.length) {
+      msg += `\n🚨 SKU hết hàng / Tổng ${allOOS.length} SKU OOS:\n`;
+      outOfStock.forEach(r => { msg += `- ${r.productName} (${r.oosLabel})\n`; });
+      if (allOOS.length > 5) msg += `... và ${allOOS.length - 5} SKU khác.\n`;
+    }
+    return msg;
+  } catch (err) {
+    console.error('❌ analyzeSalesChange error:', err?.message || err);
+    return null;
   }
-  if (decreases.length) {
-    msg += `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n`;
-    decreases.forEach(r => { msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`; });
-  }
-  if (outOfStock.length) {
-    msg += `\n🚨 SKU hết hàng / Tổng ${allOOS.length} SKU OOS:\n`;
-    outOfStock.forEach(r => { msg += `- ${r.productName} (${r.oosLabel})\n`; });
-    if (allOOS.length > 5) msg += `... và ${allOOS.length - 5} SKU khác.\n`;
-  }
-  return msg;
 }
 
 // Hàm an toàn: thử lại 3 lần nếu chưa có dữ liệu
@@ -362,12 +387,13 @@ async function getTotalStock(token) {
       return isNaN(num) ? acc : acc + num;
     }, 0);
     return (sum || sum === 0) ? sum.toString() : null;
-  } catch {
+  } catch (err) {
+    console.error('❌ getTotalStock error:', err?.message || err);
     return null;
   }
 }
 
-// Gửi tin nhắn vào nhóm
+// Gửi tin nhắn vào nhóm (dùng danh sách đã dedupe)
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
     const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
@@ -376,36 +402,75 @@ async function sendMessageToGroup(token, chatId, messageText) {
       payload,
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
-  } catch (err) {}
+  } catch (err) {
+    console.error('❌ sendMessageToGroup error to', chatId, err?.response?.data || err?.message || err);
+  }
 }
-
-// Biến lưu giá trị TotalStock lần trước
-let lastTotalStock = null;
 
 // Kiểm tra thay đổi TotalStock và gửi tin nhắn
 async function checkTotalStockChange() {
+  // Nếu đang gửi, bỏ qua (tránh gửi 2 lần cùng lúc)
+  if (sendingTotalStockLock) {
+    console.log('⚠ checkTotalStockChange: đang có tiến trình gửi - bỏ qua lần này');
+    return;
+  }
+  sendingTotalStockLock = true;
+
   try {
     const token = await getAppAccessToken();
     const currentTotalStock = await getTotalStock(token);
 
+    // Nếu giá trị thay đổi và lastTotalStock đã có (không phải lần chạy đầu)
     if (currentTotalStock !== null && currentTotalStock !== lastTotalStock && lastTotalStock !== null) {
       console.log(`🔄 TotalStock thay đổi: ${lastTotalStock} → ${currentTotalStock}`);
 
-      // Gửi thông báo Đã đổ Stock
-      const messageText = `✅ Đã đổ Stock. Số lượng: ${currentTotalStock} thùng`;
-      for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, messageText);
+      // Dedupe chat ids để tránh gửi nhiều lần cùng 1 chat
+      const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
 
-      // Gửi Sale compare ngay sau khi thay đổi stock
-      const salesMsg = await safeAnalyzeSalesChange(token);
-      if (salesMsg) {
-        for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, salesMsg);
+      // Gửi thông báo Đã đổ Stock (1 lần cho mỗi chat)
+      const stockMsg = `✅ Đã đổ Stock. Số lượng: ${currentTotalStock} thùng`;
+      for (const chatId of uniqueGroupIds) {
+        try {
+          await sendMessageToGroup(token, chatId, stockMsg);
+        } catch (err) {
+          console.error('❌ Lỗi gửi Stock message to', chatId, err?.message || err);
+        }
       }
+
+      // Gọi phân tích Sales và gửi (1 lần)
+      const salesMsg = await safeAnalyzeSalesChange(token);
+      if (salesMsg && typeof salesMsg === 'string') {
+        // Optional: tránh gửi salesMsg giống y hệt với lần trước (nếu bạn thích)
+        const hash = (s) => s ? String(s).slice(0,500) : ''; // simple hash (prefix)
+        const h = hash(salesMsg);
+        if (h !== lastSalesMsgHash) {
+          for (const chatId of uniqueGroupIds) {
+            try {
+              await sendMessageToGroup(token, chatId, salesMsg);
+            } catch (err) {
+              console.error('❌ Lỗi gửi Sales message to', chatId, err?.message || err);
+            }
+          }
+          lastSalesMsgHash = h;
+        } else {
+          console.log('ℹ Sales message giống lần trước → không gửi lại');
+        }
+      } else {
+        console.log('ℹ analyzeSalesChange trả về rỗng/null → không gửi Sales message');
+      }
+    } else {
+      // Không thay đổi → không in log gửi, chỉ log debug
+      console.log('ℹ checkTotalStockChange: Không có thay đổi TotalStock hoặc lần chạy đầu.');
     }
 
+    // Cập nhật lastTotalStock (dù có đổi hay không) để lần sau so sánh
     lastTotalStock = currentTotalStock;
-  } catch (err) {}
+  } catch (err) {
+    console.error('❌ checkTotalStockChange error:', err?.message || err);
+  } finally {
+    sendingTotalStockLock = false;
+  }
 }
-
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
