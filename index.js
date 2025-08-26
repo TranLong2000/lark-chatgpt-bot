@@ -739,7 +739,7 @@ app.post('/webhook', async (req, res) => {
       }
 
       /* ---- Helper: AI Call with Retry and Fallback ---- */
-      async function callAIWithRetry(messages, model = 'deepseek/deepseek-chat:free', retries = 5) {
+      async function callAIWithRetry(messages, model = 'deepseek/deepseek-r1-0528:free', retries = 5) {
         for (let i = 0; i < retries; i++) {
           try {
             const aiResp = await axios.post(
@@ -802,7 +802,7 @@ app.post('/webhook', async (req, res) => {
                     { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
                     ...formattedHistory,
                     { role: 'user', content: combined }
-                  ], 'mistralai/mistral-7b-instruct:free', 1); // Fallback model, 1 try
+                  ], 'deepseek/deepseek-r1-0528:free', 1); // Fallback model, 1 try
                 }
                 assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
               } catch (err) {
@@ -850,7 +850,7 @@ app.post('/webhook', async (req, res) => {
                 { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
                 ...formattedHistory,
                 { role: 'user', content: textAfterMention }
-              ], 'mistralai/mistral-7b-instruct:free', 1); // Fallback model, 1 try
+              ], 'deepseek/deepseek-r1-0528:free', 1); // Fallback model, 1 try
             }
             assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
           } catch (err) {
