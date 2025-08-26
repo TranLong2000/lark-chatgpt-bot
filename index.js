@@ -626,7 +626,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
 }
 
 /* ===========================================
-   SECTION 14 — Webhook (ONLY on @mention)
+   SECTION 14 — Webhook (ONLY on @mention) — FIXED
    =========================================== */
 app.post('/webhook', async (req, res) => {
   try {
@@ -637,7 +637,9 @@ app.post('/webhook', async (req, res) => {
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) return res.sendStatus(401);
 
     let decryptedData = {};
-    try { decryptedData = decryptMessage(JSON.parse(bodyRaw).encrypt || ''); } catch {}
+    try { decryptedData = decryptMessage(JSON.parse(bodyRaw).encrypt || ''); } catch (e) {
+      console.error('Decrypt error:', e);
+    }
 
     if (decryptedData.header?.event_type === 'im.chat.member.bot.added_v1') {
       return res.sendStatus(200);
@@ -649,8 +651,13 @@ app.post('/webhook', async (req, res) => {
       const chatId = message.chat_id;
       const chatType = message.chat_type;
       const messageType = message.message_type;
-      const senderId = decryptedData.event.sender?.sender_id?.open_id;
+      const senderId = decryptedData.event.sender?.sender_id?.open_id || null;
       const mentions = message.mentions || [];
+
+      if (!senderId) {
+        console.warn('No senderId found in message');
+        return res.sendStatus(200);
+      }
 
       if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
@@ -661,23 +668,30 @@ app.post('/webhook', async (req, res) => {
         (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
         (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
       );
-
       if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
 
-      res.sendStatus(200);
+      res.sendStatus(200); // ACK sớm
 
       const token = await getAppAccessToken();
 
-      // Luôn tag lại người gửi khi trả lời
+      // Lấy tên người gửi, fallback nếu lỗi
+      let mentionUserName = 'Unknown User';
+      try {
+        const tmpName = await getUserInfo(senderId, token);
+        if (tmpName) mentionUserName = tmpName;
+      } catch (err) {
+        console.error('getUserInfo error:', err?.response?.data || err.message);
+      }
       const mentionUserId = senderId;
-      const mentionUserName = await getUserInfo(senderId, token);
 
       // Lấy text sau khi bỏ <at>
       let textAfterMention = '';
       try {
         const raw = JSON.parse(message.content).text || '';
         textAfterMention = raw.replace(/<at.*?<\/at>/g, '').trim();
-      } catch { textAfterMention = ''; }
+      } catch {
+        textAfterMention = '';
+      }
 
       /* ---- Branch A: Plan ---- */
       if (/^Plan[,，]/i.test(textAfterMention)) {
@@ -702,7 +716,7 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-      /* ---- Branch C: File/Image receive ---- */
+      /* ---- Branch C: File/Image ---- */
       if (['file', 'image'].includes(messageType)) {
         try {
           const fileKey = message.file_key;
@@ -715,6 +729,7 @@ app.post('/webhook', async (req, res) => {
           pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
           await replyToLark(messageId, 'Đã nhận file. Reply kèm yêu cầu trong 5 phút.', mentionUserId, mentionUserName);
         } catch (err) {
+          console.error('File receive error:', err);
           await replyToLark(messageId, 'Lỗi nhận file.', mentionUserId, mentionUserName);
         }
         return;
@@ -742,27 +757,32 @@ app.post('/webhook', async (req, res) => {
                   ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
                   : { role: 'assistant', content: `L-GPT: ${m.content}` }
               ));
-
-              const aiResp = await axios.post(
-                'https://openrouter.ai/api/v1/chat/completions',
-                {
-                  model: 'deepseek/deepseek-r1-0528:free',
-                  messages: [
-                    { role: 'system', content: 'Bạn là L-GPT: lạnh lùng, ngắn gọn, súc tích.' },
-                    ...formattedHistory,
-                    { role: 'user', content: `${mentionUserName}: ${combined}` }
-                  ],
-                  stream: false
-                },
-                { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-              );
-              const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
+              let assistantMessage = 'Không có kết quả.';
+              try {
+                const aiResp = await axios.post(
+                  'https://openrouter.ai/api/v1/chat/completions',
+                  {
+                    model: 'deepseek/deepseek-r1-0528:free',
+                    messages: [
+                      { role: 'system', content: 'Bạn là L-GPT: lạnh lùng, ngắn gọn, súc tích.' },
+                      ...formattedHistory,
+                      { role: 'user', content: `${mentionUserName}: ${combined}` }
+                    ],
+                    stream: false
+                  },
+                  { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+                );
+                assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
+              } catch (err) {
+                console.error('AI API error:', err?.response?.data || err.message);
+              }
               const clean = assistantMessage.replace(/[\*_`~]/g, '').trim();
               updateConversationMemory(chatId, 'assistant', clean, 'L-GPT');
               await replyToLark(messageId, clean, mentionUserId, mentionUserName);
             }
             pendingFiles.delete(chatId);
-          } catch {
+          } catch (err) {
+            console.error('File process error:', err);
             await replyToLark(messageId, 'Lỗi xử lý file.', mentionUserId, mentionUserName);
             pendingFiles.delete(chatId);
           }
@@ -772,10 +792,8 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-      /* ---- Branch E: Chat AI (text) ---- */
-      if (messageType === 'text') {
-        if (!textAfterMention) return;
-
+      /* ---- Branch E: Chat AI ---- */
+      if (messageType === 'text' && textAfterMention) {
         try {
           updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
           const memory = conversationMemory.get(chatId) || [];
@@ -784,26 +802,30 @@ app.post('/webhook', async (req, res) => {
               ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
               : { role: 'assistant', content: `L-GPT: ${m.content}` }
           ));
-
-          const aiResp = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528:free',
-              messages: [
-                { role: 'system', content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
-                ...formattedHistory,
-                { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
-              ],
-              stream: false
-            },
-            { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-          );
-
-          const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
+          let assistantMessage = 'Không có kết quả.';
+          try {
+            const aiResp = await axios.post(
+              'https://openrouter.ai/api/v1/chat/completions',
+              {
+                model: 'deepseek/deepseek-r1-0528:free',
+                messages: [
+                  { role: 'system', content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
+                  ...formattedHistory,
+                  { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
+                ],
+                stream: false
+              },
+              { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+            );
+            assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
+          } catch (err) {
+            console.error('AI API error:', err?.response?.data || err.message);
+          }
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-        } catch {
+        } catch (err) {
+          console.error('Text process error:', err);
           await replyToLark(messageId, 'Lỗi khi gọi AI.', mentionUserId, mentionUserName);
         }
         return;
@@ -812,9 +834,11 @@ app.post('/webhook', async (req, res) => {
 
     return res.sendStatus(200);
   } catch (error) {
+    console.error('Webhook global error:', error);
     return res.sendStatus(500);
   }
 });
+
 /* ===========================================
    SECTION 15 — Housekeeping & Schedules
    =========================================== */
