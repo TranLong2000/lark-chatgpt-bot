@@ -739,7 +739,7 @@ app.post('/webhook', async (req, res) => {
       }
 
       /* ---- Helper: AI Call with Retry and Fallback ---- */
-      async function callAIWithRetry(messages, model = 'meta-llama/llama-3-8b-instruct:free', retries = 5) {
+      async function callAIWithRetry(messages, model = 'deepseek/deepseek-chat:free', retries = 5) {
         for (let i = 0; i < retries; i++) {
           try {
             const aiResp = await axios.post(
