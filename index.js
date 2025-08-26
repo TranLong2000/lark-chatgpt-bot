@@ -757,7 +757,7 @@ app.post('/webhook', async (req, res) => {
                   ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
                   : { role: 'assistant', content: `L-GPT: ${m.content}` }
               ));
-              let assistantMessage = 'Không có kết quả.';
+              let assistantMessage = '';
               try {
                 const aiResp = await axios.post(
                   'https://openrouter.ai/api/v1/chat/completions',
@@ -800,7 +800,7 @@ app.post('/webhook', async (req, res) => {
           const formattedHistory = memory.map(m => (
             m.role === 'user'
               ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
-              : { role: 'assistant', content: `L-GPT: ${m.content}` }
+              : { role: 'assistant', content: `${m.content}` }
           ));
           let assistantMessage = 'Không có kết quả.';
           try {
