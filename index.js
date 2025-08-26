@@ -777,7 +777,7 @@ app.post('/webhook', async (req, res) => {
                 console.error('AI API error:', err?.response?.data || err.message);
               }
               const clean = assistantMessage.replace(/[\*_`~]/g, '').trim();
-              updateConversationMemory(chatId, 'assistant', clean, 'San San');
+              updateConversationMemory(chatId, 'assistant', clean, 'L-GPT');
               await replyToLark(messageId, clean, mentionUserId, mentionUserName);
             }
             pendingFiles.delete(chatId);
@@ -822,7 +822,7 @@ app.post('/webhook', async (req, res) => {
             console.error('AI API error:', err?.response?.data || err.message);
           }
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-          updateConversationMemory(chatId, 'assistant', cleanMessage, 'San San');
+          updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
         } catch (err) {
           console.error('Text process error:', err);
