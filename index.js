@@ -243,7 +243,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
         return rows.slice(1).map((r, i) => {
           const productName = r[col.E] ?? `Dòng ${i + 2}`;
           const warehouse   = r[col.F] ?? '';
-          const stock       = toNumber(r[col.G]);
+          const totalStock  = toNumber(r[col.G]); // Đổi stock -> totalStock
           const avr7daysRaw = r[col.M] ?? '';
           const sale3day    = toNumber(r[col.N]);
           const sale2day    = toNumber(r[col.O]);
@@ -255,7 +255,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
           if (prev === 0 && current > 0) change = Infinity;
           else if (prev > 0) change = ((current - prev) / prev) * 100;
 
-          return { productName, warehouse, finalStatus, stock, avr7days: avr7daysRaw, sale3day, sale2day, sale1day, prev, current, change };
+          return { productName, warehouse, finalStatus, totalStock, avr7days: avr7daysRaw, sale3day, sale2day, sale1day, prev, current, change };
         });
       }
 
@@ -301,7 +301,7 @@ async function analyzeSalesChange(token) {
     .slice(0,5);
 
   const allOOS = totalData
-    .filter(r => Number(r.stock) === 0)
+    .filter(r => Number(r.totalStock) === 0)
     .map(r => {
       let label = '';
       if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
@@ -349,7 +349,8 @@ async function safeAnalyzeSalesChange(token) {
   return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
 }
 
-async function getCellB2Value(token) {
+// Lấy tổng stock từ cột G
+async function getTotalStock(token) {
   try {
     const targetColumn = 'G';
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${targetColumn}:${targetColumn}`;
@@ -361,9 +362,12 @@ async function getCellB2Value(token) {
       return isNaN(num) ? acc : acc + num;
     }, 0);
     return (sum || sum === 0) ? sum.toString() : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
+// Gửi tin nhắn vào nhóm
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
     const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
@@ -375,23 +379,33 @@ async function sendMessageToGroup(token, chatId, messageText) {
   } catch (err) {}
 }
 
-async function checkB2ValueChange() {
+// Biến lưu giá trị TotalStock lần trước
+let lastTotalStock = null;
+
+// Kiểm tra thay đổi TotalStock và gửi tin nhắn
+async function checkTotalStockChange() {
   try {
     const token = await getAppAccessToken();
-    const currentB2Value = await getCellB2Value(token);
+    const currentTotalStock = await getTotalStock(token);
 
-    if (currentB2Value !== null && currentB2Value !== lastB2Value && lastB2Value !== null) {
-      const messageText = `✅ Đã đổ Stock. Số lượng: ${currentB2Value} thùng`;
+    if (currentTotalStock !== null && currentTotalStock !== lastTotalStock && lastTotalStock !== null) {
+      console.log(`🔄 TotalStock thay đổi: ${lastTotalStock} → ${currentTotalStock}`);
+
+      // Gửi thông báo Đã đổ Stock
+      const messageText = `✅ Đã đổ Stock. Số lượng: ${currentTotalStock} thùng`;
       for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, messageText);
 
+      // Gửi Sale compare ngay sau khi thay đổi stock
       const salesMsg = await safeAnalyzeSalesChange(token);
       if (salesMsg) {
         for (const chatId of GROUP_CHAT_IDS) await sendMessageToGroup(token, chatId, salesMsg);
       }
     }
-    lastB2Value = currentB2Value;
+
+    lastTotalStock = currentTotalStock;
   } catch (err) {}
 }
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
