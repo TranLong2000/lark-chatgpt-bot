@@ -668,13 +668,15 @@ app.post('/webhook', async (req, res) => {
         (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
         (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
       );
+      
+      // Chỉ xử lý khi bot được mention trong group hoặc chat private
       if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
 
       res.sendStatus(200); // ACK sớm
 
       const token = await getAppAccessToken();
 
-      // Lấy tên người gửi, fallback nếu lỗi
+      // Lấy tên người gửi
       let mentionUserName = 'Unknown User';
       try {
         const tmpName = await getUserInfo(senderId, token);
@@ -684,186 +686,91 @@ app.post('/webhook', async (req, res) => {
       }
       const mentionUserId = senderId;
 
-      // Lấy text sau khi bỏ <at>
-      let textAfterMention = '';
+      // Lấy và xử lý nội dung tin nhắn
+      let messageContent = '';
       try {
-        const raw = JSON.parse(message.content).text || '';
-        textAfterMention = raw.replace(/<at.*?<\/at>/g, '').trim();
+        const parsedContent = JSON.parse(message.content);
+        messageContent = parsedContent.text || '';
+        
+        // Loại bỏ các tag @mention và làm sạch nội dung
+        messageContent = messageContent
+          .replace(/<at.*?<\/at>/g, '')
+          .replace(/@L-GPT/gi, 'bạn') // Thay @L-GPT bằng 'bạn'
+          .trim();
       } catch {
-        textAfterMention = '';
+        messageContent = '';
       }
 
-      // Preprocess: Thay @L-GPT bằng 'bạn' để AI hiểu là đang nói với mình
-      textAfterMention = textAfterMention.replace(/@L-GPT/gi, 'bạn');
-
-      /* ---- Branch A: Plan ---- */
-      if (/^Plan[,，]/i.test(textAfterMention)) {
-        await processPlanQuery(messageId, SPREADSHEET_TOKEN, textAfterMention, token, mentionUserId, mentionUserName);
-        return;
-      }
-
-      /* ---- Branch B: Base ---- */
-      let baseId = '', tableId = '';
-      const keyRegex = new RegExp(`^(${Object.keys(BASE_MAPPINGS).join('|')})(,|，)`, 'i');
-      const reportMatch = textAfterMention.match(keyRegex);
-      if (reportMatch) {
-        const reportName = reportMatch[1].toUpperCase();
-        const reportUrl = BASE_MAPPINGS[reportName];
-        if (reportUrl) {
-          const urlMatch = reportUrl.match(/base\/([a-zA-Z0-9]+)\?.*table=([a-zA-Z0-9]+)/);
-          if (urlMatch) { baseId = urlMatch[1]; tableId = urlMatch[2]; }
-        }
-      }
-      if (baseId && tableId) {
-        await processBaseData(messageId, baseId, tableId, textAfterMention, token);
-        return;
-      }
-
-      /* ---- Branch C: File/Image ---- */
-      if (['file', 'image'].includes(messageType)) {
+      // Chỉ xử lý tin nhắn text có nội dung
+      if (messageType === 'text' && messageContent) {
         try {
-          const fileKey = message.file_key;
-          if (!fileKey) {
-            await replyToLark(messageId, 'Thiếu file_key.', mentionUserId, mentionUserName);
-            return;
-          }
-          const fileName = message.file_name || `${messageId}.${messageType === 'image' ? 'jpg' : 'bin'}`;
-          const ext = path.extname(fileName).slice(1).toLowerCase();
-          pendingFiles.set(chatId, { fileKey, fileName, ext, messageId, timestamp: Date.now() });
-          await replyToLark(messageId, 'Đã nhận file. Reply kèm yêu cầu trong 5 phút.', mentionUserId, mentionUserName);
-        } catch (err) {
-          console.error('File receive error:', err);
-          await replyToLark(messageId, 'Lỗi nhận file.', mentionUserId, mentionUserName);
-        }
-        return;
-      }
+          // Cập nhật bộ nhớ hội thoại
+          updateConversationMemory(chatId, 'user', messageContent, mentionUserName);
+          const memory = conversationMemory.get(chatId) || [];
+          
+          // Chuẩn bị lịch sử hội thoại
+          const formattedHistory = memory.map(m => ({
+            role: m.role,
+            content: m.content
+          }));
 
-      /* ---- Helper: AI Call with Retry and Fallback ---- */
-      async function callAIWithRetry(messages, model = 'deepseek/deepseek-chat:free', retries = 5) {
-        for (let i = 0; i < retries; i++) {
+          // System prompt cải tiến - rõ ràng về chủ thể
+          const systemPrompt = `Bạn là L-GPT (được mention là @L-GPT), một trợ lý ảo thông minh. 
+Khi người dùng nhắc đến @L-GPT hoặc trực tiếp trò chuyện trong cuộc hội thoại này, 
+họ đang nói chuyện với bạn. Bạn hãy trả lời một cách thân thiện, hữu ích và phù hợp với ngữ cảnh.
+
+Quy tắc trả lời:
+1. Luôn nhận biết rằng bạn là chủ thể được nhắc đến khi có @L-GPT
+2. Trả lời trực tiếp cho người dùng hiện tại
+3. Giữ câu trả lời ngắn gọn, rõ ràng
+4. Sử dụng ngôn ngữ tự nhiên, thân thiện`;
+
+          let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
+
           try {
             const aiResp = await axios.post(
               'https://openrouter.ai/api/v1/chat/completions',
               {
-                model,
-                messages,
-                stream: false
-              },
-              { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-            );
-            return aiResp;
-          } catch (err) {
-            if (err.response && err.response.status === 429 && i < retries - 1) {
-              const delay = 1000 * Math.pow(2, i); // Exponential backoff: 1s, 2s, 4s, 8s, 16s
-              console.log(`Rate limit hit, retrying after ${delay}ms...`);
-              await new Promise(resolve => setTimeout(resolve, delay));
-            } else {
-              throw err;
-            }
-          }
-        }
-        throw new Error('Max retries exceeded');
-      }
-
-      /* ---- Branch D: Reply vào file ---- */
-      if (messageType === 'post' && message.parent_id) {
-        const pendingFile = pendingFiles.get(chatId);
-        if (pendingFile && pendingFile.messageId === message.parent_id) {
-          try {
-            const fileUrlResp = await axios.get(
-              `${process.env.LARK_DOMAIN}/open-apis/im/v1/files/${pendingFile.fileKey}/download_url`,
-              { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 }
-            );
-            const fileUrl = fileUrlResp.data.data.download_url;
-            const extractedText = await extractFileContent(fileUrl, pendingFile.ext);
-            if (!extractedText || extractedText.startsWith('Lỗi')) {
-              await replyToLark(messageId, `Không trích xuất được nội dung ${pendingFile.fileName}.`, mentionUserId, mentionUserName);
-            } else {
-              let combined = (textAfterMention || '') + `\nNội dung file: ${extractedText}`;
-              // Preprocess combined tương tự
-              combined = combined.replace(/@L-GPT/gi, 'bạn');
-              updateConversationMemory(chatId, 'user', combined, mentionUserName);
-              const memory = conversationMemory.get(chatId) || [];
-              const formattedHistory = memory.map(m => (
-                m.role === 'user'
-                  ? { role: 'user', content: m.content }
-                  : { role: 'assistant', content: m.content }
-              ));
-              let assistantMessage = '';
-              try {
-                let aiResp = await callAIWithRetry([
-                  { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
+                model: 'deepseek/deepseek-r1-0528:free',
+                messages: [
+                  { role: 'system', content: systemPrompt },
                   ...formattedHistory,
-                  { role: 'user', content: combined }
-                ]);
-                // Fallback if primary fails
-                if (!aiResp) {
-                  aiResp = await callAIWithRetry([
-                    { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
-                    ...formattedHistory,
-                    { role: 'user', content: combined }
-                  ], 'mistralai/mistral-7b-instruct:free', 1); // Fallback model, 1 try
-                }
-                assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
-              } catch (err) {
-                console.error('AI API error:', err?.response?.data || err.message);
-                await replyToLark(messageId, 'Tạm thời quá tải, thử lại sau.', mentionUserId, mentionUserName);
-                pendingFiles.delete(chatId);
-                return;
+                  { role: 'user', content: messageContent }
+                ],
+                stream: false,
+                temperature: 0.7,
+                max_tokens: 1000
+              },
+              { 
+                headers: { 
+                  Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 
+                  'Content-Type': 'application/json' 
+                }, 
+                timeout: 30000 
               }
-              const clean = assistantMessage.replace(/[\*_`~]/g, '').trim();
-              updateConversationMemory(chatId, 'assistant', clean, 'L-GPT');
-              await replyToLark(messageId, clean, mentionUserId, mentionUserName);
-            }
-            pendingFiles.delete(chatId);
-          } catch (err) {
-            console.error('File process error:', err);
-            await replyToLark(messageId, 'Lỗi xử lý file.', mentionUserId, mentionUserName);
-            pendingFiles.delete(chatId);
-          }
-        } else {
-          await replyToLark(messageId, 'Hãy reply trực tiếp vào tin chứa file.', mentionUserId, mentionUserName);
-        }
-        return;
-      }
+            );
 
-      /* ---- Branch E: Chat AI ---- */
-      if (messageType === 'text' && textAfterMention) {
-        try {
-          updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
-          const memory = conversationMemory.get(chatId) || [];
-          const formattedHistory = memory.map(m => (
-            m.role === 'user'
-              ? { role: 'user', content: m.content }
-              : { role: 'assistant', content: m.content }
-          ));
-          let assistantMessage = 'Không có kết quả.';
-          try {
-            let aiResp = await callAIWithRetry([
-              { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
-              ...formattedHistory,
-              { role: 'user', content: textAfterMention }
-            ]);
-            // Fallback if primary fails
-            if (!aiResp) {
-              aiResp = await callAIWithRetry([
-                { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
-                ...formattedHistory,
-                { role: 'user', content: textAfterMention }
-              ], 'mistralai/mistral-7b-instruct:free', 1); // Fallback model, 1 try
-            }
             assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
+            
           } catch (err) {
             console.error('AI API error:', err?.response?.data || err.message);
-            await replyToLark(messageId, 'Tạm thời quá tải, thử lại sau.', mentionUserId, mentionUserName);
-            return;
+            
+            // Fallback response nếu API lỗi
+            assistantMessage = 'Hiện tại tôi đang gặp sự cố kỹ thuật. Bạn vui lòng thử lại sau nhé!';
           }
-          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+
+          // Làm sạch và format tin nhắn trả lời
+          const cleanMessage = assistantMessage
+            .replace(/[\*_`~]/g, '')
+            .trim();
+
+          // Cập nhật bộ nhớ và gửi phản hồi
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+          
         } catch (err) {
           console.error('Text process error:', err);
-          await replyToLark(messageId, 'Lỗi khi gọi AI.', mentionUserId, mentionUserName);
+          await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý tin nhắn của bạn.', mentionUserId, mentionUserName);
         }
         return;
       }
