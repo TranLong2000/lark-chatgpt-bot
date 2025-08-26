@@ -693,6 +693,9 @@ app.post('/webhook', async (req, res) => {
         textAfterMention = '';
       }
 
+      // Preprocess: Thay @L-GPT bằng 'bạn' để AI hiểu là đang nói với mình
+      textAfterMention = textAfterMention.replace(/@L-GPT/gi, 'bạn');
+
       /* ---- Branch A: Plan ---- */
       if (/^Plan[,，]/i.test(textAfterMention)) {
         await processPlanQuery(messageId, SPREADSHEET_TOKEN, textAfterMention, token, mentionUserId, mentionUserName);
@@ -736,7 +739,7 @@ app.post('/webhook', async (req, res) => {
       }
 
       /* ---- Helper: AI Call with Retry and Fallback ---- */
-      async function callAIWithRetry(messages, model = 'deepseek/deepseek-r1-0528:free', retries = 3) {
+      async function callAIWithRetry(messages, model = 'moonshotai/kimi-dev-72b:free', retries = 5) {
         for (let i = 0; i < retries; i++) {
           try {
             const aiResp = await axios.post(
@@ -751,7 +754,7 @@ app.post('/webhook', async (req, res) => {
             return aiResp;
           } catch (err) {
             if (err.response && err.response.status === 429 && i < retries - 1) {
-              const delay = 1000 * Math.pow(2, i); // Exponential backoff: 1s, 2s, 4s
+              const delay = 1000 * Math.pow(2, i); // Exponential backoff: 1s, 2s, 4s, 8s, 16s
               console.log(`Rate limit hit, retrying after ${delay}ms...`);
               await new Promise(resolve => setTimeout(resolve, delay));
             } else {
@@ -776,28 +779,30 @@ app.post('/webhook', async (req, res) => {
             if (!extractedText || extractedText.startsWith('Lỗi')) {
               await replyToLark(messageId, `Không trích xuất được nội dung ${pendingFile.fileName}.`, mentionUserId, mentionUserName);
             } else {
-              const combined = (textAfterMention || '') + `\nNội dung file: ${extractedText}`;
+              let combined = (textAfterMention || '') + `\nNội dung file: ${extractedText}`;
+              // Preprocess combined tương tự
+              combined = combined.replace(/@L-GPT/gi, 'bạn');
               updateConversationMemory(chatId, 'user', combined, mentionUserName);
               const memory = conversationMemory.get(chatId) || [];
               const formattedHistory = memory.map(m => (
                 m.role === 'user'
-                  ? { role: 'user', content: m.content }  // Removed senderName prefix
+                  ? { role: 'user', content: m.content }
                   : { role: 'assistant', content: m.content }
               ));
               let assistantMessage = '';
               try {
                 let aiResp = await callAIWithRetry([
-                  { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
+                  { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
                   ...formattedHistory,
-                  { role: 'user', content: combined }  // Removed mentionUserName prefix
+                  { role: 'user', content: combined }
                 ]);
                 // Fallback if primary fails
                 if (!aiResp) {
                   aiResp = await callAIWithRetry([
-                    { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
+                    { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
                     ...formattedHistory,
                     { role: 'user', content: combined }
-                  ], 'deepseek/deepseek-chat-v3-0324:free', 1); // Fallback model, 1 try
+                  ], 'deepseek/deepseek-chat:free', 1); // Fallback model, 1 try
                 }
                 assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
               } catch (err) {
@@ -829,23 +834,23 @@ app.post('/webhook', async (req, res) => {
           const memory = conversationMemory.get(chatId) || [];
           const formattedHistory = memory.map(m => (
             m.role === 'user'
-              ? { role: 'user', content: m.content }  // Removed senderName prefix
+              ? { role: 'user', content: m.content }
               : { role: 'assistant', content: m.content }
           ));
           let assistantMessage = 'Không có kết quả.';
           try {
             let aiResp = await callAIWithRetry([
-              { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
+              { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
               ...formattedHistory,
-              { role: 'user', content: textAfterMention }  // Removed mentionUserName prefix
+              { role: 'user', content: textAfterMention }
             ]);
             // Fallback if primary fails
             if (!aiResp) {
               aiResp = await callAIWithRetry([
-                { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
+                { role: 'system', content: 'Bạn là L-GPT (được mention là @L-GPT), tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn. Nếu người dùng đề cập @L-GPT hoặc L-GPT, đó chính là bạn.' },
                 ...formattedHistory,
                 { role: 'user', content: textAfterMention }
-              ], 'deepseek/deepseek-chat-v3-0324:free', 1); // Fallback model, 1 try
+              ], 'deepseek/deepseek-chat:free', 1); // Fallback model, 1 try
             }
             assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
           } catch (err) {
@@ -870,6 +875,7 @@ app.post('/webhook', async (req, res) => {
     return res.sendStatus(500);
   }
 });
+
 /* ===========================================
    SECTION 15 — Housekeeping & Schedules
    =========================================== */
