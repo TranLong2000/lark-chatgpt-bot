@@ -878,15 +878,15 @@ if (messageType === 'text') {
 
     updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
 
-    // ✅ Đưa mention lên đầu câu trả lời
+    // ✅ Đưa mention lên đầu câu trả lời nhưng KHÔNG truyền lại mentionUserId vào replyToLark
     const finalMessage = mentionUserId
       ? `<at id=${mentionUserId}>${mentionUserName}</at> ${cleanMessage}`
       : cleanMessage;
 
-    await replyToLark(messageId, finalMessage, mentionUserId, mentionUserName);
+    await replyToLark(messageId, finalMessage); // ⬅ Chỉ gửi text, không truyền mentionUserId để tránh mention 2 lần
   } catch (err) {
     console.error('❌ Branch E error:', err?.response?.data || err?.message || err);
-    await replyToLark(messageId, 'Hiện hệ thống AI đang quá tải, vui lòng thử lại sau ít phút.', mentionUserId, mentionUserName);
+    await replyToLark(messageId, 'Hiện hệ thống AI đang quá tải, vui lòng thử lại sau ít phút.');
   }
   return;
 }
