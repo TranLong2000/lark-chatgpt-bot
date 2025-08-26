@@ -614,7 +614,7 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
     }).join('\n');
 
     const msg =
-      `L-GPT: ${items.length} dòng.\n` +
+      `${items.length} dòng.\n` +
       (sample ? `Mẫu:\n${sample}` : 'Không có mẫu.');
 
     await replyToLark(messageId, msg, null, null);
@@ -755,7 +755,7 @@ app.post('/webhook', async (req, res) => {
               const formattedHistory = memory.map(m => (
                 m.role === 'user'
                   ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
-                  : { role: 'assistant', content: `L-GPT: ${m.content}` }
+                  : { role: 'assistant', content: `${m.content}` }
               ));
               let assistantMessage = '';
               try {
@@ -764,7 +764,7 @@ app.post('/webhook', async (req, res) => {
                   {
                     model: 'deepseek/deepseek-r1-0528:free',
                     messages: [
-                      { role: 'system', content: 'Bạn là L-GPT: lạnh lùng, ngắn gọn, súc tích.' },
+                      { role: 'system', content: 'Bạn là San San: lạnh lùng, ngắn gọn, súc tích.' },
                       ...formattedHistory,
                       { role: 'user', content: `${mentionUserName}: ${combined}` }
                     ],
@@ -777,7 +777,7 @@ app.post('/webhook', async (req, res) => {
                 console.error('AI API error:', err?.response?.data || err.message);
               }
               const clean = assistantMessage.replace(/[\*_`~]/g, '').trim();
-              updateConversationMemory(chatId, 'assistant', clean, 'L-GPT');
+              updateConversationMemory(chatId, 'assistant', clean, 'San San');
               await replyToLark(messageId, clean, mentionUserId, mentionUserName);
             }
             pendingFiles.delete(chatId);
@@ -822,7 +822,7 @@ app.post('/webhook', async (req, res) => {
             console.error('AI API error:', err?.response?.data || err.message);
           }
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-          updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+          updateConversationMemory(chatId, 'assistant', cleanMessage, 'San San');
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
         } catch (err) {
           console.error('Text process error:', err);
