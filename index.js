@@ -847,7 +847,6 @@ app.post('/webhook', async (req, res) => {
 
 /* ---- Branch E: Chat AI (text) ---- */
 if (messageType === 'text') {
-  console.log('📌 Branch E: Chat AI');
   if (!textAfterMention) return;
 
   try {
@@ -859,7 +858,8 @@ if (messageType === 'text') {
         : { role: 'assistant', content: `L-GPT: ${m.content}` }
     ));
 
-    const aiResp = await callOpenRouter(
+    const aiResp = await axios.post(
+      'https://openrouter.ai/api/v1/chat/completions',
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
@@ -869,33 +869,30 @@ if (messageType === 'text') {
         ],
         stream: false
       },
-      'Branch E AI'
+      { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
     );
 
-    const assistantMessage = aiResp?.data?.choices?.[0]?.message?.content || 'Không có kết quả.';
+    const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
     const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-
     updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
 
-    // ✅ Tạo nội dung dạng post với mention xanh
+    // ✅ Gửi dạng post để mention xanh nhưng không bị lặp 2 lần
     const postContent = {
       zh_cn: {
         title: '',
         content: [
           [
-            mentionUserId ? { tag: 'at', user_id: mentionUserId } : { tag: 'text', text: mentionUserName || '' },
+            { tag: 'at', user_id: mentionUserId },
             { tag: 'text', text: ` ${cleanMessage}` }
           ]
         ]
       }
     };
 
-    // Gọi lại replyToLark nhưng cho phép msg_type: 'post'
+    // Không truyền mentionUserId vào tham số cuối => tránh mention 2 lần
     await replyToLark(messageId, postContent, null, 'post');
-
-  } catch (err) {
-    console.error('❌ Branch E error:', err?.response?.data || err?.message || err);
-    await replyToLark(messageId, 'Hiện hệ thống AI đang quá tải, vui lòng thử lại sau ít phút.');
+  } catch {
+    await replyToLark(messageId, 'Lỗi khi gọi AI.');
   }
   return;
 }
