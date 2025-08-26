@@ -851,7 +851,6 @@ if (messageType === 'text') {
   if (!textAfterMention) return;
 
   try {
-    // Lưu tin nhắn người dùng vào bộ nhớ
     updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
     const memory = conversationMemory.get(chatId) || [];
     const formattedHistory = memory.map(m => (
@@ -860,7 +859,6 @@ if (messageType === 'text') {
         : { role: 'assistant', content: `L-GPT: ${m.content}` }
     ));
 
-    // Gọi AI
     const aiResp = await callOpenRouter(
       {
         model: 'deepseek/deepseek-r1-0528:free',
@@ -877,10 +875,9 @@ if (messageType === 'text') {
     const assistantMessage = aiResp?.data?.choices?.[0]?.message?.content || 'Không có kết quả.';
     const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
 
-    // Lưu trả lời AI vào bộ nhớ
     updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
 
-    // ✅ Gửi dạng "post" để mention xanh
+    // ✅ Tạo nội dung dạng post với mention xanh
     const postContent = {
       zh_cn: {
         title: '',
@@ -893,13 +890,8 @@ if (messageType === 'text') {
       }
     };
 
-    await larkClient.im.messages.reply({
-      path: { message_id: messageId },
-      data: {
-        content: JSON.stringify(postContent),
-        msg_type: 'post'
-      }
-    });
+    // Gọi lại replyToLark nhưng cho phép msg_type: 'post'
+    await replyToLark(messageId, postContent, null, 'post');
 
   } catch (err) {
     console.error('❌ Branch E error:', err?.response?.data || err?.message || err);
@@ -907,6 +899,7 @@ if (messageType === 'text') {
   }
   return;
 }
+
 
     }
 
