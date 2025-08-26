@@ -847,10 +847,13 @@ app.post('/webhook', async (req, res) => {
 
 /* ---- Branch E: Chat AI (text) ---- */
 if (messageType === 'text') {
+  console.log('📌 Branch E: Chat AI');
   if (!textAfterMention) return;
 
   try {
+    // Lưu tin nhắn người dùng vào bộ nhớ hội thoại
     updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
+
     const memory = conversationMemory.get(chatId) || [];
     const formattedHistory = memory.map(m => (
       m.role === 'user'
@@ -858,45 +861,44 @@ if (messageType === 'text') {
         : { role: 'assistant', content: `L-GPT: ${m.content}` }
     ));
 
-    const aiResp = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
+    // Gọi AI
+    const aiResp = await callOpenRouter(
       {
         model: 'deepseek/deepseek-r1-0528:free',
         messages: [
           { role: 'system', content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
           ...formattedHistory,
+          // Chỉ đưa tên vào để AI hiểu ngữ cảnh
           { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
         ],
         stream: false
       },
-      { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+      'Branch E AI'
     );
 
-    const assistantMessage = aiResp.data.choices?.[0]?.message?.content || 'Không có kết quả.';
-    const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-    updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+    let assistantMessage = aiResp?.data?.choices?.[0]?.message?.content || 'Không có kết quả.';
+    assistantMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
 
-    // ✅ Gửi dạng post để mention xanh nhưng không bị lặp 2 lần
-    const postContent = {
-      zh_cn: {
-        title: '',
-        content: [
-          [
-            { tag: 'at', user_id: mentionUserId },
-            { tag: 'text', text: ` ${cleanMessage}` }
-          ]
-        ]
-      }
-    };
+    // 🔹 Nếu câu trả lời AI bắt đầu bằng tên người được mention → xóa phần đó để tránh lặp
+    const mentionPattern = new RegExp(`^${mentionUserName}\\s*[:,-]*\\s*`, 'i');
+    assistantMessage = assistantMessage.replace(mentionPattern, '').trim();
 
-    // Không truyền mentionUserId vào tham số cuối => tránh mention 2 lần
-    await replyToLark(messageId, postContent, null, 'post');
-  } catch {
-    await replyToLark(messageId, 'Lỗi khi gọi AI.');
+    // Lưu phản hồi AI vào bộ nhớ
+    updateConversationMemory(chatId, 'assistant', assistantMessage, 'L-GPT');
+
+    // ✅ Luôn đưa mention lên đầu câu trả lời
+    const finalMessage = mentionUserId
+      ? `<at id=${mentionUserId}>${mentionUserName}</at> ${assistantMessage}`
+      : assistantMessage;
+
+    // ⬅ Không truyền mentionUserId để tránh tag 2 lần
+    await replyToLark(messageId, finalMessage);
+  } catch (err) {
+    console.error('❌ Branch E error:', err?.response?.data || err?.message || err);
+    await replyToLark(messageId, 'Hiện hệ thống AI đang quá tải, vui lòng thử lại sau ít phút.');
   }
   return;
 }
-
 
     }
 
