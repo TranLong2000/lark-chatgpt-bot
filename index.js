@@ -774,6 +774,6 @@ setInterval(() => {
    SECTION 16 — Start server + stock watcher
    =========================================== */
 app.listen(port, () => {
-  checkB2ValueChange();
-  setInterval(checkB2ValueChange, 60 * 1000);
+  checkTotalStockChange();
+  setInterval(checkTotalStockChange, 60 * 1000);
 });
