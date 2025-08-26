@@ -851,6 +851,7 @@ if (messageType === 'text') {
   if (!textAfterMention) return;
 
   try {
+    // Lưu tin nhắn người dùng vào bộ nhớ
     updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
     const memory = conversationMemory.get(chatId) || [];
     const formattedHistory = memory.map(m => (
@@ -859,7 +860,7 @@ if (messageType === 'text') {
         : { role: 'assistant', content: `L-GPT: ${m.content}` }
     ));
 
-    // Call AI with retry
+    // Gọi AI
     const aiResp = await callOpenRouter(
       {
         model: 'deepseek/deepseek-r1-0528:free',
@@ -876,20 +877,37 @@ if (messageType === 'text') {
     const assistantMessage = aiResp?.data?.choices?.[0]?.message?.content || 'Không có kết quả.';
     const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
 
+    // Lưu trả lời AI vào bộ nhớ
     updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
 
-    // ✅ Đưa mention lên đầu câu trả lời nhưng KHÔNG truyền lại mentionUserId vào replyToLark
-    const finalMessage = mentionUserId
-      ? `<at id=${mentionUserId}>${mentionUserName}</at> ${cleanMessage}`
-      : cleanMessage;
+    // ✅ Gửi dạng "post" để mention xanh
+    const postContent = {
+      zh_cn: {
+        title: '',
+        content: [
+          [
+            mentionUserId ? { tag: 'at', user_id: mentionUserId } : { tag: 'text', text: mentionUserName || '' },
+            { tag: 'text', text: ` ${cleanMessage}` }
+          ]
+        ]
+      }
+    };
 
-    await replyToLark(messageId, finalMessage); // ⬅ Chỉ gửi text, không truyền mentionUserId để tránh mention 2 lần
+    await larkClient.im.messages.reply({
+      path: { message_id: messageId },
+      data: {
+        content: JSON.stringify(postContent),
+        msg_type: 'post'
+      }
+    });
+
   } catch (err) {
     console.error('❌ Branch E error:', err?.response?.data || err?.message || err);
     await replyToLark(messageId, 'Hiện hệ thống AI đang quá tải, vui lòng thử lại sau ít phút.');
   }
   return;
 }
+
     }
 
     return res.sendStatus(200);
