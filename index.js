@@ -560,212 +560,142 @@ async function processBaseData(messageId, baseId, tableId, userMessage, token) {
   }
 }
 
-// ================== Section 14: Message Handler ==================
-app.post('/webhook', async (req, res) => {
-  const event = req.body;
+// =======================
+// Section 14 - Message Handling (A–E)
+// =======================
+if (messageType === 'image') {
+  console.log('📷 Branch A: Xử lý ảnh');
+  try {
+    await handleImageMessage(messageId, chatId, mentionUserId, mentionUserName);
+  } catch (err) {
+    console.error('❌ Lỗi Branch A:', err?.message || err);
+    await replyToLark(messageId, 'Không thể xử lý ảnh này.', mentionUserId, mentionUserName);
+  }
+  return;
+}
 
-  if (!event || !event.header) {
-    res.status(400).send('Invalid request');
+if (messageType === 'file') {
+  console.log('📂 Branch B: Xử lý file');
+  try {
+    await handleFileMessage(messageId, chatId, mentionUserId, mentionUserName);
+  } catch (err) {
+    console.error('❌ Lỗi Branch B:', err?.message || err);
+    await replyToLark(messageId, 'Không thể xử lý file này.', mentionUserId, mentionUserName);
+  }
+  return;
+}
+
+if (messageType === 'audio') {
+  console.log('🎤 Branch C: Xử lý audio');
+  try {
+    await handleAudioMessage(messageId, chatId, mentionUserId, mentionUserName);
+  } catch (err) {
+    console.error('❌ Lỗi Branch C:', err?.message || err);
+    await replyToLark(messageId, 'Không thể xử lý audio này.', mentionUserId, mentionUserName);
+  }
+  return;
+}
+
+if (messageType === 'sticker') {
+  console.log('😄 Branch D: Sticker');
+  await replyToLark(messageId, '👍', mentionUserId, mentionUserName);
+  return;
+}
+
+// =======================
+// Branch E - Chat AI
+// =======================
+if (messageType === 'text') {
+  console.log('💬 Branch E: Chat AI triggered');
+  
+  if (chatType === 'group' && !botMentioned) {
+    console.log('ℹ BOT không được mention trong nhóm → bỏ qua');
+    return;
+  }
+  if (!textAfterMention) {
+    console.log('ℹ Không có nội dung sau mention → bỏ qua');
     return;
   }
 
-  const { event_type, event_id } = event.header;
-  if (event_type !== 'im.message.receive_v1') {
-    res.status(200).send('Ignored non-message event');
-    return;
-  }
+  try {
+    console.log('📝 Cập nhật bộ nhớ hội thoại...');
+    updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
 
-  const message = event.event.message;
-  const messageId = message.message_id;
-  const messageType = message.message_type;
-  const chatId = event.event.chat_id;
-  const chatType = event.event.chat_type;
+    const memory = conversationMemory.get(chatId) || [];
+    const formattedHistory = memory.map(m => (
+      m.role === 'user'
+        ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
+        : { role: 'assistant', content: `L-GPT: ${m.content}` }
+    ));
 
-  // mention user
-  let mentionUserId = null;
-  let mentionUserName = 'User';
-  if (message.mentions && message.mentions.length > 0) {
-    mentionUserId = message.mentions[0].id.open_id;
-    mentionUserName = message.mentions[0].name || 'User';
-  }
+    let aiResp;
+    let retries = 3;
 
-  // detect bot mention
-  const botMentioned =
-    message.mentions &&
-    message.mentions.some(m => m.id.open_id === process.env.BOT_OPEN_ID);
-
-  let textAfterMention = '';
-  if (messageType === 'text') {
-    try {
-      const content = JSON.parse(message.content);
-      textAfterMention = content.text.trim();
-    } catch (e) {
-      textAfterMention = '';
-    }
-  }
-
-  // ========== Branch A: Image (OCR) ==========
-  if (messageType === 'image') {
-    try {
-      const fileKey = message.image_key;
-      const imageData = await downloadLarkFile(fileKey);
-      const text = await ocrImage(imageData);
-
-      const reply = `📷 Nội dung trong ảnh:\n${text || 'Không đọc được chữ nào.'}`;
-      await replyToLark(messageId, reply, mentionUserId, mentionUserName);
-    } catch (err) {
-      console.error('❌ Lỗi Branch A (OCR ảnh):', err.message);
-      await replyToLark(messageId, 'Không thể đọc ảnh.', mentionUserId, mentionUserName);
-    }
-    res.status(200).send('ok');
-    return;
-  }
-
-  // ========== Branch B: PDF ==========
-  if (messageType === 'file' && message.file?.name?.endsWith('.pdf')) {
-    try {
-      const fileKey = message.file.file_key;
-      const buffer = await downloadLarkFile(fileKey);
-      const data = await pdfParse(buffer);
-
-      const reply = `📄 Nội dung PDF (tóm tắt):\n${data.text.substring(0, 1000)}...`;
-      await replyToLark(messageId, reply, mentionUserId, mentionUserName);
-    } catch (err) {
-      console.error('❌ Lỗi Branch B (PDF):', err.message);
-      await replyToLark(messageId, 'Không đọc được file PDF.', mentionUserId, mentionUserName);
-    }
-    res.status(200).send('ok');
-    return;
-  }
-
-  // ========== Branch C: Word ==========
-  if (messageType === 'file' && message.file?.name?.endsWith('.docx')) {
-    try {
-      const fileKey = message.file.file_key;
-      const buffer = await downloadLarkFile(fileKey);
-      const result = await mammoth.extractRawText({ buffer });
-
-      const reply = `📑 Nội dung Word (tóm tắt):\n${result.value.substring(0, 1000)}...`;
-      await replyToLark(messageId, reply, mentionUserId, mentionUserName);
-    } catch (err) {
-      console.error('❌ Lỗi Branch C (Word):', err.message);
-      await replyToLark(messageId, 'Không đọc được file Word.', mentionUserId, mentionUserName);
-    }
-    res.status(200).send('ok');
-    return;
-  }
-
-  // ========== Branch D: Excel ==========
-  if (messageType === 'file' && message.file?.name?.endsWith('.xlsx')) {
-    try {
-      const fileKey = message.file.file_key;
-      const buffer = await downloadLarkFile(fileKey);
-
-      const workbook = xlsx.read(buffer, { type: 'buffer' });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      const rows = xlsx.utils.sheet_to_json(sheet, { header: 1 });
-
-      const preview = rows.slice(0, 5).map(r => r.join(' | ')).join('\n');
-
-      const reply = `📊 Nội dung Excel (5 dòng đầu):\n${preview}`;
-      await replyToLark(messageId, reply, mentionUserId, mentionUserName);
-    } catch (err) {
-      console.error('❌ Lỗi Branch D (Excel):', err.message);
-      await replyToLark(messageId, 'Không đọc được file Excel.', mentionUserId, mentionUserName);
-    }
-    res.status(200).send('ok');
-    return;
-  }
-
-  // ========== Branch E: Chat AI ==========
-  if (messageType === 'text') {
-    if (chatType === 'group' && !botMentioned) {
-      res.status(200).send('ok');
-      return;
-    }
-    if (!textAfterMention) {
-      res.status(200).send('ok');
-      return;
-    }
-
-    try {
-      updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
-      const memory = conversationMemory.get(chatId) || [];
-      const formattedHistory = memory.map(m =>
-        m.role === 'user'
-          ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
-          : { role: 'assistant', content: `L-GPT: ${m.content}` }
-      );
-
-      let aiResp;
-      let retries = 3;
-
-      while (retries > 0) {
-        try {
-          aiResp = await axios.post(
-            'https://openrouter.ai/api/v1/chat/completions',
-            {
-              model: 'deepseek/deepseek-r1-0528:free',
-              messages: [
-                {
-                  role: 'system',
-                  content:
-                    'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.'
-                },
-                ...formattedHistory,
-                { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
-              ],
-              stream: false
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json'
+    while (retries > 0) {
+      try {
+        console.log(`🚀 Gọi API AI... Lần thử: ${4 - retries}`);
+        aiResp = await axios.post(
+          'https://openrouter.ai/api/v1/chat/completions',
+          {
+            model: 'deepseek/deepseek-r1-0528:free',
+            messages: [
+              {
+                role: 'system',
+                content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.'
               },
-              timeout: 20000
-            }
-          );
-          break;
-        } catch (err) {
-          if (err?.response?.status === 429) {
-            console.warn(`⚠ Quá tải (429), chờ 3 giây rồi thử lại... (${3 - retries + 1})`);
-            await new Promise(r => setTimeout(r, 3000));
-          } else {
-            console.error(
-              `❌ Lỗi gọi AI (Branch E) lần ${3 - retries + 1}:`,
-              err?.response?.data || err.message
-            );
+              ...formattedHistory,
+              { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
+            ],
+            stream: false
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 20000
           }
-          retries--;
-          if (retries === 0) throw err;
+        );
+        break; // nếu thành công → thoát vòng lặp
+      } catch (err) {
+        if (err?.response?.status === 429) {
+          console.warn(`⚠ Quá tải (429) → chờ 3 giây rồi thử lại...`);
+          await new Promise(r => setTimeout(r, 3000));
+        } else {
+          console.error(`❌ Lỗi gọi AI (Branch E):`, err?.response?.data || err.message);
+          break;
         }
       }
-
-      const assistantMessage =
-        aiResp?.data?.choices?.[0]?.message?.content || 'Không có kết quả.';
-      const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-
-      updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-      await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-    } catch (error) {
-      console.error('🔥 Lỗi Branch E:', error?.response?.data || error.message);
-      await replyToLark(
-        messageId,
-        'Hiện hệ thống AI đang quá tải, vui lòng thử lại sau ít phút.',
-        mentionUserId,
-        mentionUserName
-      );
+      retries--;
     }
 
-    res.status(200).send('ok');
-    return;
+    if (!aiResp?.data?.choices?.[0]?.message?.content) {
+      console.log('⚠ AI không trả về nội dung → báo lỗi người dùng');
+      await replyToLark(messageId, 'Hiện hệ thống AI đang quá tải hoặc không trả lời.', mentionUserId, mentionUserName);
+      return;
+    }
+
+    const assistantMessage =
+      aiResp.data.choices[0].message.content || 'Không có kết quả.';
+    const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+
+    console.log('💾 Lưu phản hồi AI vào bộ nhớ...');
+    updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+
+    console.log('📤 Gửi phản hồi về Lark...');
+    await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+
+  } catch (error) {
+    console.error('🔥 Lỗi Branch E:', error?.response?.data || error.message);
+    await replyToLark(
+      messageId,
+      'Hiện hệ thống AI đang quá tải, vui lòng thử lại sau ít phút.',
+      mentionUserId,
+      mentionUserName
+    );
   }
-
-  // fallback
-  res.status(200).send('ok');
-});
-
+  return;
+}
 
 /* ===========================================
    SECTION 15 — Housekeeping & Schedules
