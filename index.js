@@ -845,44 +845,51 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
-      /* ---- Branch E: Chat AI (text) ---- */
-      if (messageType === 'text') {
-        console.log('📌 Branch E: Chat AI');
-        if (!textAfterMention) return;
+/* ---- Branch E: Chat AI (text) ---- */
+if (messageType === 'text') {
+  console.log('📌 Branch E: Chat AI');
+  if (!textAfterMention) return;
 
-        try {
-          updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
-          const memory = conversationMemory.get(chatId) || [];
-          const formattedHistory = memory.map(m => (
-            m.role === 'user'
-              ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
-              : { role: 'assistant', content: `L-GPT: ${m.content}` }
-          ));
+  try {
+    updateConversationMemory(chatId, 'user', textAfterMention, mentionUserName);
+    const memory = conversationMemory.get(chatId) || [];
+    const formattedHistory = memory.map(m => (
+      m.role === 'user'
+        ? { role: 'user', content: `${m.senderName || 'User'}: ${m.content}` }
+        : { role: 'assistant', content: `L-GPT: ${m.content}` }
+    ));
 
-          // Call AI with retry
-          const aiResp = await callOpenRouter(
-            {
-              model: 'deepseek/deepseek-r1-0528:free',
-              messages: [
-                { role: 'system', content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
-                ...formattedHistory,
-                { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
-              ],
-              stream: false
-            },
-            'Branch E AI'
-          );
+    // Call AI with retry
+    const aiResp = await callOpenRouter(
+      {
+        model: 'deepseek/deepseek-r1-0528:free',
+        messages: [
+          { role: 'system', content: 'Bạn tên là thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích.' },
+          ...formattedHistory,
+          { role: 'user', content: `${mentionUserName}: ${textAfterMention}` }
+        ],
+        stream: false
+      },
+      'Branch E AI'
+    );
 
-          const assistantMessage = aiResp?.data?.choices?.[0]?.message?.content || 'Không có kết quả.';
-          const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
-          updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-        } catch (err) {
-          console.error('❌ Branch E error:', err?.response?.data || err?.message || err);
-          await replyToLark(messageId, 'Hiện hệ thống AI đang quá tải, vui lòng thử lại sau ít phút.', mentionUserId, mentionUserName);
-        }
-        return;
-      }
+    const assistantMessage = aiResp?.data?.choices?.[0]?.message?.content || 'Không có kết quả.';
+    const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
+
+    updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+
+    // ✅ Đưa mention lên đầu câu trả lời
+    const finalMessage = mentionUserId
+      ? `<at id=${mentionUserId}>${mentionUserName}</at> ${cleanMessage}`
+      : cleanMessage;
+
+    await replyToLark(messageId, finalMessage, mentionUserId, mentionUserName);
+  } catch (err) {
+    console.error('❌ Branch E error:', err?.response?.data || err?.message || err);
+    await replyToLark(messageId, 'Hiện hệ thống AI đang quá tải, vui lòng thử lại sau ít phút.', mentionUserId, mentionUserName);
+  }
+  return;
+}
     }
 
     return res.sendStatus(200);
