@@ -39,13 +39,15 @@ const SHEET_MAPPINGS = {
    SECTION 2 — Global constants
    =============================== */
 let lastB2Value = null;
-const SPREADSHEET_TOKEN = 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
-const SHEET_ID = '48e2fd';
+const SPREADSHEET_TOKEN = process.env.SPREADSHEET_TOKEN || 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
+const SHEET_ID = process.env.SHEET_ID || '48e2fd';
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
 const BOT_OPEN_ID = process.env.BOT_OPEN_ID;
+const BOT_SENDER_ID = process.env.BOT_SENDER_ID;
+const AI_MODEL = process.env.AI_MODEL || 'deepseek/deepseek-r1-0528:free';
 
 /* ===============================
    SECTION 3 — Runtime stores
@@ -68,14 +70,20 @@ app.use('/webhook-base', express.json({ limit: '10mb', timeout: 60000 }));
    ======================================== */
 function verifySignature(timestamp, nonce, body, signature) {
   const encryptKey = process.env.LARK_ENCRYPT_KEY;
-  if (!encryptKey) return false;
+  if (!encryptKey) {
+    console.error('LARK_ENCRYPT_KEY is not set');
+    return false;
+  }
   const raw = `${timestamp}${nonce}${encryptKey}${body}`;
   const hash = crypto.createHash('sha256').update(raw, 'utf8').digest('hex');
   return hash === signature;
 }
 
 function decryptMessage(encrypt) {
-  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY, 'utf-8');
+  const key = Buffer.from(process.env.LARK_ENCRYPT_KEY || '', 'utf-8');
+  if (key.length === 0) {
+    throw new Error('LARK_ENCRYPT_KEY is not set');
+  }
   const aesKey = crypto.createHash('sha256').update(key).digest();
   const data = Buffer.from(encrypt, 'base64');
   const iv = data.slice(0, 16);
@@ -105,11 +113,15 @@ async function getAppAccessToken() {
   try {
     const resp = await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`,
-      { app_id: process.env.LARK_APP_ID, app_secret: process.env.LARK_APP_SECRET },
+      { 
+        app_id: process.env.LARK_APP_ID, 
+        app_secret: process.env.LARK_APP_SECRET 
+      },
       { timeout: 20000 }
     );
     return resp.data.app_access_token;
-  } catch {
+  } catch (error) {
+    console.error('Error getting app access token:', error.message);
     throw new Error('Lỗi lấy token');
   }
 }
@@ -127,7 +139,9 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
       { msg_type: 'text', content: JSON.stringify(messageContent) },
       { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
     );
-  } catch {}
+  } catch (error) {
+    console.error('Error replying to Lark:', error.message);
+  }
 }
 
 /* ===================================================
@@ -157,7 +171,8 @@ async function extractFileContent(fileUrl, fileType) {
       return (result.data.text || '').trim();
     }
     return 'Không hỗ trợ loại file này.';
-  } catch {
+  } catch (error) {
+    console.error('Error extracting file content:', error.message);
     return 'Lỗi khi trích xuất nội dung file';
   }
 }
@@ -170,7 +185,10 @@ async function getTableMeta(baseId, tableId, token) {
     const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/meta`;
     const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 });
     return (resp.data.data.fields || []).map(f => ({ name: f.name, field_id: f.field_id }));
-  } catch { return []; }
+  } catch (error) {
+    console.error('Error getting table meta:', error.message);
+    return [];
+  }
 }
 
 async function getAllRows(baseId, tableId, token, requiredFields = []) {
@@ -189,7 +207,10 @@ async function getAllRows(baseId, tableId, token, requiredFields = []) {
       });
       rows.push(...(resp.data?.data?.items || []));
       pageToken = resp.data?.data?.page_token || '';
-    } catch { break; }
+    } catch (error) {
+      console.error('Error getting rows:', error.message);
+      break;
+    }
   } while (pageToken && rows.length < 200);
   global.lastRows = { baseId, tableId, rows };
   return rows;
@@ -204,6 +225,7 @@ async function getSheetData(spreadsheetToken, token, range = 'A:AK') {
       const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout });
       return resp?.data?.data?.valueRange?.values || [];
     } catch (err) {
+      console.error('Error getting sheet data:', err.message);
       if (attempt === maxRetries) return [];
       await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
     }
@@ -219,6 +241,7 @@ function colToIndex(col) {
   for (let i = 0; i < col.length; i++) idx = idx * 26 + (col.charCodeAt(i) - 64);
   return idx - 1;
 }
+
 function toNumber(v) {
   if (v === null || v === undefined) return 0;
   const s = String(v).trim().replace(/,/g, '');
@@ -231,21 +254,9 @@ function toNumber(v) {
    ========================================================== */
 
 const SALE_COL_MAP = { A:0,E:4,F:5,G:6,M:12,N:13,O:14,P:15,Q:16,AK:36 };
-let lastTotalStock = null; // giữ tổng stock lần trước
-let sendingTotalStockLock = false; // lock để tránh gửi song song
-let lastSalesMsgHash = null; // optional: tránh gửi msg sale giống hệt lặp lại
-
-function colToIndex(col) {
-  // giữ nguyên function colToIndex nếu bạn có sẵn; nếu không, dùng simple map:
-  // giả sử col là letter 'M','P','Q'...
-  return ('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.indexOf(col.toUpperCase()));
-}
-
-function toNumber(v) {
-  if (v === undefined || v === null || v === '') return 0;
-  const n = parseFloat(String(v).replace(/,/g, '')) ;
-  return isNaN(n) ? 0 : n;
-}
+let lastTotalStock = null;
+let sendingTotalStockLock = false;
+let lastSalesMsgHash = null;
 
 async function getSaleComparisonData(token, prevCol, currentCol) {
   const col = SALE_COL_MAP;
@@ -277,7 +288,6 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
         });
       }
 
-      // nếu chưa có rows đủ, đợi rồi thử lại
       await new Promise(r => setTimeout(r, 2000));
     } catch (err) {
       console.error('❌ getSaleComparisonData error attempt', attempt, err?.message || err);
@@ -362,7 +372,6 @@ async function analyzeSalesChange(token) {
   }
 }
 
-// Hàm an toàn: thử lại 3 lần nếu chưa có dữ liệu
 async function safeAnalyzeSalesChange(token) {
   let tries = 3;
   while (tries > 0) {
@@ -374,7 +383,6 @@ async function safeAnalyzeSalesChange(token) {
   return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
 }
 
-// Lấy tổng stock từ cột G
 async function getTotalStock(token) {
   try {
     const targetColumn = 'G';
@@ -393,7 +401,6 @@ async function getTotalStock(token) {
   }
 }
 
-// Gửi tin nhắn vào nhóm (dùng danh sách đã dedupe)
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
     const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
@@ -407,9 +414,7 @@ async function sendMessageToGroup(token, chatId, messageText) {
   }
 }
 
-// Kiểm tra thay đổi TotalStock và gửi tin nhắn
 async function checkTotalStockChange() {
-  // Nếu đang gửi, bỏ qua (tránh gửi 2 lần cùng lúc)
   if (sendingTotalStockLock) {
     console.log('⚠ checkTotalStockChange: đang có tiến trình gửi - bỏ qua lần này');
     return;
@@ -420,14 +425,11 @@ async function checkTotalStockChange() {
     const token = await getAppAccessToken();
     const currentTotalStock = await getTotalStock(token);
 
-    // Nếu giá trị thay đổi và lastTotalStock đã có (không phải lần chạy đầu)
     if (currentTotalStock !== null && currentTotalStock !== lastTotalStock && lastTotalStock !== null) {
       console.log(`🔄 TotalStock thay đổi: ${lastTotalStock} → ${currentTotalStock}`);
 
-      // Dedupe chat ids để tránh gửi nhiều lần cùng 1 chat
       const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
 
-      // Gửi thông báo Đã đổ Stock (1 lần cho mỗi chat)
       const stockMsg = `✅ Đã đổ Stock. Số lượng: ${currentTotalStock} thùng`;
       for (const chatId of uniqueGroupIds) {
         try {
@@ -437,11 +439,9 @@ async function checkTotalStockChange() {
         }
       }
 
-      // Gọi phân tích Sales và gửi (1 lần)
       const salesMsg = await safeAnalyzeSalesChange(token);
       if (salesMsg && typeof salesMsg === 'string') {
-        // Optional: tránh gửi salesMsg giống y hệt với lần trước (nếu bạn thích)
-        const hash = (s) => s ? String(s).slice(0,500) : ''; // simple hash (prefix)
+        const hash = (s) => s ? String(s).slice(0,500) : '';
         const h = hash(salesMsg);
         if (h !== lastSalesMsgHash) {
           for (const chatId of uniqueGroupIds) {
@@ -459,11 +459,9 @@ async function checkTotalStockChange() {
         console.log('ℹ analyzeSalesChange trả về rỗng/null → không gửi Sales message');
       }
     } else {
-      // Không thay đổi → không in log gửi, chỉ log debug
       console.log('ℹ checkTotalStockChange: Không có thay đổi TotalStock hoặc lần chạy đầu.');
     }
 
-    // Cập nhật lastTotalStock (dù có đổi hay không) để lần sau so sánh
     lastTotalStock = currentTotalStock;
   } catch (err) {
     console.error('❌ checkTotalStockChange error:', err?.message || err);
@@ -482,149 +480,6 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
   if (mem.length > 20) mem.shift();
 }
 
-/* =======================================================
-   SECTION 12 — Natural language → Sheet action (Plan)
-   ======================================================= */
-async function interpretSheetQuery(userMessage, columnData) {
-  try {
-    const prompt = `
-Bạn là trợ lý phân tích bảng. Tôi cung cấp:
-1) Câu hỏi user: """${userMessage}"""
-2) Danh sách cột: ${JSON.stringify(Object.keys(columnData))}
-Chỉ trả về JSON:
-{ "action": "value|sum|avg|percent_change|count", "target_column": "...", "match_column": "...", "match_value": "...", "note": "..." }
-`;
-    const aiResp = await axios.post(
-      'https://openrouter.ai/api/v1/chat/completions',
-      {
-        model: 'deepseek/deepseek-r1-0528:free',
-        messages: [
-          { role: 'system', content: 'Bạn là trợ lý AI chọn đúng cột từ header để tính nhanh.' },
-          { role: 'user', content: prompt }
-        ],
-        stream: false
-      },
-      { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 30000 }
-    );
-
-    const aiContent = aiResp.data?.choices?.[0]?.message?.content?.trim();
-    if (!aiContent) return null;
-    try { return JSON.parse(aiContent); }
-    catch {
-      const m = aiContent.match(/\{[\s\S]*\}/);
-      if (m) { try { return JSON.parse(m[0]); } catch { return null; } }
-      return null;
-    }
-  } catch (err) {
-    return null;
-  }
-}
-
-async function processPlanQuery(messageId, spreadsheetToken, userMessage, token, mentionUserId, mentionUserName) {
-  try {
-    const sheetData = await getSheetData(spreadsheetToken, token, 'A:AL');
-    if (!sheetData || !sheetData.length) {
-      await replyToLark(messageId, 'Không có dữ liệu.', mentionUserId, mentionUserName);
-      return;
-    }
-    const headers = sheetData[0].map(h => (h ? h.toString().trim() : ''));
-    const rows = sheetData.slice(1).map(r => r.map(c => (c == null ? '' : c.toString().trim())));
-    const headerToIndex = {}; headers.forEach((h,i)=> headerToIndex[h]=i);
-    const columnData = {}; headers.forEach((h,idx)=> columnData[h || `Column_${idx}`] = rows.map(r => r[idx] || ''));
-
-    const interpretation = await interpretSheetQuery(userMessage, columnData);
-    if (!interpretation || !interpretation.action || !interpretation.target_column) {
-      await replyToLark(messageId, 'Câu chưa rõ. Ví dụ: "Plan, hôm nay bán bao nhiêu thùng Lager".', mentionUserId, mentionUserName);
-      return;
-    }
-
-    const tcol = interpretation.target_column;
-    let targetColIdx = /^[A-Z]+$/.test(tcol) ? colToIndex(tcol) : headerToIndex[tcol];
-    const mcol = interpretation.match_column;
-    let matchColIdx = mcol ? (/^[A-Z]+$/.test(mcol) ? colToIndex(mcol) : headerToIndex[mcol]) : null;
-    const matchValue = interpretation.match_value;
-    const action = interpretation.action;
-
-    const parseNum = v => {
-      if (v === '' || v == null) return NaN;
-      const cleaned = v.toString().replace(/[^\d.\-]/g, '');
-      const n = parseFloat(cleaned);
-      return isNaN(n) ? NaN : n;
-    };
-
-    let resultText = '';
-    if (action === 'value') {
-      if (matchColIdx == null || matchValue == null) resultText = 'Thiếu điều kiện lọc.';
-      else if (targetColIdx == null) resultText = 'Không xác định cột.';
-      else {
-        const foundRow = rows.find(r =>
-          (r[matchColIdx] || '').toLowerCase().includes(String(matchValue).toLowerCase())
-        );
-        resultText = foundRow
-          ? `${headers[targetColIdx]} = ${foundRow[targetColIdx]}`
-          : `Không tìm thấy "${matchValue}".`;
-      }
-    } else if (['sum','avg','count'].includes(action)) {
-      if (targetColIdx == null) resultText = 'Không xác định cột.';
-      else {
-        let filtered = rows;
-        if (matchColIdx != null && matchValue != null) {
-          filtered = rows.filter(r => (r[matchColIdx] || '').toLowerCase().includes(String(matchValue).toLowerCase()));
-        }
-        const nums = filtered.map(r => parseNum(r[targetColIdx])).filter(n => !isNaN(n));
-        if (!nums.length) resultText = 'Không có số liệu.';
-        else {
-          if (action === 'sum') resultText = `Tổng ${headers[targetColIdx]}: ${nums.reduce((a,b)=>a+b,0)}`;
-          if (action === 'avg') resultText = `TB ${headers[targetColIdx]}: ${(nums.reduce((a,b)=>a+b,0)/nums.length).toFixed(2)}`;
-          if (action === 'count') resultText = `Số dòng: ${nums.length}`;
-        }
-      }
-    } else {
-      resultText = 'Không hỗ trợ.';
-    }
-
-    await replyToLark(messageId, resultText, mentionUserId, mentionUserName);
-  } catch (err) {
-    await replyToLark(messageId, 'Lỗi xử lý Plan.', mentionUserId, mentionUserName);
-  } finally {
-    pendingTasks.delete(messageId);
-  }
-}
-
-/* =======================================================
-   SECTION 13 — Bitable command handler (processBaseData)
-   ======================================================= */
-async function processBaseData(messageId, baseId, tableId, userMessage, token) {
-  try {
-    const fields = await getTableMeta(baseId, tableId, token);
-    const fieldNameById = Object.fromEntries(fields.map(f => [f.field_id, f.name]));
-    const items = await getAllRows(baseId, tableId, token);
-
-    if (!items.length) {
-      await replyToLark(messageId, 'Bảng trống.', null, null);
-      return;
-    }
-
-    const sample = items.slice(0, 3).map((it, idx) => {
-      const kv = Object.entries(it.fields || {})
-        .slice(0, 3)
-        .map(([fid, val]) => `${fieldNameById[fid] || fid}: ${Array.isArray(val) ? JSON.stringify(val) : val}`)
-        .join(' | ');
-      return `${idx + 1}) ${kv}`;
-    }).join('\n');
-
-    const msg =
-      `${items.length} dòng.\n` +
-      (sample ? `Mẫu:\n${sample}` : 'Không có mẫu.');
-
-    await replyToLark(messageId, msg, null, null);
-  } catch (err) {
-    await replyToLark(messageId, 'Lỗi đọc Base.', null, null);
-  } finally {
-    pendingTasks.delete(messageId);
-  }
-}
-
 /* ===========================================
    SECTION 14 — Webhook (ONLY on @mention) — FIXED
    =========================================== */
@@ -634,11 +489,18 @@ app.post('/webhook', async (req, res) => {
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
     const nonce = req.headers['x-lark-request-nonce'];
-    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) return res.sendStatus(401);
+    
+    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      console.error('Signature verification failed');
+      return res.sendStatus(401);
+    }
 
     let decryptedData = {};
-    try { decryptedData = decryptMessage(JSON.parse(bodyRaw).encrypt || ''); } catch (e) {
+    try { 
+      decryptedData = decryptMessage(JSON.parse(bodyRaw).encrypt || ''); 
+    } catch (e) {
       console.error('Decrypt error:', e);
+      return res.sendStatus(400);
     }
 
     if (decryptedData.header?.event_type === 'im.chat.member.bot.added_v1') {
@@ -662,21 +524,19 @@ app.post('/webhook', async (req, res) => {
       if (processedMessageIds.has(messageId)) return res.sendStatus(200);
       processedMessageIds.add(messageId);
 
-      if (senderId === (process.env.BOT_SENDER_ID || '')) return res.sendStatus(200);
+      if (senderId === BOT_SENDER_ID) return res.sendStatus(200);
 
       const botMentioned = mentions.some(m =>
         (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
         (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
       );
       
-      // Chỉ xử lý khi bot được mention trong group hoặc chat private
       if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
 
-      res.sendStatus(200); // ACK sớm
+      res.sendStatus(200);
 
       const token = await getAppAccessToken();
 
-      // Lấy tên người gửi
       let mentionUserName = 'Unknown User';
       try {
         const tmpName = await getUserInfo(senderId, token);
@@ -686,35 +546,29 @@ app.post('/webhook', async (req, res) => {
       }
       const mentionUserId = senderId;
 
-      // Lấy và xử lý nội dung tin nhắn
       let messageContent = '';
       try {
         const parsedContent = JSON.parse(message.content);
         messageContent = parsedContent.text || '';
         
-        // Loại bỏ các tag @mention và làm sạch nội dung
         messageContent = messageContent
           .replace(/<at.*?<\/at>/g, '')
-          .replace(/@L-GPT/gi, 'bạn') // Thay @L-GPT bằng 'bạn'
+          .replace(/@L-GPT/gi, 'bạn')
           .trim();
       } catch {
         messageContent = '';
       }
 
-      // Chỉ xử lý tin nhắn text có nội dung
       if (messageType === 'text' && messageContent) {
         try {
-          // Cập nhật bộ nhớ hội thoại
           updateConversationMemory(chatId, 'user', messageContent, mentionUserName);
           const memory = conversationMemory.get(chatId) || [];
           
-          // Chuẩn bị lịch sử hội thoại
           const formattedHistory = memory.map(m => ({
             role: m.role,
             content: m.content
           }));
 
-          // System prompt cải tiến - rõ ràng về chủ thể
           const systemPrompt = `Bạn là L-GPT (được mention là @L-GPT), một trợ lý ảo thông minh. 
 Khi người dùng nhắc đến @L-GPT hoặc trực tiếp trò chuyện trong cuộc hội thoại này, 
 họ đang nói chuyện với bạn. Bạn hãy trả lời một cách thân thiện, hữu ích và phù hợp với ngữ cảnh.
@@ -731,7 +585,7 @@ Quy tắc trả lời:
             const aiResp = await axios.post(
               'https://openrouter.ai/api/v1/chat/completions',
               {
-                model: 'deepseek/deepseek-r1-0528:free',
+                model: AI_MODEL,
                 messages: [
                   { role: 'system', content: systemPrompt },
                   ...formattedHistory,
@@ -754,17 +608,13 @@ Quy tắc trả lời:
             
           } catch (err) {
             console.error('AI API error:', err?.response?.data || err.message);
-            
-            // Fallback response nếu API lỗi
             assistantMessage = 'Hiện tại tôi đang gặp sự cố kỹ thuật. Bạn vui lòng thử lại sau nhé!';
           }
 
-          // Làm sạch và format tin nhắn trả lời
           const cleanMessage = assistantMessage
             .replace(/[\*_`~]/g, '')
             .trim();
 
-          // Cập nhật bộ nhớ và gửi phản hồi
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
           
@@ -806,6 +656,7 @@ setInterval(() => {
    SECTION 16 — Start server + stock watcher
    =========================================== */
 app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
   checkTotalStockChange();
   setInterval(checkTotalStockChange, 60 * 1000);
 });
