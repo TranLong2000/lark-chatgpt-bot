@@ -735,6 +735,33 @@ app.post('/webhook', async (req, res) => {
         return;
       }
 
+      /* ---- Helper: AI Call with Retry and Fallback ---- */
+      async function callAIWithRetry(messages, model = 'deepseek/deepseek-r1-0528:free', retries = 3) {
+        for (let i = 0; i < retries; i++) {
+          try {
+            const aiResp = await axios.post(
+              'https://openrouter.ai/api/v1/chat/completions',
+              {
+                model,
+                messages,
+                stream: false
+              },
+              { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+            );
+            return aiResp;
+          } catch (err) {
+            if (err.response && err.response.status === 429 && i < retries - 1) {
+              const delay = 1000 * Math.pow(2, i); // Exponential backoff: 1s, 2s, 4s
+              console.log(`Rate limit hit, retrying after ${delay}ms...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+              throw err;
+            }
+          }
+        }
+        throw new Error('Max retries exceeded');
+      }
+
       /* ---- Branch D: Reply vào file ---- */
       if (messageType === 'post' && message.parent_id) {
         const pendingFile = pendingFiles.get(chatId);
@@ -759,22 +786,25 @@ app.post('/webhook', async (req, res) => {
               ));
               let assistantMessage = '';
               try {
-                const aiResp = await axios.post(
-                  'https://openrouter.ai/api/v1/chat/completions',
-                  {
-                    model: 'deepseek/deepseek-r1-0528:free',
-                    messages: [
-                      { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
-                      ...formattedHistory,
-                      { role: 'user', content: combined }  // Removed mentionUserName prefix
-                    ],
-                    stream: false
-                  },
-                  { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-                );
+                let aiResp = await callAIWithRetry([
+                  { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
+                  ...formattedHistory,
+                  { role: 'user', content: combined }  // Removed mentionUserName prefix
+                ]);
+                // Fallback if primary fails
+                if (!aiResp) {
+                  aiResp = await callAIWithRetry([
+                    { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
+                    ...formattedHistory,
+                    { role: 'user', content: combined }
+                  ], 'deepseek/deepseek-chat-v3-0324:free', 1); // Fallback model, 1 try
+                }
                 assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
               } catch (err) {
                 console.error('AI API error:', err?.response?.data || err.message);
+                await replyToLark(messageId, 'Tạm thời quá tải, thử lại sau.', mentionUserId, mentionUserName);
+                pendingFiles.delete(chatId);
+                return;
               }
               const clean = assistantMessage.replace(/[\*_`~]/g, '').trim();
               updateConversationMemory(chatId, 'assistant', clean, 'L-GPT');
@@ -804,22 +834,24 @@ app.post('/webhook', async (req, res) => {
           ));
           let assistantMessage = 'Không có kết quả.';
           try {
-            const aiResp = await axios.post(
-              'https://openrouter.ai/api/v1/chat/completions',
-              {
-                model: 'deepseek/deepseek-r1-0528:free',
-                messages: [
-                  { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
-                  ...formattedHistory,
-                  { role: 'user', content: textAfterMention }  // Removed mentionUserName prefix
-                ],
-                stream: false
-              },
-              { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' }, timeout: 20000 }
-            );
+            let aiResp = await callAIWithRetry([
+              { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
+              ...formattedHistory,
+              { role: 'user', content: textAfterMention }  // Removed mentionUserName prefix
+            ]);
+            // Fallback if primary fails
+            if (!aiResp) {
+              aiResp = await callAIWithRetry([
+                { role: 'system', content: 'Bạn là L-GPT, tên thư ký San San: luôn nghe lời sếp tên là Tran Long, đáng yêu nhưng chat ngắn gọn, súc tích. Người dùng đang nói chuyện trực tiếp với bạn, và các tin nhắn từ họ là dành cho bạn.' },
+                ...formattedHistory,
+                { role: 'user', content: textAfterMention }
+              ], 'deepseek/deepseek-chat-v3-0324:free', 1); // Fallback model, 1 try
+            }
             assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
           } catch (err) {
             console.error('AI API error:', err?.response?.data || err.message);
+            await replyToLark(messageId, 'Tạm thời quá tải, thử lại sau.', mentionUserId, mentionUserName);
+            return;
           }
           const cleanMessage = assistantMessage.replace(/[\*_`~]/g, '').trim();
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
@@ -838,7 +870,6 @@ app.post('/webhook', async (req, res) => {
     return res.sendStatus(500);
   }
 });
-
 /* ===========================================
    SECTION 15 — Housekeeping & Schedules
    =========================================== */
