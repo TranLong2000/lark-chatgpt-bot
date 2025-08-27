@@ -595,7 +595,7 @@ Hãy luôn gọi họ bằng tên thật này thay vì bất kỳ tên userX nà
                 ],
                 stream: false,
                 temperature: 0.7,
-                max_tokens: 1000
+                max_tokens: 5000
               },
               { 
                 headers: { 
