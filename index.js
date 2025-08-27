@@ -532,188 +532,214 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
   if (mem.length > 20) mem.shift();
 }
 
-/* =========================================== SECTION 14 — Webhook (ONLY on @mention) — OPTIMIZED TOKEN =========================================== */
+/* ===========================================
+   SECTION 14 — Webhook (ONLY on @mention) — OPTIMIZED TOKEN
+   =========================================== */
 app.post('/webhook', async (req, res) => {
-    try {
-        const bodyRaw = req.body.toString('utf8');
-        const signature = req.headers['x-lark-signature'];
-        const timestamp = req.headers['x-lark-request-timestamp'];
-        const nonce = req.headers['x-lark-request-nonce'];
+  try {
+    const bodyRaw = req.body.toString('utf8');
+    const signature = req.headers['x-lark-signature'];
+    const timestamp = req.headers['x-lark-request-timestamp'];
+    const nonce = req.headers['x-lark-request-nonce'];
 
-        if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
-            console.error('Signature verification failed');
-            return res.sendStatus(401);
-        }
-
-        let decryptedData = {};
-        try {
-            decryptedData = decryptMessage(JSON.parse(bodyRaw).encrypt || '');
-        } catch (e) {
-            console.error('Decrypt error:', e);
-            return res.sendStatus(400);
-        }
-
-        if (decryptedData.header?.event_type === 'im.chat.member.bot.added_v1') {
-            return res.sendStatus(200);
-        }
-
-        if (decryptedData.header?.event_type === 'im.message.receive_v1') {
-            const message = decryptedData.event.message;
-            const messageId = message.message_id;
-            const chatId = message.chat_id;
-            const chatType = message.chat_type;
-            const messageType = message.message_type;
-            const senderId = decryptedData.event.sender?.sender_id?.open_id || null;
-            const mentions = message.mentions || [];
-
-            if (!senderId) {
-                console.warn('No senderId found in message');
-                return res.sendStatus(200);
-            }
-            if (processedMessageIds.has(messageId)) return res.sendStatus(200);
-            processedMessageIds.add(messageId);
-            if (senderId === BOT_SENDER_ID) return res.sendStatus(200);
-
-            const botMentioned = mentions.some(m =>
-                (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
-                (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
-            );
-            if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
-
-            res.sendStatus(200);
-
-            const token = await getAppAccessToken();
-
-            let mentionUserName = 'Unknown User';
-            try {
-                const tmpName = await getUserInfo(senderId, token);
-                if (tmpName) mentionUserName = tmpName;
-            } catch (err) {
-                console.error('getUserInfo error:', err?.response?.data || err.message);
-            }
-
-            const mentionUserId = senderId;
-
-            let messageContent = '';
-            try {
-                const parsedContent = JSON.parse(message.content);
-                messageContent = parsedContent.text || '';
-                messageContent = messageContent
-                    .replace(/<at.*?<\/at>/g, '')
-                    .replace(/@L-GPT/gi, 'bạn')
-                    .trim();
-            } catch {
-                messageContent = '';
-            }
-
-            // ✅ Nếu chứa từ khóa rebate -> đọc dữ liệu Sheet và trả lời luôn
-            if (messageType === 'text' && /rebate/i.test(messageContent)) {
-                try {
-                    const sheetToken = process.env.LARK_SHEET_TOKEN; // Sheet bạn đã set ENV
-                    const resp = await axios.get(
-                        `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${sheetToken}/values`,
-                        { headers: { Authorization: `Bearer ${token}` } }
-                    );
-                    const values = resp.data?.data?.valueRange?.values || [];
-                    let replyText = "Dữ liệu rebate từ Sheet:\n";
-                    values.forEach(row => {
-                        replyText += row.join(" | ") + "\n";
-                    });
-                    await replyToLark(messageId, replyText, mentionUserId, mentionUserName);
-                } catch (err) {
-                    console.error("Lỗi đọc sheet:", err?.response?.data || err.message);
-                    await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi không thể đọc dữ liệu rebate.`, mentionUserId, mentionUserName);
-                }
-                return;
-            }
-
-            // ✅ Nếu không phải rebate -> chạy AI như cũ
-            if (messageType === 'text' && messageContent) {
-                try {
-                    // === Giới hạn bộ nhớ hội thoại ===
-                    const MAX_HISTORY = 10;
-                    updateConversationMemory(chatId, 'user', messageContent, mentionUserName);
-                    let memory = conversationMemory.get(chatId) || [];
-
-                    if (memory.length > MAX_HISTORY) {
-                        const oldPart = memory.slice(0, memory.length - MAX_HISTORY);
-                        const oldText = oldPart.map(m => `${m.role}: ${m.content}`).join('\n');
-                        try {
-                            const summaryResp = await axios.post(
-                                'https://openrouter.ai/api/v1/chat/completions',
-                                {
-                                    model: AI_MODEL,
-                                    messages: [
-                                        { role: 'system', content: 'Tóm tắt đoạn hội thoại sau thành 1-2 câu ngắn, giữ nguyên ý chính:' },
-                                        { role: 'user', content: oldText }
-                                    ],
-                                    stream: false,
-                                    temperature: 0.3,
-                                    max_tokens: 200
-                                },
-                                { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` } }
-                            );
-                            const summaryText = summaryResp.data.choices?.[0]?.message?.content?.trim() || '';
-                            memory = [{ role: 'system', content: `Tóm tắt trước đó: ${summaryText}` }, ...memory.slice(-MAX_HISTORY)];
-                            conversationMemory.set(chatId, memory);
-                        } catch (e) {
-                            console.error('Summary error:', e.message);
-                            memory = memory.slice(-MAX_HISTORY);
-                            conversationMemory.set(chatId, memory);
-                        }
-                    }
-
-                    const formattedHistory = memory.map(m => ({ role: m.role, content: m.content }));
-                    const systemPrompt = `Bạn là L-GPT, trợ lý AI thân thiện. Luôn gọi người dùng là "${mentionUserName}", không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự nhiên.`;
-
-                    let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
-                    try {
-                        const aiResp = await axios.post(
-                            'https://openrouter.ai/api/v1/chat/completions',
-                            {
-                                model: AI_MODEL,
-                                messages: [
-                                    { role: 'system', content: systemPrompt },
-                                    ...formattedHistory,
-                                    { role: 'user', content: messageContent }
-                                ],
-                                stream: false,
-                                temperature: 0.7,
-                                max_tokens: 5000
-                            },
-                            {
-                                headers: {
-                                    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                                    'Content-Type': 'application/json'
-                                },
-                                timeout: 30000
-                            }
-                        );
-                        assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
-                        if (assistantMessage.match(/user\d+/i)) {
-                            assistantMessage = assistantMessage.replace(/user\d+/gi, mentionUserName);
-                        }
-                    } catch (err) {
-                        console.error('AI API error:', err?.response?.data || err.message);
-                        assistantMessage = `Hiện tại tôi đang gặp sự cố kỹ thuật. ${mentionUserName} vui lòng thử lại sau nhé!`;
-                    }
-
-                    const cleanMessage = assistantMessage.replace(/[\*_~]/g, '').trim();
-                    updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-                    await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
-                } catch (err) {
-                    console.error('Text process error:', err);
-                    await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi gặp lỗi khi xử lý tin nhắn của bạn.`, mentionUserId, mentionUserName);
-                }
-                return;
-            }
-        }
-
-        return res.sendStatus(200);
-    } catch (error) {
-        console.error('Webhook global error:', error);
-        return res.sendStatus(500);
+    if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
+      console.error('Signature verification failed');
+      return res.sendStatus(401);
     }
+
+    let decryptedData = {};
+    try {
+      decryptedData = decryptMessage(JSON.parse(bodyRaw).encrypt || '');
+    } catch (e) {
+      console.error('Decrypt error:', e);
+      return res.sendStatus(400);
+    }
+
+    if (decryptedData.header?.event_type === 'im.chat.member.bot.added_v1') {
+      return res.sendStatus(200);
+    }
+
+    if (decryptedData.header?.event_type === 'im.message.receive_v1') {
+      const message = decryptedData.event.message;
+      const messageId = message.message_id;
+      const chatId = message.chat_id;
+      const chatType = message.chat_type;
+      const messageType = message.message_type;
+      const senderId = decryptedData.event.sender?.sender_id?.open_id || null;
+      const mentions = message.mentions || [];
+
+      if (!senderId) {
+        console.warn('No senderId found in message');
+        return res.sendStatus(200);
+      }
+
+      if (processedMessageIds.has(messageId)) return res.sendStatus(200);
+      processedMessageIds.add(messageId);
+
+      if (senderId === BOT_SENDER_ID) return res.sendStatus(200);
+
+      const botMentioned = mentions.some(m =>
+        (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
+        (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
+      );
+
+      if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
+
+      // Trả 200 sớm để tránh timeout của Lark
+      res.sendStatus(200);
+
+      const token = await getAppAccessToken();
+
+      let mentionUserName = 'Unknown User';
+      try {
+        const tmpName = await getUserInfo(senderId, token);
+        if (tmpName) mentionUserName = tmpName;
+      } catch (err) {
+        console.error('getUserInfo error:', err?.response?.data || err.message);
+      }
+      const mentionUserId = senderId;
+
+      let messageContent = '';
+      try {
+        const parsedContent = JSON.parse(message.content);
+        messageContent = (parsedContent.text || '')
+          .replace(/<at.*?<\/at>/g, '')
+          .replace(/@L-GPT/gi, 'bạn')
+          .trim();
+      } catch {
+        messageContent = '';
+      }
+
+      // ===================== REBATE HANDLER (đặt TRƯỚC khi gọi AI) =====================
+      // Khi user gõ đúng "check rebate" -> đọc A1 từ sheet rebate và gửi tới GROUP_CHAT_IDS
+      if (messageType === 'text' && messageContent && messageContent.trim().toLowerCase() === 'check rebate') {
+        try {
+          const range = 'A1:A1';
+          // Dùng đúng token/id như Section 10
+          const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
+          const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
+          const values = resp.data?.data?.valueRange?.values || [];
+          const rebateValue = values[0]?.[0] != null ? String(values[0][0]) : '';
+
+          if (!rebateValue) {
+            await replyToLark(messageId, `Không tìm thấy giá trị tại ô A1.`, mentionUserId, mentionUserName);
+          } else {
+            // Gửi tới tất cả group đã cấu hình
+            const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
+            for (const gid of uniqueGroupIds) {
+              try {
+                await sendMessageToGroup(token, gid, rebateValue); // nội dung CHỈ là A1
+              } catch (e) {
+                console.error('❌ Lỗi gửi rebate tới', gid, e?.response?.data || e?.message || e);
+              }
+            }
+          }
+        } catch (e) {
+          console.error('❌ Rebate read error:', e?.response?.data || e?.message || e);
+          await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi không thể đọc dữ liệu rebate.`, mentionUserId, mentionUserName);
+        }
+        return; // DỪNG ở đây, không chạy AI
+      }
+      // =================== HẾT REBATE HANDLER ===================
+
+      // =================== CHAT AI (giữ nguyên logic tối ưu token) ===================
+      if (messageType === 'text' && messageContent) {
+        try {
+          const MAX_HISTORY = 10; // Chỉ giữ 10 lượt hội thoại gần nhất
+          updateConversationMemory(chatId, 'user', messageContent, mentionUserName);
+          let memory = conversationMemory.get(chatId) || [];
+
+          // Tóm tắt phần cũ nếu dài
+          if (memory.length > MAX_HISTORY) {
+            const oldPart = memory.slice(0, memory.length - MAX_HISTORY);
+            const oldText = oldPart.map(m => `${m.role}: ${m.content}`).join('\n');
+
+            try {
+              const summaryResp = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                  model: AI_MODEL,
+                  messages: [
+                    { role: 'system', content: 'Tóm tắt đoạn hội thoại sau thành 1-2 câu ngắn, giữ nguyên ý chính:' },
+                    { role: 'user', content: oldText }
+                  ],
+                  stream: false,
+                  temperature: 0.3,
+                  max_tokens: 200
+                },
+                { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` } }
+              );
+
+              const summaryText = summaryResp.data.choices?.[0]?.message?.content?.trim() || '';
+              memory = [{ role: 'system', content: `Tóm tắt trước đó: ${summaryText}` }, ...memory.slice(-MAX_HISTORY)];
+              conversationMemory.set(chatId, memory);
+            } catch (e) {
+              console.error('Summary error:', e.message);
+              memory = memory.slice(-MAX_HISTORY);
+              conversationMemory.set(chatId, memory);
+            }
+          }
+
+          const formattedHistory = memory.map(m => ({ role: m.role, content: m.content }));
+
+          const systemPrompt = `Bạn là L-GPT, trợ lý AI thân thiện. 
+Luôn gọi người dùng là "${mentionUserName}", 
+không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự nhiên.`;
+
+          let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
+
+          try {
+            const aiResp = await axios.post(
+              'https://openrouter.ai/api/v1/chat/completions',
+              {
+                model: AI_MODEL,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  ...formattedHistory,
+                  { role: 'user', content: messageContent }
+                ],
+                stream: false,
+                temperature: 0.7,
+                max_tokens: 5000
+              },
+              {
+                headers: {
+                  Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+                  'Content-Type': 'application/json'
+                },
+                timeout: 30000
+              }
+            );
+
+            assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
+
+            if (assistantMessage.match(/user\d+/i)) {
+              assistantMessage = assistantMessage.replace(/user\d+/gi, mentionUserName);
+            }
+          } catch (err) {
+            console.error('AI API error:', err?.response?.data || err.message);
+            assistantMessage = `Hiện tại tôi đang gặp sự cố kỹ thuật. ${mentionUserName} vui lòng thử lại sau nhé!`;
+          }
+
+          const cleanMessage = assistantMessage.replace(/[\*_\`~]/g, '').trim();
+
+          updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+
+        } catch (err) {
+          console.error('Text process error:', err);
+          await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi gặp lỗi khi xử lý tin nhắn của bạn.`, mentionUserId, mentionUserName);
+        }
+        return;
+      }
+      // =================== HẾT CHAT AI ===================
+    }
+
+    return res.sendStatus(200);
+  } catch (error) {
+    console.error('Webhook global error:', error);
+    return res.sendStatus(500);
+  }
 });
 
 
