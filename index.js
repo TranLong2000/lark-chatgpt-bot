@@ -533,7 +533,7 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
 }
 
 /* ===========================================
-   SECTION 14 — Webhook (ONLY on @mention) — OPTIMIZED TOKEN
+   SECTION 14 — Webhook (ONLY on @mention) — OPTIMIZED TOKEN + REBATE CMD
    =========================================== */
 app.post('/webhook', async (req, res) => {
   try {
@@ -543,7 +543,7 @@ app.post('/webhook', async (req, res) => {
     const nonce = req.headers['x-lark-request-nonce'];
 
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
-      console.error('Signature verification failed');
+      console.error('[Webhook] ❌ Signature verification failed');
       return res.sendStatus(401);
     }
 
@@ -551,11 +551,12 @@ app.post('/webhook', async (req, res) => {
     try {
       decryptedData = decryptMessage(JSON.parse(bodyRaw).encrypt || '');
     } catch (e) {
-      console.error('Decrypt error:', e);
+      console.error('[Webhook] ❌ Decrypt error:', e);
       return res.sendStatus(400);
     }
 
     if (decryptedData.header?.event_type === 'im.chat.member.bot.added_v1') {
+      console.log('[Webhook] Bot added to chat → 200');
       return res.sendStatus(200);
     }
 
@@ -568,24 +569,38 @@ app.post('/webhook', async (req, res) => {
       const senderId = decryptedData.event.sender?.sender_id?.open_id || null;
       const mentions = message.mentions || [];
 
+      console.log('[Webhook] ▶️ Incoming message', {
+        messageId, chatId, chatType, messageType, senderId
+      });
+
       if (!senderId) {
-        console.warn('No senderId found in message');
+        console.warn('[Webhook] ⚠ No senderId found in message');
         return res.sendStatus(200);
       }
 
-      if (processedMessageIds.has(messageId)) return res.sendStatus(200);
+      if (processedMessageIds.has(messageId)) {
+        console.log('[Webhook] 🔁 Duplicate message, ignore', messageId);
+        return res.sendStatus(200);
+      }
       processedMessageIds.add(messageId);
 
-      if (senderId === BOT_SENDER_ID) return res.sendStatus(200);
+      // Tránh bot tự phản hồi chính mình
+      if (senderId === BOT_SENDER_ID) {
+        console.log('[Webhook] 🛑 Message from bot itself, ignore');
+        return res.sendStatus(200);
+      }
 
       const botMentioned = mentions.some(m =>
         (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
         (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
       );
 
-      if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
+      if (chatType === 'group' && !botMentioned) {
+        console.log('[Webhook] ℹ Group msg without @mention → ignore');
+        return res.sendStatus(200);
+      }
 
-      // Trả 200 sớm để tránh timeout của Lark
+      // Trả 200 sớm để tránh timeout
       res.sendStatus(200);
 
       const token = await getAppAccessToken();
@@ -595,66 +610,96 @@ app.post('/webhook', async (req, res) => {
         const tmpName = await getUserInfo(senderId, token);
         if (tmpName) mentionUserName = tmpName;
       } catch (err) {
-        console.error('getUserInfo error:', err?.response?.data || err.message);
+        console.error('[Webhook] ❌ getUserInfo error:', err?.response?.data || err.message);
       }
       const mentionUserId = senderId;
 
+      // Parse content
       let messageContent = '';
       try {
         const parsedContent = JSON.parse(message.content);
-        messageContent = (parsedContent.text || '')
-          .replace(/<at.*?<\/at>/g, '')
-          .replace(/@L-GPT/gi, 'bạn')
+        messageContent = parsedContent.text || '';
+        messageContent = messageContent
+          .replace(/<at.*?<\/at>/g, '')      // bỏ tag mention
+          .replace(/@L-GPT/gi, 'bạn')       // thay tên bot nếu ai gõ tay
           .trim();
       } catch {
         messageContent = '';
       }
 
-      // ===================== REBATE HANDLER (đặt TRƯỚC khi gọi AI) =====================
-      // Khi user gõ đúng "check rebate" -> đọc A1 từ sheet rebate và gửi tới GROUP_CHAT_IDS
-      if (messageType === 'text' && messageContent && messageContent.trim().toLowerCase() === 'check rebate') {
-        try {
-          const range = 'A1:A1';
-          // Dùng đúng token/id như Section 10
-          const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
-          const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
-          const values = resp.data?.data?.valueRange?.values || [];
-          const rebateValue = values[0]?.[0] != null ? String(values[0][0]) : '';
+      // Log nội dung đã chuẩn hóa
+      console.log('[Webhook] 📨 Text after cleanup:', JSON.stringify(messageContent));
 
-          if (!rebateValue) {
-            await replyToLark(messageId, `Không tìm thấy giá trị tại ô A1.`, mentionUserId, mentionUserName);
-          } else {
-            // Gửi tới tất cả group đã cấu hình
-            const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
-            for (const gid of uniqueGroupIds) {
-              try {
-                await sendMessageToGroup(token, gid, rebateValue); // nội dung CHỈ là A1
-              } catch (e) {
-                console.error('❌ Lỗi gửi rebate tới', gid, e?.response?.data || e?.message || e);
+      // ===================== REBATE HANDLER (ĐẶT TRƯỚC KHI GỌI AI) =====================
+      if (messageType === 'text' && messageContent) {
+        // Chuẩn hóa để so khớp lệnh: bỏ dấu câu cuối, trim, lowercase
+        const normalized = messageContent.replace(/[.!?…]+$/g, '').trim().toLowerCase();
+        const isCheckRebate = /^\s*check\s+rebate\s*$/.test(normalized);
+
+        console.log('[Rebate] Check command?', { normalized, isCheckRebate });
+
+        if (isCheckRebate) {
+          try {
+            const range = 'A1:A1';
+            const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
+            console.log('[Rebate] 🔎 Fetching A1 from:', { urlMasked: url.replace(/(spreadsheets\/)[^/]+/, '$1***'), range,
+              sheetToken: '***masked***', sheetId: SHEET_ID_REBATE });
+
+            const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
+            const values = resp?.data?.data?.valueRange?.values || [];
+            console.log('[Rebate] ✅ Raw values:', JSON.stringify(values));
+
+            const rebateValue = values[0]?.[0] != null ? String(values[0][0]) : '';
+
+            if (!rebateValue) {
+              console.warn('[Rebate] ⚠ A1 empty or not found');
+              await replyToLark(messageId, `Không tìm thấy giá trị tại ô A1.`, mentionUserId, mentionUserName);
+            } else {
+              console.log('[Rebate] 📤 Will send A1 to GROUP_CHAT_IDS');
+
+              const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
+                ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
+                : [];
+
+              console.log('[Rebate] Target groups:', uniqueGroupIds);
+
+              for (const gid of uniqueGroupIds) {
+                try {
+                  await sendMessageToGroup(token, gid, rebateValue);
+                  console.log('[Rebate] ✅ Sent to group:', gid);
+                } catch (e) {
+                  console.error('[Rebate] ❌ Send to group failed:', gid, e?.response?.data || e?.message || e);
+                }
               }
+
+              // (tuỳ chọn) Phản hồi tại thread hiện tại để xác nhận đã gửi
+              await replyToLark(messageId, `Đã gửi rebate A1 tới nhóm: ${uniqueGroupIds.join(', ')}`, mentionUserId, mentionUserName);
             }
+          } catch (e) {
+            console.error('[Rebate] ❌ Read error:', e?.response?.data || e?.message || e);
+            await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi không thể đọc dữ liệu rebate.`, mentionUserId, mentionUserName);
           }
-        } catch (e) {
-          console.error('❌ Rebate read error:', e?.response?.data || e?.message || e);
-          await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi không thể đọc dữ liệu rebate.`, mentionUserId, mentionUserName);
+          console.log('[Rebate] ⛔ Skip AI because rebate command matched');
+          return; // DỪNG HẲN — KHÔNG GỌI AI
         }
-        return; // DỪNG ở đây, không chạy AI
       }
       // =================== HẾT REBATE HANDLER ===================
 
       // =================== CHAT AI (giữ nguyên logic tối ưu token) ===================
       if (messageType === 'text' && messageContent) {
         try {
+          // === Giới hạn bộ nhớ hội thoại ===
           const MAX_HISTORY = 10; // Chỉ giữ 10 lượt hội thoại gần nhất
           updateConversationMemory(chatId, 'user', messageContent, mentionUserName);
           let memory = conversationMemory.get(chatId) || [];
 
-          // Tóm tắt phần cũ nếu dài
+          // Nếu bộ nhớ quá dài -> tóm tắt phần cũ
           if (memory.length > MAX_HISTORY) {
             const oldPart = memory.slice(0, memory.length - MAX_HISTORY);
             const oldText = oldPart.map(m => `${m.role}: ${m.content}`).join('\n');
 
             try {
+              console.log('[AI] ✂️ Summarizing old context, tokens reduce');
               const summaryResp = await axios.post(
                 'https://openrouter.ai/api/v1/chat/completions',
                 {
@@ -673,8 +718,9 @@ app.post('/webhook', async (req, res) => {
               const summaryText = summaryResp.data.choices?.[0]?.message?.content?.trim() || '';
               memory = [{ role: 'system', content: `Tóm tắt trước đó: ${summaryText}` }, ...memory.slice(-MAX_HISTORY)];
               conversationMemory.set(chatId, memory);
+              console.log('[AI] ✅ Summary updated');
             } catch (e) {
-              console.error('Summary error:', e.message);
+              console.error('[AI] ❌ Summary error:', e.message);
               memory = memory.slice(-MAX_HISTORY);
               conversationMemory.set(chatId, memory);
             }
@@ -688,6 +734,7 @@ không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự
 
           let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
 
+          console.log('[AI] 🚀 Calling model for message:', messageId);
           try {
             const aiResp = await axios.post(
               'https://openrouter.ai/api/v1/chat/completions',
@@ -712,22 +759,28 @@ không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự
             );
 
             assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
+            console.log('[AI] ✅ Got response length:', assistantMessage?.length);
 
+            // Thay userX bằng tên thật
             if (assistantMessage.match(/user\d+/i)) {
               assistantMessage = assistantMessage.replace(/user\d+/gi, mentionUserName);
             }
           } catch (err) {
-            console.error('AI API error:', err?.response?.data || err.message);
+            console.error('[AI] ❌ API error:', err?.response?.data || err.message);
             assistantMessage = `Hiện tại tôi đang gặp sự cố kỹ thuật. ${mentionUserName} vui lòng thử lại sau nhé!`;
           }
 
-          const cleanMessage = assistantMessage.replace(/[\*_\`~]/g, '').trim();
+          const cleanMessage = assistantMessage
+            .replace(/[\*_\`~]/g, '')
+            .trim();
 
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
+
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
+          console.log('[AI] 📤 Replied to user for message:', messageId);
 
         } catch (err) {
-          console.error('Text process error:', err);
+          console.error('[Webhook] ❌ Text process error:', err);
           await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi gặp lỗi khi xử lý tin nhắn của bạn.`, mentionUserId, mentionUserName);
         }
         return;
@@ -737,7 +790,7 @@ không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự
 
     return res.sendStatus(200);
   } catch (error) {
-    console.error('Webhook global error:', error);
+    console.error('[Webhook] ❌ Global error:', error);
     return res.sendStatus(500);
   }
 });
