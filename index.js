@@ -634,11 +634,13 @@ app.post('/webhook', async (req, res) => {
       if (messageType === 'text' && messageContent) {
         // Chuẩn hóa để so khớp lệnh: bỏ dấu câu cuối, trim, lowercase
         const normalized = messageContent.replace(/[.!?…]+$/g, '').trim().toLowerCase();
-        const isCheckRebate = /^\s*check\s+rebate\s*$/.test(normalized);
+        const isCheckRebate = /^\s*check\s+rebate\b/.test(normalized);
 
+        console.log('[Rebate] Normalized command for check:', normalized);
         console.log('[Rebate] Check command?', { normalized, isCheckRebate });
 
         if (isCheckRebate) {
+          console.log('[Rebate] ✅ Command matched, processing rebate...');
           try {
             const range = 'A1:A1';
             const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
@@ -647,7 +649,7 @@ app.post('/webhook', async (req, res) => {
 
             const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
             const values = resp?.data?.data?.valueRange?.values || [];
-            console.log('[Rebate] ✅ Raw values:', JSON.stringify(values));
+            console.log('[Rebate] ✅ Raw values from sheet:', JSON.stringify(values));
 
             const rebateValue = values[0]?.[0] != null ? String(values[0][0]) : '';
 
@@ -655,7 +657,7 @@ app.post('/webhook', async (req, res) => {
               console.warn('[Rebate] ⚠ A1 empty or not found');
               await replyToLark(messageId, `Không tìm thấy giá trị tại ô A1.`, mentionUserId, mentionUserName);
             } else {
-              console.log('[Rebate] 📤 Will send A1 to GROUP_CHAT_IDS');
+              console.log('[Rebate] 📤 Will send A1 to GROUP_CHAT_IDS', { rebateValue });
 
               const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
                 ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
@@ -681,6 +683,8 @@ app.post('/webhook', async (req, res) => {
           }
           console.log('[Rebate] ⛔ Skip AI because rebate command matched');
           return; // DỪNG HẲN — KHÔNG GỌI AI
+        } else {
+          console.log('[Rebate] ❌ Command did not match, proceeding to AI handler');
         }
       }
       // =================== HẾT REBATE HANDLER ===================
@@ -794,7 +798,6 @@ không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự
     return res.sendStatus(500);
   }
 });
-
 
 /* ===========================================
    SECTION 15 — Housekeeping & Schedules
