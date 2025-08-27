@@ -536,13 +536,11 @@ app.post('/webhook', async (req, res) => {
       const token = await getAppAccessToken();
 
       let mentionUserName = 'Unknown User';
-      let mentionUserKey = ''; // Thêm biến để lưu user key để tag
+      let mentionUserKey = senderId; // Sử dụng senderId làm user key
       try {
-        const userInfo = await getUserInfo(senderId, token);
-        if (userInfo && userInfo.name) {
-          mentionUserName = userInfo.name;
-          mentionUserKey = userInfo.user_key || senderId; // Lấy user key nếu có
-        }
+        // Chỉ lấy tên người dùng từ thông tin cơ bản
+        const tmpName = await getUserInfo(senderId, token);
+        if (tmpName) mentionUserName = tmpName;
       } catch (err) {
         console.error('getUserInfo error:', err?.response?.data || err.message);
       }
@@ -577,7 +575,7 @@ họ đang nói chuyện với bạn. Bạn hãy trả lời một cách thân t
 
 Quy tắc trả lời:
 1. Luôn nhận biết rằng bạn là chủ thể được nhắc đến khi có @L-GPT
-2. Trả lời trực tiếp cho người dùng hiện tại, sử dụng tag @user ở đầu câu khi cần
+2. Trả lời trực tiếp cho người dùng hiện tại
 3. Giữ câu trả lời ngắn gọn, rõ ràng
 4. Sử dụng ngôn ngữ tự nhiên, thân thiện`;
 
@@ -619,20 +617,15 @@ Quy tắc trả lời:
 
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
           
-          // Thêm tag người dùng vào đầu tin nhắn trả lời
-          let finalMessage = cleanMessage;
-          if (mentionUserKey) {
-            finalMessage = `<at id="${mentionUserKey}">${mentionUserName}</at> ${cleanMessage}`;
-          }
+          // Sửa: Tag người dùng ở đầu câu bằng cách sử dụng cú pháp đúng
+          // Format: <at user_id="ou_xxx">Tên người dùng</at>
+          const finalMessage = `<at user_id="${mentionUserKey}">${mentionUserName}</at> ${cleanMessage}`;
           
           await replyToLark(messageId, finalMessage, mentionUserId, mentionUserName);
           
         } catch (err) {
           console.error('Text process error:', err);
-          let errorMessage = 'Xin lỗi, tôi gặp lỗi khi xử lý tin nhắn của bạn.';
-          if (mentionUserKey) {
-            errorMessage = `<at id="${mentionUserKey}">${mentionUserName}</at> ${errorMessage}`;
-          }
+          const errorMessage = `<at user_id="${mentionUserKey}">${mentionUserName}</at> Xin lỗi, tôi gặp lỗi khi xử lý tin nhắn của bạn.`;
           await replyToLark(messageId, errorMessage, mentionUserId, mentionUserName);
         }
         return;
