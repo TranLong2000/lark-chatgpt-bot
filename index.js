@@ -536,7 +536,6 @@ app.post('/webhook', async (req, res) => {
       const token = await getAppAccessToken();
 
       let mentionUserName = 'Unknown User';
-      let mentionUserKey = senderId;
       try {
         const tmpName = await getUserInfo(senderId, token);
         if (tmpName) mentionUserName = tmpName;
@@ -572,13 +571,15 @@ app.post('/webhook', async (req, res) => {
 Khi người dùng nhắc đến @L-GPT hoặc trực tiếp trò chuyện trong cuộc hội thoại này, 
 họ đang nói chuyện với bạn. Bạn hãy trả lời một cách thân thiện, hữu ích và phù hợp với ngữ cảnh.
 
-Quy tắc trả lời:
-1. Luôn nhận biết rằng bạn là chủ thể được nhắc đến khi có @L-GPT
-2. Trả lời trực tiếp cho người dùng hiện tại
-3. Giữ câu trả lời ngắn gọn, rõ ràng
-4. Sử dụng ngôn ngữ tự nhiên, thân thiện
-5. KHI TRẢ LỜI, LUÔN TAG NGƯỜI DÙNG BẰNG CÁCH SỬ DỤNG: <at user_id="OPEN_ID">TÊN NGƯỜI DÙNG</at>
-6. THAY THẾ TẤT CẢ "user1", "user2",... BẰNG TAG NGƯỜI DÙNG THỰC TẾ`;
+QUY TẮC QUAN TRỌNG:
+1. KHÔNG BAO GIỜ sử dụng "user1", "user2", "user3",... hoặc bất kỳ dạng "userX" nào trong câu trả lời
+2. Luôn sử dụng tên thật của người dùng khi trả lời
+3. Trả lời trực tiếp cho người dùng hiện tại
+4. Giữ câu trả lời ngắn gọn, rõ ràng
+5. Sử dụng ngôn ngữ tự nhiên, thân thiện
+
+Người dùng hiện tại có tên là: ${mentionUserName}
+Hãy luôn gọi họ bằng tên thật này thay vì bất kỳ tên userX nào.`;
 
           let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
 
@@ -607,9 +608,14 @@ Quy tắc trả lời:
 
             assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
             
+            // Đảm bảo không có userX nào trong tin nhắn
+            if (assistantMessage.match(/user\d+/i)) {
+              assistantMessage = assistantMessage.replace(/user\d+/gi, mentionUserName);
+            }
+            
           } catch (err) {
             console.error('AI API error:', err?.response?.data || err.message);
-            assistantMessage = 'Hiện tại tôi đang gặp sự cố kỹ thuật. Bạn vui lòng thử lại sau nhé!';
+            assistantMessage = `Hiện tại tôi đang gặp sự cố kỹ thuật. ${mentionUserName} vui lòng thử lại sau nhé!`;
           }
 
           const cleanMessage = assistantMessage
@@ -618,17 +624,11 @@ Quy tắc trả lời:
 
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
           
-          // Sửa: Thay thế các user1, user2,... bằng tag người dùng thực tế
-          let finalMessage = cleanMessage
-            .replace(/user1/gi, `<at user_id="${mentionUserKey}">${mentionUserName}</at>`)
-            .replace(/user2/gi, `<at user_id="${mentionUserKey}">${mentionUserName}</at>`)
-            .replace(/user/gi, `<at user_id="${mentionUserKey}">${mentionUserName}</at>`);
-          
-          await replyToLark(messageId, finalMessage, mentionUserId, mentionUserName);
+          await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
           
         } catch (err) {
           console.error('Text process error:', err);
-          await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý tin nhắn của bạn.', mentionUserId, mentionUserName);
+          await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi gặp lỗi khi xử lý tin nhắn của bạn.`, mentionUserId, mentionUserName);
         }
         return;
       }
