@@ -666,16 +666,7 @@ app.post('/webhook', async (req, res) => {
         if (isCheckRebate) {
           console.log('[Rebate] ✅ Command matched, processing rebate...');
           try {
-            const range = 'A1:A1';
-            const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
-            console.log('[Rebate] 🔎 Fetching A1 from:', { urlMasked: url.replace(/(spreadsheets\/)[^/]+/, '$1***'), range,
-              sheetToken: '***masked***', sheetId: SHEET_ID_REBATE });
-
-            const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
-            const values = resp?.data?.data?.valueRange?.values || [];
-            console.log('[Rebate] ✅ Raw values from sheet:', JSON.stringify(values));
-
-            const rebateValue = values[0]?.[0] != null ? String(values[0][0]) : '';
+            const rebateValue = await getRebateValue(token);
 
             if (!rebateValue) {
               console.warn('[Rebate] ⚠ A1 empty or not found');
