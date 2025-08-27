@@ -536,9 +536,8 @@ app.post('/webhook', async (req, res) => {
       const token = await getAppAccessToken();
 
       let mentionUserName = 'Unknown User';
-      let mentionUserKey = senderId; // Sử dụng senderId làm user key
+      let mentionUserKey = senderId;
       try {
-        // Chỉ lấy tên người dùng từ thông tin cơ bản
         const tmpName = await getUserInfo(senderId, token);
         if (tmpName) mentionUserName = tmpName;
       } catch (err) {
@@ -577,7 +576,9 @@ Quy tắc trả lời:
 1. Luôn nhận biết rằng bạn là chủ thể được nhắc đến khi có @L-GPT
 2. Trả lời trực tiếp cho người dùng hiện tại
 3. Giữ câu trả lời ngắn gọn, rõ ràng
-4. Sử dụng ngôn ngữ tự nhiên, thân thiện`;
+4. Sử dụng ngôn ngữ tự nhiên, thân thiện
+5. KHI TRẢ LỜI, LUÔN TAG NGƯỜI DÙNG BẰNG CÁCH SỬ DỤNG: <at user_id="OPEN_ID">TÊN NGƯỜI DÙNG</at>
+6. THAY THẾ TẤT CẢ "user1", "user2",... BẰNG TAG NGƯỜI DÙNG THỰC TẾ`;
 
           let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
 
@@ -617,16 +618,17 @@ Quy tắc trả lời:
 
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
           
-          // Sửa: Tag người dùng ở đầu câu bằng cách sử dụng cú pháp đúng
-          // Format: <at user_id="ou_xxx">Tên người dùng</at>
-          const finalMessage = `<at user_id="${mentionUserKey}">${mentionUserName}</at> ${cleanMessage}`;
+          // Sửa: Thay thế các user1, user2,... bằng tag người dùng thực tế
+          let finalMessage = cleanMessage
+            .replace(/user1/gi, `<at user_id="${mentionUserKey}">${mentionUserName}</at>`)
+            .replace(/user2/gi, `<at user_id="${mentionUserKey}">${mentionUserName}</at>`)
+            .replace(/user/gi, `<at user_id="${mentionUserKey}">${mentionUserName}</at>`);
           
           await replyToLark(messageId, finalMessage, mentionUserId, mentionUserName);
           
         } catch (err) {
           console.error('Text process error:', err);
-          const errorMessage = `<at user_id="${mentionUserKey}">${mentionUserName}</at> Xin lỗi, tôi gặp lỗi khi xử lý tin nhắn của bạn.`;
-          await replyToLark(messageId, errorMessage, mentionUserId, mentionUserName);
+          await replyToLark(messageId, 'Xin lỗi, tôi gặp lỗi khi xử lý tin nhắn của bạn.', mentionUserId, mentionUserName);
         }
         return;
       }
