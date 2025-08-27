@@ -573,6 +573,8 @@ app.post('/webhook', async (req, res) => {
         messageId, chatId, chatType, messageType, senderId
       });
 
+      console.log('[Webhook] 🔍 Mentions array:', JSON.stringify(mentions, null, 2));
+
       if (!senderId) {
         console.warn('[Webhook] ⚠ No senderId found in message');
         return res.sendStatus(200);
@@ -620,7 +622,7 @@ app.post('/webhook', async (req, res) => {
         const parsedContent = JSON.parse(message.content);
         messageContent = parsedContent.text || '';
         messageContent = messageContent
-          .replace(/<at.*?<\/at>/g, '')      // bỏ tag mention
+          .replace(/<at.*?<\/at>/g, '')      // bỏ tag mention if any
           .trim();
       } catch {
         messageContent = '';
@@ -629,15 +631,20 @@ app.post('/webhook', async (req, res) => {
       // Xử lý loại bỏ placeholder của bot mention (@_user_X)
       let botPlaceholder = '';
       for (const m of mentions) {
-        if (m.id?.app_id === process.env.LARK_APP_ID) {
-          botPlaceholder = `@_user_${m.key}`;
-          console.log('[Webhook] 🔍 Found bot placeholder:', botPlaceholder);
-          break;
+        if ((m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
+            (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)) {
+          if (m.key) {
+            botPlaceholder = `@_user_${m.key}`;
+            console.log('[Webhook] 🔍 Found bot placeholder:', botPlaceholder);
+            break;
+          }
         }
       }
       if (botPlaceholder) {
         messageContent = messageContent.replace(new RegExp(botPlaceholder, 'gi'), '').trim();
         console.log('[Webhook] 📝 Text after removing bot placeholder:', JSON.stringify(messageContent));
+      } else {
+        console.warn('[Webhook] ⚠ No bot placeholder found, despite bot mentioned');
       }
 
       // Thay thế @L-GPT nếu gõ tay
