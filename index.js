@@ -479,7 +479,7 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
 }
 
 /* ===========================================
-   SECTION 14 — Webhook (ONLY on @mention) — FIXED
+   SECTION 14 — Webhook (ONLY on @mention) — OPTIMIZED TOKEN
    =========================================== */
 app.post('/webhook', async (req, res) => {
   try {
@@ -487,7 +487,7 @@ app.post('/webhook', async (req, res) => {
     const signature = req.headers['x-lark-signature'];
     const timestamp = req.headers['x-lark-request-timestamp'];
     const nonce = req.headers['x-lark-request-nonce'];
-    
+
     if (!verifySignature(timestamp, nonce, bodyRaw, signature)) {
       console.error('Signature verification failed');
       return res.sendStatus(401);
@@ -528,7 +528,7 @@ app.post('/webhook', async (req, res) => {
         (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
         (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
       );
-      
+
       if (chatType === 'group' && !botMentioned) return res.sendStatus(200);
 
       res.sendStatus(200);
@@ -559,27 +559,51 @@ app.post('/webhook', async (req, res) => {
 
       if (messageType === 'text' && messageContent) {
         try {
+          // === Giới hạn bộ nhớ hội thoại ===
+          const MAX_HISTORY = 10; // Chỉ giữ 10 lượt hội thoại gần nhất
           updateConversationMemory(chatId, 'user', messageContent, mentionUserName);
-          const memory = conversationMemory.get(chatId) || [];
-          
+          let memory = conversationMemory.get(chatId) || [];
+
+          // Nếu bộ nhớ quá dài -> tóm tắt phần cũ
+          if (memory.length > MAX_HISTORY) {
+            const oldPart = memory.slice(0, memory.length - MAX_HISTORY);
+            const oldText = oldPart.map(m => `${m.role}: ${m.content}`).join('\n');
+
+            try {
+              const summaryResp = await axios.post(
+                'https://openrouter.ai/api/v1/chat/completions',
+                {
+                  model: AI_MODEL,
+                  messages: [
+                    { role: 'system', content: 'Tóm tắt đoạn hội thoại sau thành 1-2 câu ngắn, giữ nguyên ý chính:' },
+                    { role: 'user', content: oldText }
+                  ],
+                  stream: false,
+                  temperature: 0.3,
+                  max_tokens: 200
+                },
+                { headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` } }
+              );
+
+              const summaryText = summaryResp.data.choices?.[0]?.message?.content?.trim() || '';
+              memory = [{ role: 'system', content: `Tóm tắt trước đó: ${summaryText}` }, ...memory.slice(-MAX_HISTORY)];
+              conversationMemory.set(chatId, memory);
+            } catch (e) {
+              console.error('Summary error:', e.message);
+              memory = memory.slice(-MAX_HISTORY);
+              conversationMemory.set(chatId, memory);
+            }
+          }
+
           const formattedHistory = memory.map(m => ({
             role: m.role,
             content: m.content
           }));
 
-          const systemPrompt = `Bạn là L-GPT (được mention là @L-GPT), một trợ lý ảo thông minh. 
-Khi người dùng nhắc đến @L-GPT hoặc trực tiếp trò chuyện trong cuộc hội thoại này, 
-họ đang nói chuyện với bạn. Bạn hãy trả lời một cách thân thiện, hữu ích và phù hợp với ngữ cảnh.
-
-QUY TẮC QUAN TRỌNG:
-1. KHÔNG BAO GIỜ sử dụng "user1", "user2", "user3",... hoặc bất kỳ dạng "userX" nào trong câu trả lời
-2. Luôn sử dụng tên thật của người dùng khi trả lời
-3. Trả lời trực tiếp cho người dùng hiện tại
-4. Giữ câu trả lời ngắn gọn, rõ ràng
-5. Sử dụng ngôn ngữ tự nhiên, thân thiện
-
-Người dùng hiện tại có tên là: ${mentionUserName}
-Hãy luôn gọi họ bằng tên thật này thay vì bất kỳ tên userX nào.`;
+          // === Rút gọn System Prompt ===
+          const systemPrompt = `Bạn là L-GPT, trợ lý AI thân thiện. 
+Luôn gọi người dùng là "${mentionUserName}", 
+không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự nhiên.`;
 
           let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
 
@@ -607,8 +631,8 @@ Hãy luôn gọi họ bằng tên thật này thay vì bất kỳ tên userX nà
             );
 
             assistantMessage = aiResp.data.choices?.[0]?.message?.content || assistantMessage;
-            
-            // Đảm bảo không có userX nào trong tin nhắn
+
+            // Thay userX bằng tên thật
             if (assistantMessage.match(/user\d+/i)) {
               assistantMessage = assistantMessage.replace(/user\d+/gi, mentionUserName);
             }
@@ -623,7 +647,7 @@ Hãy luôn gọi họ bằng tên thật này thay vì bất kỳ tên userX nà
             .trim();
 
           updateConversationMemory(chatId, 'assistant', cleanMessage, 'L-GPT');
-          
+
           await replyToLark(messageId, cleanMessage, mentionUserId, mentionUserName);
           
         } catch (err) {
