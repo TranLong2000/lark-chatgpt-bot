@@ -468,6 +468,60 @@ async function checkTotalStockChange() {
   }
 }
 
+/* ==========================================================
+   SECTION 10 — Check Rebate (on demand)
+   ========================================================== */
+
+async function getRebateValue(token) {
+  try {
+    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
+    const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
+    const range = "A1:A1"; // chỉ đọc ô A1
+
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
+    const resp = await axios.get(url, { 
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 20000
+    });
+
+    const values = resp.data.data.valueRange.values || [];
+    const rebateValue = values[0]?.[0] || null;
+    return rebateValue;
+  } catch (err) {
+    console.error('❌ getRebateValue error:', err?.message || err);
+    return null;
+  }
+}
+
+async function sendRebateMessage() {
+  try {
+    const token = await getAppAccessToken();
+    const rebateValue = await getRebateValue(token);
+
+    if (!rebateValue) {
+      console.warn("⚠ Không lấy được giá trị rebate từ sheet.");
+      return false;
+    }
+
+    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
+
+    const rebateMsg = `💰 Rebate hiện tại: ${rebateValue}`;
+    for (const chatId of uniqueGroupIds) {
+      try {
+        await sendMessageToGroup(token, chatId, rebateMsg);
+      } catch (err) {
+        console.error('❌ Lỗi gửi Rebate message to', chatId, err?.message || err);
+      }
+    }
+    return true;
+  } catch (err) {
+    console.error('❌ sendRebateMessage error:', err?.message || err);
+    return false;
+  }
+}
+
+
+
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
    ======================================================= */
@@ -553,6 +607,12 @@ app.post('/webhook', async (req, res) => {
           .replace(/<at.*?<\/at>/g, '')
           .replace(/@L-GPT/gi, 'bạn')
           .trim();
+         // 🔍 Nếu tin nhắn là "check rebate" thì xử lý luôn, không gửi sang AI
+if (messageContent.trim().toLowerCase() === "check rebate") {
+  await sendRebateMessage(); // hàm bạn đã viết ở Section 10
+  return; // Dừng xử lý để tránh gửi sang AI
+}
+         
       } catch {
         messageContent = '';
       }
