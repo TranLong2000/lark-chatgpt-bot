@@ -624,6 +624,7 @@ app.post('/webhook', async (req, res) => {
         messageContent = messageContent
           .replace(/<at.*?<\/at>/g, '')      // bỏ tag mention if any
           .trim();
+        console.log('[Webhook] 📝 Text after removing <at> tags:', JSON.stringify(messageContent));
       } catch {
         messageContent = '';
       }
@@ -634,7 +635,7 @@ app.post('/webhook', async (req, res) => {
         if ((m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
             (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)) {
           if (m.key) {
-            botPlaceholder = `@_user_${m.key}`;
+            botPlaceholder = m.key;  // Use m.key directly as it's already the placeholder like "@_user_1"
             console.log('[Webhook] 🔍 Found bot placeholder:', botPlaceholder);
             break;
           }
