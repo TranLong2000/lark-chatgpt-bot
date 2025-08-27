@@ -621,20 +621,36 @@ app.post('/webhook', async (req, res) => {
         messageContent = parsedContent.text || '';
         messageContent = messageContent
           .replace(/<at.*?<\/at>/g, '')      // bỏ tag mention
-          .replace(/@L-GPT/gi, 'bạn')       // thay tên bot nếu ai gõ tay
           .trim();
       } catch {
         messageContent = '';
       }
 
+      // Xử lý loại bỏ placeholder của bot mention (@_user_X)
+      let botPlaceholder = '';
+      for (const m of mentions) {
+        if (m.id?.app_id === process.env.LARK_APP_ID) {
+          botPlaceholder = `@_user_${m.key}`;
+          console.log('[Webhook] 🔍 Found bot placeholder:', botPlaceholder);
+          break;
+        }
+      }
+      if (botPlaceholder) {
+        messageContent = messageContent.replace(new RegExp(botPlaceholder, 'gi'), '').trim();
+        console.log('[Webhook] 📝 Text after removing bot placeholder:', JSON.stringify(messageContent));
+      }
+
+      // Thay thế @L-GPT nếu gõ tay
+      messageContent = messageContent.replace(/@L-GPT/gi, 'bạn').trim();
+
       // Log nội dung đã chuẩn hóa
-      console.log('[Webhook] 📨 Text after cleanup:', JSON.stringify(messageContent));
+      console.log('[Webhook] 📨 Text after full cleanup:', JSON.stringify(messageContent));
 
       // ===================== REBATE HANDLER (ĐẶT TRƯỚC KHI GỌI AI) =====================
       if (messageType === 'text' && messageContent) {
         // Chuẩn hóa để so khớp lệnh: bỏ dấu câu cuối, trim, lowercase
         const normalized = messageContent.replace(/[.!?…]+$/g, '').trim().toLowerCase();
-        const isCheckRebate = /^\s*check\s+rebate\b/.test(normalized);
+        const isCheckRebate = /^\s*check\s+rebate\s*$/.test(normalized);
 
         console.log('[Rebate] Normalized command for check:', normalized);
         console.log('[Rebate] Check command?', { normalized, isCheckRebate });
