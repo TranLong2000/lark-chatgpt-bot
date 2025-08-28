@@ -479,53 +479,22 @@ function safeText(input) {
     .trim();
 }
 
-// Lấy tên sheet từ sheetId
-async function getSheetNameById(token, spreadsheetToken, sheetId) {
-  try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/metainfo`;
-    console.log("[DEBUG] Get sheet meta URL:", url);
-
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000
-    });
-
-    const sheets = resp.data?.data?.sheets || [];
-    console.log("[DEBUG] Sheets meta:", sheets);
-
-    const sheet = sheets.find(s => s.sheetId === sheetId);
-    if (!sheet) {
-      console.warn(`[WARN] SheetId ${sheetId} not found in spreadsheet`);
-      return null;
-    }
-
-    console.log(`[DEBUG] Found sheet name: "${sheet.title}" for sheetId: ${sheetId}`);
-    return sheet.title;
-  } catch (err) {
-    console.error("[ERROR] getSheetNameById failed:", err.response?.data || err.message);
-    return null;
-  }
-}
-
-// Lấy giá trị rebate từ Lark Sheets (v2)
 async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheetToken
     const SHEET_ID_REBATE = "2rh8Uy"; // sheetId
     const range = "C1:C1";
 
-    // Tự động lấy tên sheet từ sheetId
-    const sheetName = await getSheetNameById(token, SHEET_TOKEN_REBATE, SHEET_ID_REBATE);
-    if (!sheetName) return null;
-
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(sheetName)}!${range}`;
+    // Truyền trực tiếp sheetId vào range
+    const rangeParam = `${SHEET_ID_REBATE}!${range}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(rangeParam)}`;
     console.log("[DEBUG] Request URL:", url);
 
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FormattedValue', // đổi thành 'Formula' nếu muốn lấy công thức
+        valueRenderOption: 'FormattedValue', // Đổi sang 'Formula' nếu muốn lấy công thức gốc
         dateTimeRenderOption: 'FormattedString'
       }
     });
@@ -597,7 +566,7 @@ async function sendRebateMessage() {
     return false;
   }
 }
-    
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
