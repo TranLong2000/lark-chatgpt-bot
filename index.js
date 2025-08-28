@@ -478,14 +478,14 @@ async function getRebateValue(token) {
     const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
     const range = "A1:A1"; // chỉ đọc ô A1
 
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/batchGet`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/batchGet`;
     const resp = await axios.post(url, {
       ranges: [`${SHEET_ID_REBATE}!${range}`]
     }, { 
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FORMATTED_VALUE' // Thử lại với cú pháp có thể khác
+        valueRenderOption: 'FORMATTED_VALUE' // Thử lại với cú pháp v3
       }
     });
 
@@ -503,13 +503,13 @@ async function getRebateValue(token) {
     // Kiểm tra nếu vẫn nhận được công thức
     if (rebateValue && typeof rebateValue === 'string' && (rebateValue.startsWith('=') || rebateValue.startsWith('IMPORTRANGE'))) {
       console.warn('[Rebate] ⚠ Detected formula, value not calculated:', rebateValue);
-      console.warn('[Rebate] ⚠ /values:batchGet also not calculating. Consider accessing source sheet.');
+      console.warn('[Rebate] ⚠ /values:batchGet not calculating. Consider accessing source sheet.');
     }
 
     console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
     return rebateValue;
   } catch (err) {
-    console.error('❌ getRebateValue error:', err?.message || err);
+    console.error('❌ getRebateValue error:', err?.message || err?.response?.data || 'Unknown error');
     return null;
   }
 }
