@@ -481,11 +481,15 @@ async function getRebateValue(token) {
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
     const resp = await axios.get(url, { 
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000
+      timeout: 20000,
+      params: {
+        valueRenderOption: 'FORMATTED_VALUE' // Yêu cầu giá trị đã tính toán
+      }
     });
 
     const values = resp.data.data.valueRange.values || [];
     const rebateValue = values[0]?.[0] || null;
+    console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
     return rebateValue;
   } catch (err) {
     console.error('❌ getRebateValue error:', err?.message || err);
@@ -519,8 +523,6 @@ async function sendRebateMessage() {
     return false;
   }
 }
-
-
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
