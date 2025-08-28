@@ -477,20 +477,22 @@ async function getRebateValue(token) {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
     const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
     const range = "A1:A1"; // chỉ đọc ô A1
+    const LARK_DOMAIN = process.env.LARK_DOMAIN || "https://open.larksuite.com/open-apis"; // Giả định domain v3
 
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/batchGet`;
+    const url = `${LARK_DOMAIN}/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/batchGet`;
+    console.log('[Rebate] 🔍 Request URL:', url); // Log URL để kiểm tra
+
     const resp = await axios.post(url, {
       ranges: [`${SHEET_ID_REBATE}!${range}`]
     }, { 
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        value_render_option: 'FORMATTED_VALUE' // Sử dụng snake_case theo tài liệu v3
+        value_render_option: 'FORMATTED_VALUE' // Theo tài liệu v3
       }
     });
 
     console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
-    console.log('[Rebate] 🔍 Request URL:', url); // Log URL để kiểm tra
 
     if (!resp.data || !resp.data.data || !resp.data.data.valueRanges || resp.data.data.valueRanges.length === 0) {
       console.warn('[Rebate] ⚠ Invalid or missing valueRanges in response');
