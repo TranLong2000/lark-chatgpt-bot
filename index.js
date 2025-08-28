@@ -481,33 +481,47 @@ function safeText(input) {
 
 async function getRebateValue(token) {
   try {
-    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-    const SHEET_ID_REBATE = "2rh8Uy";
-    const range = "C1:C1";
+    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheetToken
+    const SHEET_ID_REBATE = "2rh8Uy"; // sheetId (tab ID)
+    const range = "C1:C1"; // ô cần lấy
 
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
+    console.log("[DEBUG] Request URL:", url);
 
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FormattedValue', // Lấy kết quả đã tính toán theo tài liệu :contentReference[oaicite:1]{index=1}
+        valueRenderOption: 'FormattedValue',
         dateTimeRenderOption: 'FormattedString'
       }
     });
 
-    console.log('[Rebate] Full API response:', JSON.stringify(resp.data, null, 2));
+    console.log("[DEBUG] Full API response:", JSON.stringify(resp.data, null, 2));
 
-    const values = resp.data?.data?.valueRange?.values || [];
-    const rebateValue = values[0]?.[0] ?? null;
+    const values = resp.data?.data?.valueRange?.values;
+    console.log("[DEBUG] Raw values from sheet:", values);
 
-    console.log('[Rebate] Calculated rebate value:', rebateValue);
+    if (!values || !Array.isArray(values) || !values[0] || !values[0][0]) {
+      console.warn("[Rebate] ⚠ Cell C1 is empty or not found");
+      return null;
+    }
+
+    const rebateValue = values[0][0];
+    console.log("[Rebate] Calculated rebate value:", rebateValue);
     return rebateValue;
+
   } catch (err) {
-    console.error('getRebateValue error:', err?.message || err);
+    if (err.response) {
+      console.error("[ERROR] Status:", err.response.status);
+      console.error("[ERROR] Response data:", err.response.data);
+    } else {
+      console.error("[ERROR] getRebateValue failed:", err.message);
+    }
     return null;
   }
 }
+
 
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
