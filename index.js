@@ -483,7 +483,7 @@ async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheetToken
     const SHEET_ID_REBATE = "2rh8Uy"; // sheetId
-    const range = "A1:B1";
+    const range = "B1:B1";
 
     // Truyền trực tiếp sheetId vào range
     const rangeParam = `${SHEET_ID_REBATE}!${range}`;
@@ -494,7 +494,7 @@ async function getRebateValue(token) {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FormattedValue', // Đổi sang 'Formula' nếu muốn lấy công thức gốc FormattedValue
+        valueRenderOption: 'Formula', // Đổi sang 'Formula' nếu muốn lấy công thức gốc FormattedValue
         dateTimeRenderOption: 'FormattedString'
       }
     });
