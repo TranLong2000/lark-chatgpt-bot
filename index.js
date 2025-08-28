@@ -479,12 +479,13 @@ async function getRebateValue(token) {
     const range = "A1:A1"; // chỉ đọc ô A1
     const LARK_DOMAIN = process.env.LARK_DOMAIN || "https://open.larksuite.com/open-apis"; // Giả định domain v3
 
-    const url = `${LARK_DOMAIN}/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/batchGet`; // Kiểm tra lại endpoint
+    // Thử endpoint batchGetByRanges nếu batchGet không hoạt động
+    const url = `${LARK_DOMAIN}/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/batchGetByRanges`;
     console.log('[Rebate] 🔍 Request URL:', url); // Log URL để kiểm tra
 
     const resp = await axios.post(url, {
       ranges: [`${SHEET_ID_REBATE}!${range}`],
-      valueRenderOption: 'FORMATTED_VALUE' // Thêm vào body theo tài liệu v3
+      valueRenderOption: 'FORMATTED_VALUE' // Theo tài liệu v3
     }, { 
       headers: { 
         Authorization: `Bearer ${token}`,
@@ -507,7 +508,7 @@ async function getRebateValue(token) {
     // Kiểm tra nếu vẫn nhận được công thức
     if (rebateValue && typeof rebateValue === 'string' && (rebateValue.startsWith('=') || rebateValue.startsWith('IMPORTRANGE'))) {
       console.warn('[Rebate] ⚠ Detected formula, value not calculated:', rebateValue);
-      console.warn('[Rebate] ⚠ /batchGet not calculating. Consider accessing source sheet or contacting Feishu support.');
+      console.warn('[Rebate] ⚠ /batchGetByRanges not calculating. Consider accessing source sheet or contacting Feishu support.');
     }
 
     console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
