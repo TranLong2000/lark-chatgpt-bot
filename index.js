@@ -481,7 +481,10 @@ async function getRebateValue(token) {
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
     const resp = await axios.get(url, { 
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000
+      timeout: 20000,
+      params: {
+        valueRenderOption: 'FORMATTED_VALUE' // Thử lại với cú pháp chính xác
+      }
     });
 
     console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
