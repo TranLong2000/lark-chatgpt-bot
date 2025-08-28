@@ -485,11 +485,12 @@ async function getRebateValue(token) {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FORMATTED_VALUE' // Thử lại với cú pháp v3
+        value_render_option: 'FORMATTED_VALUE' // Sử dụng snake_case theo tài liệu v3
       }
     });
 
     console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
+    console.log('[Rebate] 🔍 Request URL:', url); // Log URL để kiểm tra
 
     if (!resp.data || !resp.data.data || !resp.data.data.valueRanges || resp.data.data.valueRanges.length === 0) {
       console.warn('[Rebate] ⚠ Invalid or missing valueRanges in response');
@@ -503,7 +504,7 @@ async function getRebateValue(token) {
     // Kiểm tra nếu vẫn nhận được công thức
     if (rebateValue && typeof rebateValue === 'string' && (rebateValue.startsWith('=') || rebateValue.startsWith('IMPORTRANGE'))) {
       console.warn('[Rebate] ⚠ Detected formula, value not calculated:', rebateValue);
-      console.warn('[Rebate] ⚠ /values:batchGet not calculating. Consider accessing source sheet.');
+      console.warn('[Rebate] ⚠ /batchGet not calculating. Consider accessing source sheet or contacting Feishu support.');
     }
 
     console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
