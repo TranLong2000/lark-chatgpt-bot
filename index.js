@@ -487,6 +487,10 @@ async function getRebateValue(token) {
       }
     });
 
+    if (!resp.data || !resp.data.data || !resp.data.data.valueRange) {
+      throw new Error('Response data structure is invalid');
+    }
+
     const values = resp.data.data.valueRange.values || [];
     const rebateValue = values[0]?.[0] || null;
     console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
