@@ -471,6 +471,7 @@ async function checkTotalStockChange() {
 /* ==========================================================
    SECTION 10 — Check Rebate (on demand)
    ========================================================== */
+
 function safeText(input) {
   if (input === null || input === undefined) return '';
   return String(input)
@@ -478,9 +479,9 @@ function safeText(input) {
     .trim();
 }
 
+// Lấy tên sheet từ sheetId
 async function getSheetNameById(token, spreadsheetToken, sheetId) {
   try {
-    // ✅ Dùng v2 API cho metainfo
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/metainfo`;
     console.log("[DEBUG] Get sheet meta URL:", url);
 
@@ -506,25 +507,25 @@ async function getSheetNameById(token, spreadsheetToken, sheetId) {
   }
 }
 
+// Lấy giá trị rebate từ Lark Sheets (v2)
 async function getRebateValue(token) {
   try {
-    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
+    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheetToken
     const SHEET_ID_REBATE = "2rh8Uy"; // sheetId
     const range = "C1:C1";
 
-    // Lấy tên sheet từ sheetId
+    // Tự động lấy tên sheet từ sheetId
     const sheetName = await getSheetNameById(token, SHEET_TOKEN_REBATE, SHEET_ID_REBATE);
     if (!sheetName) return null;
 
-    // ✅ Dùng v3 API cho values
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(sheetName)}!${range}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(sheetName)}!${range}`;
     console.log("[DEBUG] Request URL:", url);
 
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FormattedValue',
+        valueRenderOption: 'FormattedValue', // đổi thành 'Formula' nếu muốn lấy công thức
         dateTimeRenderOption: 'FormattedString'
       }
     });
@@ -596,7 +597,7 @@ async function sendRebateMessage() {
     return false;
   }
 }
-           
+    
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
