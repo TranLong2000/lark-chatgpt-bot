@@ -472,48 +472,52 @@ async function checkTotalStockChange() {
    SECTION 10 — Check Rebate (on demand)
    ========================================================== */
 
+function safeText(input) {
+  if (input === null || input === undefined) return '';
+  return String(input)
+    .replace(/[\u0000-\u001F\u007F]/g, '') // loại bỏ control chars
+    .trim();
+}
+
 async function getRebateValue(token) {
   try {
-    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
-    const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
-    const range = "C1:C1"; // chỉ đọc ô C1
+    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
+    const SHEET_ID_REBATE = "2rh8Uy";
+    const range = "C1:C1";
 
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
 
-    const resp = await axios.get(url, { 
+    const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FormattedValue', // ✅ Trả về kết quả đã tính toán
+        valueRenderOption: 'FormattedValue', // Lấy kết quả đã tính toán theo tài liệu :contentReference[oaicite:1]{index=1}
         dateTimeRenderOption: 'FormattedString'
       }
     });
 
-    console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
+    console.log('[Rebate] Full API response:', JSON.stringify(resp.data, null, 2));
 
     const values = resp.data?.data?.valueRange?.values || [];
     const rebateValue = values[0]?.[0] ?? null;
 
-    console.log('[Rebate] 📊 Calculated rebate value:', rebateValue);
+    console.log('[Rebate] Calculated rebate value:', rebateValue);
     return rebateValue;
-
   } catch (err) {
-    console.error('❌ getRebateValue error:', err?.message || err);
+    console.error('getRebateValue error:', err?.message || err);
     return null;
   }
 }
 
-// ✅ Hàm gửi tin nhắn tới group theo đúng format Lark
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
+    const safeMsg = safeText(messageText);
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
       {
         receive_id: chatId,
         msg_type: "text",
-        content: JSON.stringify({
-          text: messageText
-        })
+        content: JSON.stringify({ text: safeMsg })
       },
       {
         headers: {
@@ -522,9 +526,9 @@ async function sendMessageToGroup(token, chatId, messageText) {
         }
       }
     );
-    console.log(`[Lark] ✅ Message sent to group ${chatId}: ${messageText}`);
+    console.log(`Message sent to group ${chatId}:`, safeMsg);
   } catch (err) {
-    console.error(`[Lark] ❌ sendMessageToGroup error to ${chatId}:`, err.response?.data || err.message);
+    console.error(`sendMessageToGroup error to ${chatId}:`, err.response?.data || err.message);
   }
 }
 
@@ -534,21 +538,21 @@ async function sendRebateMessage() {
     const rebateValue = await getRebateValue(token);
 
     if (!rebateValue) {
-      console.warn("⚠ Không lấy được giá trị rebate từ sheet.");
+      console.warn("Không lấy được giá trị rebate từ sheet.");
       return false;
     }
 
-    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) 
-      ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] 
+    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
+      ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
       : [];
 
-    const rebateMsg = `💰 Rebate hiện tại: ${rebateValue}`;
+    const rebateMsg = `Rebate hiện tại: ${rebateValue}`;
     for (const chatId of uniqueGroupIds) {
       await sendMessageToGroup(token, chatId, rebateMsg);
     }
     return true;
   } catch (err) {
-    console.error('❌ sendRebateMessage error:', err?.message || err);
+    console.error('sendRebateMessage error:', err?.message || err);
     return false;
   }
 }
