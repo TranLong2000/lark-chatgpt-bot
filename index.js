@@ -483,7 +483,7 @@ async function getRebateValue(token) {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        value_render_option: 'UnformattedValue' // Thử giá trị không định dạng để lấy kết quả tính toán
+        value_render_option: 'FormulaValue' // Thử để kiểm tra công thức rõ ràng hơn
       }
     });
 
