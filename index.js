@@ -487,8 +487,11 @@ async function getRebateValue(token) {
       }
     });
 
+    console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
+
     if (!resp.data || !resp.data.data || !resp.data.data.valueRange) {
-      throw new Error('Response data structure is invalid');
+      console.warn('[Rebate] ⚠ Invalid or missing valueRange in response');
+      throw new Error('Response data structure is invalid or valueRange is missing');
     }
 
     const values = resp.data.data.valueRange.values || [];
