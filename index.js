@@ -477,7 +477,7 @@ async function getRebateValue(token) {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
     const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con trong sheet rebate
     const SHEET_TOKEN_SOURCE = "LYYqsXmnPhwwGHtKP00lZ1IWgDb"; // Token của sheet nguồn, cần thay bằng token hợp lệ
-    const SHEET_ID_SOURCE = "UKwL3D"; // ID của tab 'Raw data', tạm dùng UKwL3D từ link
+    const SHEET_ID_SOURCE = "48e2fd"; // ID của tab 'Raw data', tạm dùng UKwL3D từ link
     const range = "A1:A1"; // chỉ đọc ô A1
 
     // Bước 1: Kiểm tra giá trị từ sheet rebate (có thể chứa IMPORTRANGE)
