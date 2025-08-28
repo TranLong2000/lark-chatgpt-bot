@@ -479,17 +479,18 @@ async function getRebateValue(token) {
     const range = "A1:A1"; // chỉ đọc ô A1
     const LARK_DOMAIN = process.env.LARK_DOMAIN || "https://open.larksuite.com/open-apis"; // Giả định domain v3
 
-    const url = `${LARK_DOMAIN}/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/batchGet`;
+    const url = `${LARK_DOMAIN}/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/batchGet`; // Kiểm tra lại endpoint
     console.log('[Rebate] 🔍 Request URL:', url); // Log URL để kiểm tra
 
     const resp = await axios.post(url, {
-      ranges: [`${SHEET_ID_REBATE}!${range}`]
+      ranges: [`${SHEET_ID_REBATE}!${range}`],
+      valueRenderOption: 'FORMATTED_VALUE' // Thêm vào body theo tài liệu v3
     }, { 
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000,
-      params: {
-        value_render_option: 'FORMATTED_VALUE' // Theo tài liệu v3
-      }
+      headers: { 
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json" // Đảm bảo header đúng
+      },
+      timeout: 20000
     });
 
     console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
