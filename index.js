@@ -471,7 +471,6 @@ async function checkTotalStockChange() {
 /* ==========================================================
    SECTION 10 — Check Rebate (on demand)
    ========================================================== */
-
 function safeText(input) {
   if (input === null || input === undefined) return '';
   return String(input)
@@ -481,7 +480,8 @@ function safeText(input) {
 
 async function getSheetNameById(token, spreadsheetToken, sheetId) {
   try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${spreadsheetToken}/metainfo`;
+    // ✅ Dùng v2 API cho metainfo
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/metainfo`;
     console.log("[DEBUG] Get sheet meta URL:", url);
 
     const resp = await axios.get(url, {
@@ -516,6 +516,7 @@ async function getRebateValue(token) {
     const sheetName = await getSheetNameById(token, SHEET_TOKEN_REBATE, SHEET_ID_REBATE);
     if (!sheetName) return null;
 
+    // ✅ Dùng v3 API cho values
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(sheetName)}!${range}`;
     console.log("[DEBUG] Request URL:", url);
 
@@ -595,6 +596,7 @@ async function sendRebateMessage() {
     return false;
   }
 }
+           
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
