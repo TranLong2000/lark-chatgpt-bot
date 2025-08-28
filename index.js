@@ -479,13 +479,44 @@ function safeText(input) {
     .trim();
 }
 
+async function getSheetNameById(token, spreadsheetToken, sheetId) {
+  try {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${spreadsheetToken}/metainfo`;
+    console.log("[DEBUG] Get sheet meta URL:", url);
+
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 20000
+    });
+
+    const sheets = resp.data?.data?.sheets || [];
+    console.log("[DEBUG] Sheets meta:", sheets);
+
+    const sheet = sheets.find(s => s.sheetId === sheetId);
+    if (!sheet) {
+      console.warn(`[WARN] SheetId ${sheetId} not found in spreadsheet`);
+      return null;
+    }
+
+    console.log(`[DEBUG] Found sheet name: "${sheet.title}" for sheetId: ${sheetId}`);
+    return sheet.title;
+  } catch (err) {
+    console.error("[ERROR] getSheetNameById failed:", err.response?.data || err.message);
+    return null;
+  }
+}
+
 async function getRebateValue(token) {
   try {
-    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheetToken
-    const SHEET_ID_REBATE = "2rh8Uy"; // sheetId (tab ID)
-    const range = "C1:C1"; // ô cần lấy
+    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
+    const SHEET_ID_REBATE = "2rh8Uy"; // sheetId
+    const range = "C1:C1";
 
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
+    // Lấy tên sheet từ sheetId
+    const sheetName = await getSheetNameById(token, SHEET_TOKEN_REBATE, SHEET_ID_REBATE);
+    if (!sheetName) return null;
+
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(sheetName)}!${range}`;
     console.log("[DEBUG] Request URL:", url);
 
     const resp = await axios.get(url, {
@@ -512,16 +543,10 @@ async function getRebateValue(token) {
     return rebateValue;
 
   } catch (err) {
-    if (err.response) {
-      console.error("[ERROR] Status:", err.response.status);
-      console.error("[ERROR] Response data:", err.response.data);
-    } else {
-      console.error("[ERROR] getRebateValue failed:", err.message);
-    }
+    console.error("[ERROR] getRebateValue failed:", err.response?.data || err.message);
     return null;
   }
 }
-
 
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
