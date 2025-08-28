@@ -475,31 +475,58 @@ async function checkTotalStockChange() {
 async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
-    const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
+    const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con trong sheet rebate
+    const SHEET_TOKEN_SOURCE = "LYYqsXmnPhwwGHtKP00lZ1IWgDb"; // Token của sheet nguồn, dùng thử từ URL
+    const SHEET_ID_SOURCE = "UKwL3D"; // ID của tab 'Raw data', tạm dùng UKwL3D từ link
     const range = "A1:A1"; // chỉ đọc ô A1
 
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
-    const resp = await axios.get(url, { 
+    // Bước 1: Kiểm tra giá trị từ sheet rebate (có thể chứa IMPORTRANGE)
+    const urlRebate = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
+    const respRebate = await axios.get(urlRebate, { 
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000
     });
 
-    console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
+    console.log('[Rebate] 📋 Full API response from rebate sheet:', JSON.stringify(respRebate.data, null, 2));
 
-    if (!resp.data || !resp.data.data || !resp.data.data.valueRange) {
-      console.warn('[Rebate] ⚠ Invalid or missing valueRange in response');
-      throw new Error('Response data structure is invalid or valueRange is missing');
+    if (!respRebate.data || !respRebate.data.data || !respRebate.data.data.valueRange) {
+      console.warn('[Rebate] ⚠ Invalid or missing valueRange in rebate sheet response');
+      throw new Error('Response data structure is invalid or valueRange is missing in rebate sheet');
     }
 
-    const values = resp.data.data.valueRange.values || [];
-    const rebateValue = values[0]?.[0] || null;
+    const valuesRebate = respRebate.data.data.valueRange.values || [];
+    let rebateValue = valuesRebate[0]?.[0] || null;
 
-    // Nếu rebateValue là công thức IMPORTRANGE, log để xem xét
+    // Bước 2: Nếu là công thức IMPORTRANGE, gọi sheet nguồn
     if (rebateValue && typeof rebateValue === 'string' && rebateValue.startsWith('IMPORTRANGE')) {
-      console.warn('[Rebate] ⚠ Detected IMPORTRANGE formula, value not calculated:', rebateValue);
+      console.warn('[Rebate] ⚠ Detected IMPORTRANGE formula, fetching from source sheet:', rebateValue);
+      const importRangeMatch = rebateValue.match(/IMPORTRANGE\("([^"]+)",\s*"([^"]+)"\)/);
+      if (importRangeMatch) {
+        const sourceUrl = importRangeMatch[1]; // URL của sheet nguồn (đã có)
+        const sourceRange = importRangeMatch[2]; // Range trong sheet nguồn, ví dụ: 'Raw data'!A1
+
+        // Gọi API cho sheet nguồn
+        const urlSource = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_SOURCE}/values/${SHEET_ID_SOURCE}!${range}`;
+        const respSource = await axios.get(urlSource, { 
+          headers: { Authorization: `Bearer ${token}` },
+          timeout: 20000
+        });
+
+        console.log('[Rebate] 📋 Full API response from source sheet:', JSON.stringify(respSource.data, null, 2));
+
+        if (!respSource.data || !respSource.data.data || !respSource.data.data.valueRange) {
+          console.warn('[Rebate] ⚠ Invalid or missing valueRange in source sheet response');
+          throw new Error('Response data structure is invalid or valueRange is missing in source sheet');
+        }
+
+        const valuesSource = respSource.data.data.valueRange.values || [];
+        rebateValue = valuesSource[0]?.[0] || null;
+        console.log('[Rebate] 📊 Retrieved calculated value from source sheet:', rebateValue);
+      }
+    } else {
+      console.log('[Rebate] 📊 Retrieved value from rebate sheet:', rebateValue);
     }
 
-    console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
     return rebateValue;
   } catch (err) {
     console.error('❌ getRebateValue error:', err?.message || err);
