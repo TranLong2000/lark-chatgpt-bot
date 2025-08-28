@@ -476,7 +476,7 @@ async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
     const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con trong sheet rebate
-    const SHEET_TOKEN_SOURCE = "LYYqsXmnPhwwGHtKP00lZ1IWgDb"; // Token của sheet nguồn, dùng thử từ URL
+    const SHEET_TOKEN_SOURCE = "LYYqsXmnPhwwGHtKP00lZ1IWgDb"; // Token của sheet nguồn, cần thay bằng token hợp lệ
     const SHEET_ID_SOURCE = "UKwL3D"; // ID của tab 'Raw data', tạm dùng UKwL3D từ link
     const range = "A1:A1"; // chỉ đọc ô A1
 
@@ -502,8 +502,9 @@ async function getRebateValue(token) {
       console.warn('[Rebate] ⚠ Detected IMPORTRANGE formula, fetching from source sheet:', rebateValue);
       const importRangeMatch = rebateValue.match(/IMPORTRANGE\("([^"]+)",\s*"([^"]+)"\)/);
       if (importRangeMatch) {
-        const sourceUrl = importRangeMatch[1]; // URL của sheet nguồn (đã có)
+        const sourceUrl = importRangeMatch[1]; // URL của sheet nguồn
         const sourceRange = importRangeMatch[2]; // Range trong sheet nguồn, ví dụ: 'Raw data'!A1
+        console.log('[Rebate] 🔍 Extracted IMPORTRANGE details:', { sourceUrl, sourceRange });
 
         // Gọi API cho sheet nguồn
         const urlSource = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_SOURCE}/values/${SHEET_ID_SOURCE}!${range}`;
@@ -515,7 +516,7 @@ async function getRebateValue(token) {
         console.log('[Rebate] 📋 Full API response from source sheet:', JSON.stringify(respSource.data, null, 2));
 
         if (!respSource.data || !respSource.data.data || !respSource.data.data.valueRange) {
-          console.warn('[Rebate] ⚠ Invalid or missing valueRange in source sheet response');
+          console.warn('[Rebate] ⚠ Invalid or missing valueRange in source sheet response. Check SHEET_TOKEN_SOURCE:', SHEET_TOKEN_SOURCE);
           throw new Error('Response data structure is invalid or valueRange is missing in source sheet');
         }
 
