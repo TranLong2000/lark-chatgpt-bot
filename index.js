@@ -494,7 +494,7 @@ async function getRebateValue(token) {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'Formula', // Đổi sang 'Formula' nếu muốn lấy công thức gốc FormattedValue
+        valueRenderOption: 'UnformattedValue', // Đổi sang 'Formula' nếu muốn lấy công thức gốc FormattedValue
         dateTimeRenderOption: 'FormattedString'
       }
     });
