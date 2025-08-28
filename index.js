@@ -503,6 +503,30 @@ async function getRebateValue(token) {
   }
 }
 
+// ✅ Hàm gửi tin nhắn tới group theo đúng format Lark
+async function sendMessageToGroup(token, chatId, messageText) {
+  try {
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+      {
+        receive_id: chatId,
+        msg_type: "text",
+        content: JSON.stringify({
+          text: messageText
+        })
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    console.log(`[Lark] ✅ Message sent to group ${chatId}: ${messageText}`);
+  } catch (err) {
+    console.error(`[Lark] ❌ sendMessageToGroup error to ${chatId}:`, err.response?.data || err.message);
+  }
+}
 
 async function sendRebateMessage() {
   try {
@@ -514,15 +538,13 @@ async function sendRebateMessage() {
       return false;
     }
 
-    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
+    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) 
+      ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] 
+      : [];
 
     const rebateMsg = `💰 Rebate hiện tại: ${rebateValue}`;
     for (const chatId of uniqueGroupIds) {
-      try {
-        await sendMessageToGroup(token, chatId, rebateMsg);
-      } catch (err) {
-        console.error('❌ Lỗi gửi Rebate message to', chatId, err?.message || err);
-      }
+      await sendMessageToGroup(token, chatId, rebateMsg);
     }
     return true;
   } catch (err) {
