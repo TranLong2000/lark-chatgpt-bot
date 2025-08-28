@@ -476,40 +476,33 @@ async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
     const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
-    const range = "C1:C1"; // chỉ đọc ô A1
+    const range = "C1:C1"; // chỉ đọc ô C1
 
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
+
     const resp = await axios.get(url, { 
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        value_render_option: 'FormattedValue' // Giữ nguyên để kiểm tra, nhưng có thể cần thay đổi
+        valueRenderOption: 'FormattedValue', // ✅ Trả về kết quả đã tính toán
+        dateTimeRenderOption: 'FormattedString'
       }
     });
 
     console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
 
-    if (!resp.data || !resp.data.data || !resp.data.data.valueRange) {
-      console.warn('[Rebate] ⚠ Invalid or missing valueRange in response');
-      throw new Error('Response data structure is invalid or valueRange is missing');
-    }
+    const values = resp.data?.data?.valueRange?.values || [];
+    const rebateValue = values[0]?.[0] ?? null;
 
-    const values = resp.data.data.valueRange.values || [];
-    const rebateValue = values[0]?.[0] || null;
-
-    // Kiểm tra nếu vẫn nhận được công thức
-    if (rebateValue && typeof rebateValue === 'string' && (rebateValue.startsWith('=') || rebateValue.startsWith('IMPORTRANGE'))) {
-      console.warn('[Rebate] ⚠ Detected formula, value not calculated:', rebateValue);
-      console.warn('[Rebate] ⚠ Consider using /values:batchGet or accessing source sheet. Check Feishu API docs for support.');
-    }
-
-    console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
+    console.log('[Rebate] 📊 Calculated rebate value:', rebateValue);
     return rebateValue;
+
   } catch (err) {
     console.error('❌ getRebateValue error:', err?.message || err);
     return null;
   }
 }
+
 
 async function sendRebateMessage() {
   try {
