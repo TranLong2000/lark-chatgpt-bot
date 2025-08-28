@@ -478,29 +478,32 @@ async function getRebateValue(token) {
     const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
     const range = "A1:A1"; // chỉ đọc ô A1
 
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
-    const resp = await axios.get(url, { 
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/batchGet`;
+    const resp = await axios.post(url, {
+      ranges: [`${SHEET_ID_REBATE}!${range}`]
+    }, { 
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        value_render_option: 'FormulaValue' // Giữ nguyên để kiểm tra, nhưng có thể cần thay đổi
+        valueRenderOption: 'FORMATTED_VALUE' // Thử lại với cú pháp có thể khác
       }
     });
 
     console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
 
-    if (!resp.data || !resp.data.data || !resp.data.data.valueRange) {
-      console.warn('[Rebate] ⚠ Invalid or missing valueRange in response');
-      throw new Error('Response data structure is invalid or valueRange is missing');
+    if (!resp.data || !resp.data.data || !resp.data.data.valueRanges || resp.data.data.valueRanges.length === 0) {
+      console.warn('[Rebate] ⚠ Invalid or missing valueRanges in response');
+      throw new Error('Response data structure is invalid or valueRanges is missing');
     }
 
-    const values = resp.data.data.valueRange.values || [];
+    const valueRange = resp.data.data.valueRanges[0];
+    const values = valueRange.values || [];
     const rebateValue = values[0]?.[0] || null;
 
     // Kiểm tra nếu vẫn nhận được công thức
     if (rebateValue && typeof rebateValue === 'string' && (rebateValue.startsWith('=') || rebateValue.startsWith('IMPORTRANGE'))) {
       console.warn('[Rebate] ⚠ Detected formula, value not calculated:', rebateValue);
-      console.warn('[Rebate] ⚠ Consider using /values:batchGet or accessing source sheet. Check Feishu API docs for support.');
+      console.warn('[Rebate] ⚠ /values:batchGet also not calculating. Consider accessing source sheet.');
     }
 
     console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
