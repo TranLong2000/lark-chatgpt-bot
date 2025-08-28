@@ -477,19 +477,13 @@ async function getRebateValue(token) {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
     const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
     const range = "A1:A1"; // chỉ đọc ô A1
-    const LARK_DOMAIN = process.env.LARK_DOMAIN || "https://open.larksuite.com/open-apis"; // Đảm bảo domain v3 đúng
 
-    const url = `${LARK_DOMAIN}/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
-    console.log('[Rebate] 🔍 Request URL:', url); // Log URL để kiểm tra
-
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
     const resp = await axios.get(url, { 
-      headers: { 
-        Authorization: `Bearer ${token}`,
-        "Accept": "application/json" // Yêu cầu dữ liệu JSON
-      },
+      headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        value_render_option: 'FormattedValue' // Theo tài liệu v3
+        value_render_option: 'FormulaValue' // Giữ nguyên để kiểm tra, nhưng có thể cần thay đổi
       }
     });
 
@@ -506,13 +500,13 @@ async function getRebateValue(token) {
     // Kiểm tra nếu vẫn nhận được công thức
     if (rebateValue && typeof rebateValue === 'string' && (rebateValue.startsWith('=') || rebateValue.startsWith('IMPORTRANGE'))) {
       console.warn('[Rebate] ⚠ Detected formula, value not calculated:', rebateValue);
-      console.warn('[Rebate] ⚠ /values not calculating. Consider accessing source sheet or contacting Feishu support.');
+      console.warn('[Rebate] ⚠ Consider using /values:batchGet or accessing source sheet. Check Feishu API docs for support.');
     }
 
     console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
     return rebateValue;
   } catch (err) {
-    console.error('❌ getRebateValue error:', err?.message || err?.response?.data || 'Unknown error');
+    console.error('❌ getRebateValue error:', err?.message || err);
     return null;
   }
 }
