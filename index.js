@@ -475,59 +475,28 @@ async function checkTotalStockChange() {
 async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
-    const SHEET_ID_REBATE = "5cr5RK"; // ID của sheet con trong sheet rebate
-    const SHEET_TOKEN_SOURCE = "UMU1s9pS9hqtkft1yQvlfRqpgqc"; // Token của sheet nguồn, cần thay bằng token hợp lệ
-    const SHEET_ID_SOURCE = "ExK78P"; // ID của tab 'Raw data', tạm dùng UKwL3D từ link
-    const range = "A3:A3"; // chỉ đọc ô A1
+    const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
+    const range = "A1:A1"; // chỉ đọc ô A1
 
-    // Bước 1: Kiểm tra giá trị từ sheet rebate (có thể chứa IMPORTRANGE)
-    const urlRebate = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
-    const respRebate = await axios.get(urlRebate, { 
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
+    const resp = await axios.get(url, { 
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000
+      timeout: 20000,
+      params: {
+        value_render_option: 'FormattedValue' // Tham số để yêu cầu tính toán và trả về giá trị đã định dạng
+      }
     });
 
-    console.log('[Rebate] 📋 Full API response from rebate sheet:', JSON.stringify(respRebate.data, null, 2));
+    console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
 
-    if (!respRebate.data || !respRebate.data.data || !respRebate.data.data.valueRange) {
-      console.warn('[Rebate] ⚠ Invalid or missing valueRange in rebate sheet response');
-      throw new Error('Response data structure is invalid or valueRange is missing in rebate sheet');
+    if (!resp.data || !resp.data.data || !resp.data.data.valueRange) {
+      console.warn('[Rebate] ⚠ Invalid or missing valueRange in response');
+      throw new Error('Response data structure is invalid or valueRange is missing');
     }
 
-    const valuesRebate = respRebate.data.data.valueRange.values || [];
-    let rebateValue = valuesRebate[0]?.[0] || null;
-
-    // Bước 2: Nếu là công thức IMPORTRANGE, gọi sheet nguồn
-    if (rebateValue && typeof rebateValue === 'string' && rebateValue.startsWith('IMPORTRANGE')) {
-      console.warn('[Rebate] ⚠ Detected IMPORTRANGE formula, fetching from source sheet:', rebateValue);
-      const importRangeMatch = rebateValue.match(/IMPORTRANGE\("([^"]+)",\s*"([^"]+)"\)/);
-      if (importRangeMatch) {
-        const sourceUrl = importRangeMatch[1]; // URL của sheet nguồn
-        const sourceRange = importRangeMatch[2]; // Range trong sheet nguồn, ví dụ: 'Raw data'!A1
-        console.log('[Rebate] 🔍 Extracted IMPORTRANGE details:', { sourceUrl, sourceRange });
-
-        // Gọi API cho sheet nguồn
-        const urlSource = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_SOURCE}/values/${SHEET_ID_SOURCE}!${range}`;
-        const respSource = await axios.get(urlSource, { 
-          headers: { Authorization: `Bearer ${token}` },
-          timeout: 20000
-        });
-
-        console.log('[Rebate] 📋 Full API response from source sheet:', JSON.stringify(respSource.data, null, 2));
-
-        if (!respSource.data || !respSource.data.data || !respSource.data.data.valueRange) {
-          console.warn('[Rebate] ⚠ Invalid or missing valueRange in source sheet response. Check SHEET_TOKEN_SOURCE:', SHEET_TOKEN_SOURCE);
-          throw new Error('Response data structure is invalid or valueRange is missing in source sheet');
-        }
-
-        const valuesSource = respSource.data.data.valueRange.values || [];
-        rebateValue = valuesSource[0]?.[0] || null;
-        console.log('[Rebate] 📊 Retrieved calculated value from source sheet:', rebateValue);
-      }
-    } else {
-      console.log('[Rebate] 📊 Retrieved value from rebate sheet:', rebateValue);
-    }
-
+    const values = resp.data.data.valueRange.values || [];
+    const rebateValue = values[0]?.[0] || null;
+    console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
     return rebateValue;
   } catch (err) {
     console.error('❌ getRebateValue error:', err?.message || err);
