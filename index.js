@@ -476,7 +476,7 @@ async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
     const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
-    const range = "A1:A1"; // chỉ đọc ô A1
+    const range = "C1:C1"; // chỉ đọc ô A1
 
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
     const resp = await axios.get(url, { 
