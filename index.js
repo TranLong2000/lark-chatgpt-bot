@@ -477,38 +477,33 @@ async function getRebateValue(token) {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Token của sheet rebate
     const SHEET_ID_REBATE = "2rh8Uy"; // ID của sheet con
     const range = "A1:A1"; // chỉ đọc ô A1
-    const LARK_DOMAIN = process.env.LARK_DOMAIN || "https://open.larksuite.com/open-apis"; // Giả định domain v3
+    const LARK_DOMAIN = process.env.LARK_DOMAIN || "https://open.larksuite.com/open-apis"; // Theo tài liệu v3
 
-    // Thử endpoint batchGetByRanges nếu batchGet không hoạt động
-    const url = `${LARK_DOMAIN}/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/batchGetByRanges`;
+    const url = `${LARK_DOMAIN}/sheets/v3/spreadsheets/${SHEET_TOKEN_REBATE}/values/${SHEET_ID_REBATE}!${range}`;
     console.log('[Rebate] 🔍 Request URL:', url); // Log URL để kiểm tra
 
-    const resp = await axios.post(url, {
-      ranges: [`${SHEET_ID_REBATE}!${range}`],
-      valueRenderOption: 'FORMATTED_VALUE' // Theo tài liệu v3
-    }, { 
-      headers: { 
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json" // Đảm bảo header đúng
-      },
-      timeout: 20000
+    const resp = await axios.get(url, { 
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 20000,
+      params: {
+        value_render_option: 'FormattedValue' // Theo tài liệu v3
+      }
     });
 
     console.log('[Rebate] 📋 Full API response:', JSON.stringify(resp.data, null, 2));
 
-    if (!resp.data || !resp.data.data || !resp.data.data.valueRanges || resp.data.data.valueRanges.length === 0) {
-      console.warn('[Rebate] ⚠ Invalid or missing valueRanges in response');
-      throw new Error('Response data structure is invalid or valueRanges is missing');
+    if (!resp.data || !resp.data.data || !resp.data.data.valueRange) {
+      console.warn('[Rebate] ⚠ Invalid or missing valueRange in response');
+      throw new Error('Response data structure is invalid or valueRange is missing');
     }
 
-    const valueRange = resp.data.data.valueRanges[0];
-    const values = valueRange.values || [];
+    const values = resp.data.data.valueRange.values || [];
     const rebateValue = values[0]?.[0] || null;
 
     // Kiểm tra nếu vẫn nhận được công thức
     if (rebateValue && typeof rebateValue === 'string' && (rebateValue.startsWith('=') || rebateValue.startsWith('IMPORTRANGE'))) {
       console.warn('[Rebate] ⚠ Detected formula, value not calculated:', rebateValue);
-      console.warn('[Rebate] ⚠ /batchGetByRanges not calculating. Consider accessing source sheet or contacting Feishu support.');
+      console.warn('[Rebate] ⚠ /values not calculating. Consider accessing source sheet or contacting Feishu support.');
     }
 
     console.log('[Rebate] 📊 Retrieved rebate value:', rebateValue);
