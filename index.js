@@ -514,7 +514,7 @@ async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
     const SHEET_ID_REBATE = "2rh8Uy";
-    const range = "A1:B1";
+    const range = "A1:B1"; // đọc cả mảng thay vì chỉ A1
 
     const rangeParam = `${SHEET_ID_REBATE}!${range}`;
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(rangeParam)}`;
@@ -522,19 +522,20 @@ async function getRebateValue(token) {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FormattedValue',
-        dateTimeRenderOption: 'FormattedString'
+        valueRenderOption: 'FormattedValue',     // lấy giá trị đã render
+        dateTimeRenderOption: 'FormattedString' // lấy ngày tháng dạng string
       }
     });
 
-    const values = resp.data?.data?.valueRange?.values;
-    if (!values || !Array.isArray(values) || !values[0] || !values[0][0]) {
-      console.warn("[Rebate] ⚠ Cell C1 is empty or not found");
+    const values = resp.data?.data?.valueRange?.values || [];
+    if (!values.length || !values[0] || values[0].length < 2) {
+      console.warn("[Rebate] ⚠ Không lấy đủ giá trị A1:B1");
       return null;
     }
 
-    const rebateValue = values[0][0];
-    return rebateValue;
+    // Lấy rebate từ B1
+    const rebateValue = values[0][1]; // B1
+    return rebateValue || null;
 
   } catch (err) {
     console.error("[ERROR] getRebateValue failed:", err.response?.data || err.message);
