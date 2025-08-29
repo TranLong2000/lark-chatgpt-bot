@@ -347,23 +347,33 @@ async function analyzeSalesChange(token) {
 
     const outOfStock = allOOS.slice(0,5);
 
-    let msg = `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}:\n`;
+    // Trả về mảng dòng để format đẹp trong Lark post
+    let lines = [];
+    lines.push({ tag: 'text', text: `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}\n` });
+
     if (increases.length) {
-      msg += `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n`;
+      lines.push({ tag: 'text', text: `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n` });
       increases.forEach(r => {
         const pct = r.change === Infinity ? '+∞%' : `+${r.change.toFixed(1)}%`;
-        msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
+        lines.push({ tag: 'text', text: `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n` });
       });
     }
+
     if (decreases.length) {
-      msg += `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n`;
-      decreases.forEach(r => { msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`; });
+      lines.push({ tag: 'text', text: `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n` });
+      decreases.forEach(r => {
+        lines.push({ tag: 'text', text: `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n` });
+      });
     }
+
     if (outOfStock.length) {
-      msg += `\n🚨 SKU hết hàng / Tổng ${allOOS.length} SKU OOS:\n`;
-      outOfStock.forEach(r => { msg += `- ${r.productName} (${r.oosLabel})\n`; });
+      lines.push({ tag: 'text', text: `\n🚨 SKU hết hàng / Tổng ${allOOS.length} SKU OOS:\n` });
+      outOfStock.forEach(r => {
+        lines.push({ tag: 'text', text: `- ${r.productName} (${r.oosLabel})\n` });
+      });
     }
-    return msg;
+
+    return lines;
   } catch (err) {
     console.error('❌ analyzeSalesChange error:', err?.message || err);
     return null;
@@ -373,12 +383,12 @@ async function analyzeSalesChange(token) {
 async function safeAnalyzeSalesChange(token) {
   let tries = 3;
   while (tries > 0) {
-    const msg = await analyzeSalesChange(token);
-    if (msg && typeof msg === "string") return msg;
+    const msgLines = await analyzeSalesChange(token);
+    if (msgLines && Array.isArray(msgLines)) return msgLines;
     await new Promise(r => setTimeout(r, 60000));
     tries--;
   }
-  return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
+  return [{ tag: 'text', text: "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.\n" }];
 }
 
 async function getTotalStock(token) {
@@ -399,9 +409,18 @@ async function getTotalStock(token) {
   }
 }
 
-async function sendMessageToGroup(token, chatId, messageText) {
+async function sendMessageToGroup(token, chatId, messageLines) {
   try {
-    const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
+    const payload = {
+      receive_id: chatId,
+      msg_type: 'post',
+      content: JSON.stringify({
+        zh_cn: {
+          title: '📢 Báo cáo kho & Sale',
+          content: [messageLines]
+        }
+      })
+    };
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
       payload,
@@ -428,23 +447,25 @@ async function checkTotalStockChange() {
 
       const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
 
-      const stockMsg = `✅ Đã đổ Stock. Số lượng: ${currentTotalStock} thùng`;
+      // Gửi tin stock
+      const stockLines = [{ tag: 'text', text: `✅ Đã đổ Stock. Số lượng: ${currentTotalStock} thùng\n` }];
       for (const chatId of uniqueGroupIds) {
         try {
-          await sendMessageToGroup(token, chatId, stockMsg);
+          await sendMessageToGroup(token, chatId, stockLines);
         } catch (err) {
           console.error('❌ Lỗi gửi Stock message to', chatId, err?.message || err);
         }
       }
 
-      const salesMsg = await safeAnalyzeSalesChange(token);
-      if (salesMsg && typeof salesMsg === 'string') {
-        const hash = (s) => s ? String(s).slice(0,500) : '';
-        const h = hash(salesMsg);
+      // Gửi tin sale
+      const salesLines = await safeAnalyzeSalesChange(token);
+      if (salesLines && Array.isArray(salesLines)) {
+        const hash = (s) => s ? JSON.stringify(s).slice(0,500) : '';
+        const h = hash(salesLines);
         if (h !== lastSalesMsgHash) {
           for (const chatId of uniqueGroupIds) {
             try {
-              await sendMessageToGroup(token, chatId, salesMsg);
+              await sendMessageToGroup(token, chatId, salesLines);
             } catch (err) {
               console.error('❌ Lỗi gửi Sales message to', chatId, err?.message || err);
             }
