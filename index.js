@@ -265,7 +265,6 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const freshToken = await getAppAccessToken();
-
       const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AK`)}`;
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${freshToken}` },
@@ -277,7 +276,6 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
       });
 
       const rows = resp.data?.data?.valueRange?.values || [];
-
       if (rows && rows.length > 1) {
         return rows.slice(1).map((r, i) => {
           const productName = r[col.E] ?? `Dòng ${i + 2}`;
@@ -494,20 +492,18 @@ async function checkTotalStockChange() {
 function safeText(input) {
   if (input === null || input === undefined) return '';
   return String(input)
-    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, '') // loại bỏ control chars nhưng giữ \n và \r
+    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, '')
     .trim();
 }
 
 async function getRebateValue(token) {
   try {
-    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheetToken
-    const SHEET_ID_REBATE = "2rh8Uy"; // sheetId
+    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
+    const SHEET_ID_REBATE = "2rh8Uy";
     const range = "A1:B1";
 
     const rangeParam = `${SHEET_ID_REBATE}!${range}`;
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(rangeParam)}`;
-    console.log("[DEBUG] Request URL:", url);
-
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
@@ -517,18 +513,13 @@ async function getRebateValue(token) {
       }
     });
 
-    console.log("[DEBUG] Full API response:", JSON.stringify(resp.data, null, 2));
-
     const values = resp.data?.data?.valueRange?.values;
-    console.log("[DEBUG] Raw values from sheet:", values);
-
     if (!values || !Array.isArray(values) || !values[0] || !values[0][0]) {
       console.warn("[Rebate] ⚠ Cell C1 is empty or not found");
       return null;
     }
 
     const rebateValue = values[0][0];
-    console.log("[Rebate] Calculated rebate value:", rebateValue);
     return rebateValue;
 
   } catch (err) {
@@ -537,7 +528,6 @@ async function getRebateValue(token) {
   }
 }
 
-// Hàm gửi riêng cho Section 10.1
 async function sendMessageToGroupSafe(token, chatId, messageText) {
   try {
     const safeMsg = safeText(messageText);
