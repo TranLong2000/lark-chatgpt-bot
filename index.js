@@ -265,7 +265,18 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const freshToken = await getAppAccessToken();
-      const rows = await getSheetData(SPREADSHEET_TOKEN, freshToken, `${SHEET_ID}!A:AK`);
+
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AK`)}`;
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${freshToken}` },
+        timeout: 20000,
+        params: {
+          valueRenderOption: 'FormattedValue',
+          dateTimeRenderOption: 'FormattedString'
+        }
+      });
+
+      const rows = resp.data?.data?.valueRange?.values || [];
 
       if (rows && rows.length > 1) {
         return rows.slice(1).map((r, i) => {
@@ -385,8 +396,15 @@ async function getTotalStock(token) {
   try {
     const targetColumn = 'G';
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${targetColumn}:${targetColumn}`;
-    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 20000 });
-    const values = resp.data.data.valueRange.values || [];
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 20000,
+      params: {
+        valueRenderOption: 'FormattedValue',
+        dateTimeRenderOption: 'FormattedString'
+      }
+    });
+    const values = resp.data?.data?.valueRange?.values || [];
     const sum = values.reduce((acc, row) => {
       const v = row[0];
       const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
