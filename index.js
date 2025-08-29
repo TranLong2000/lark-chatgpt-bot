@@ -498,7 +498,6 @@ async function checkTotalStockChange() {
   }
 }
 
-
 /* ==========================================================
    SECTION 10.1 — Check Rebate (on demand) 
    ========================================================== */
@@ -513,32 +512,27 @@ function safeText(input) {
 async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-    const SHEET_ID_REBATE = "2rh8Uy"; // tên sheet tab
-    const range = "A1:A1";
+    const SHEET_ID_REBATE = "2rh8Uy";
+    const range = "A1:B1";
 
     const rangeParam = `${SHEET_ID_REBATE}!${range}`;
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}?includeGridData=true`;
-
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(rangeParam)}`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000
+      timeout: 20000,
+      params: {
+        valueRenderOption: 'FormattedValue',
+        dateTimeRenderOption: 'FormattedString'
+      }
     });
 
-    const sheets = resp.data?.data?.sheets || [];
-    const sheet = sheets.find(s => s?.properties?.title === SHEET_ID_REBATE);
-    if (!sheet) {
-      console.warn("[Rebate] ⚠ Không tìm thấy sheet:", SHEET_ID_REBATE);
+    const values = resp.data?.data?.valueRange?.values;
+    if (!values || !Array.isArray(values) || !values[0] || !values[0][0]) {
+      console.warn("[Rebate] ⚠ Cell C1 is empty or not found");
       return null;
     }
 
-    const gridData = sheet.data?.[0]?.rowData || [];
-    if (!gridData.length || !gridData[0]?.values) {
-      console.warn("[Rebate] ⚠ Không tìm thấy dữ liệu trong range:", range);
-      return null;
-    }
-
-    // Lấy giá trị B1 (cột index 1)
-    const rebateValue = gridData[0].values[1]?.formattedValue || null;
+    const rebateValue = values[0][0];
     return rebateValue;
 
   } catch (err) {
