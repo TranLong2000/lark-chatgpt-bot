@@ -399,29 +399,24 @@ async function getTotalStock(token) {
   }
 }
 
-/**
- * GỬI DẠNG TEXT, CHỈNH ĐỂ XUỐNG DÒNG ĐÚNG & TRÁNH [object]
- */
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
-    // Bảo vệ: luôn ép về string; nếu là mảng -> join theo dòng
     if (Array.isArray(messageText)) {
-      messageText = messageText.map(x =>
-        typeof x === 'string' ? x :
-        (x && typeof x.text === 'string' ? x.text : String(x))
-      ).join('\n');
+      messageText = messageText.join('\n');
     } else if (typeof messageText !== 'string') {
       messageText = String(messageText ?? '');
     }
 
-    // Chuẩn hoá line break về \n
-    const normalized = messageText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // Dùng ký tự xuống dòng thật \u000A thay vì \n
+    const normalized = messageText
+      .replace(/\r\n/g, '\u000A')
+      .replace(/\r/g, '\u000A')
+      .replace(/\n/g, '\u000A');
 
     const payload = {
       receive_id: chatId,
       msg_type: 'text',
       content: JSON.stringify({ text: normalized })
-      // Lark sẽ parse "\n" trong JSON và hiển thị xuống dòng
     };
 
     await axios.post(
@@ -433,6 +428,7 @@ async function sendMessageToGroup(token, chatId, messageText) {
     console.error('❌ sendMessageToGroup error to', chatId, err?.response?.data || err?.message || err);
   }
 }
+
 
 async function checkTotalStockChange() {
   if (sendingTotalStockLock) {
