@@ -462,7 +462,7 @@ async function checkTotalStockChange() {
         ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
         : [];
 
-      const stockMsg = `✅ Đã đổ Stock. Số lượng (#WTD): ${currentTotalStock} thùng`;
+      const stockMsg = `✅ Đã đổ Stock. Số lượng (WBT): ${currentTotalStock} thùng`;
       for (const chatId of uniqueGroupIds) {
         try {
           await sendMessageToGroup(token, chatId, stockMsg);
