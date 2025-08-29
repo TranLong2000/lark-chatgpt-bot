@@ -610,6 +610,7 @@ function updateConversationMemory(chatId, role, content, senderName = null) {
    — OPTIMIZED TOKEN + REBATE CMD + RAW BODY FIX
    =========================================== */
 
+// ⚠️ Middleware raw body cho route webhook
 app.post('/webhook',
   express.raw({ type: '*/*' }),
   async (req, res) => {
@@ -632,13 +633,11 @@ app.post('/webhook',
         return res.sendStatus(400);
       }
 
-      // Bot được thêm vào chat
       if (decryptedData.header?.event_type === 'im.chat.member.bot.added_v1') {
         console.log('[Webhook] Bot added to chat → 200');
         return res.sendStatus(200);
       }
 
-      // Nhận tin nhắn
       if (decryptedData.header?.event_type === 'im.message.receive_v1') {
         const message = decryptedData.event.message;
         const messageId = message.message_id;
@@ -648,18 +647,6 @@ app.post('/webhook',
         const senderId = decryptedData.event.sender?.sender_id?.open_id || null;
         const mentions = message.mentions || [];
 
-        // Kiểm tra bot được mention
-        const botMentioned = mentions.some(m =>
-          (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
-          (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
-        );
-
-        // Group chat mà không mention bot → bỏ qua không log chi tiết
-        if (chatType === 'group' && !botMentioned) {
-          return res.sendStatus(200);
-        }
-
-        // Từ đây trở xuống mới log chi tiết
         console.log('[Webhook] ▶️ Incoming message', { messageId, chatId, chatType, messageType, senderId });
         console.log('[Webhook] 🔍 Mentions array:', JSON.stringify(mentions, null, 2));
 
@@ -674,9 +661,19 @@ app.post('/webhook',
         }
         processedMessageIds.add(messageId);
 
-        // Tránh bot tự trả lời chính mình
+        // Tránh bot tự phản hồi chính mình
         if (senderId === BOT_SENDER_ID) {
           console.log('[Webhook] 🛑 Message from bot itself, ignore');
+          return res.sendStatus(200);
+        }
+
+        const botMentioned = mentions.some(m =>
+          (m.id?.open_id && m.id.open_id === BOT_OPEN_ID) ||
+          (m.id?.app_id && m.id.app_id === process.env.LARK_APP_ID)
+        );
+
+        if (chatType === 'group' && !botMentioned) {
+          console.log('[Webhook] ℹ Group msg without @mention → ignore');
           return res.sendStatus(200);
         }
 
@@ -727,16 +724,6 @@ app.post('/webhook',
         // Thay thế @L-GPT nếu gõ tay
         messageContent = messageContent.replace(/@L-GPT/gi, 'bạn').trim();
         console.log('[Webhook] 📨 Text after full cleanup:', JSON.stringify(messageContent));
-
-        // ... Xử lý nội dung tin nhắn
-      }
-    } catch (err) {
-      console.error('[Webhook] ❌ Unhandled error:', err);
-      res.sendStatus(500);
-    }
-  }
-);
-
 
         /* ===================== REBATE HANDLER ===================== */
         if (messageType === 'text' && messageContent) {
