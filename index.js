@@ -451,10 +451,16 @@ async function checkTotalStockChange() {
     const token = await getAppAccessToken();
     const currentTotalStock = await getTotalStock(token);
 
-    if (currentTotalStock !== null && currentTotalStock !== lastTotalStock && lastTotalStock !== null) {
+    if (
+      currentTotalStock !== null &&
+      lastTotalStock !== null &&
+      currentTotalStock !== lastTotalStock
+    ) {
       console.log(`🔄 TotalStock thay đổi: ${lastTotalStock} → ${currentTotalStock}`);
 
-      const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
+      const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
+        ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
+        : [];
 
       const stockMsg = `✅ Đã đổ Stock. Số lượng (#WTD): ${currentTotalStock} thùng`;
       for (const chatId of uniqueGroupIds) {
@@ -467,7 +473,7 @@ async function checkTotalStockChange() {
 
       const salesMsg = await safeAnalyzeSalesChange(token);
       if (salesMsg && typeof salesMsg === 'string') {
-        const hash = (s) => s ? String(s).slice(0,500) : '';
+        const hash = (s) => s ? String(s).slice(0, 500) : '';
         const h = hash(salesMsg);
         if (h !== lastSalesMsgHash) {
           for (const chatId of uniqueGroupIds) {
@@ -481,11 +487,7 @@ async function checkTotalStockChange() {
         } else {
           console.log('ℹ Sales message giống lần trước → không gửi lại');
         }
-      } else {
-        console.log('ℹ analyzeSalesChange trả về rỗng/null → không gửi Sales message');
       }
-    } else {
-      console.log('ℹ checkTotalStockChange: Không có thay đổi TotalStock hoặc lần chạy đầu.');
     }
 
     lastTotalStock = currentTotalStock;
@@ -495,6 +497,7 @@ async function checkTotalStockChange() {
     sendingTotalStockLock = false;
   }
 }
+
 
 /* ==========================================================
    SECTION 10.1 — Check Rebate (on demand) 
