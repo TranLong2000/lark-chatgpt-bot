@@ -526,19 +526,19 @@ async function getRebateValue(token) {
       }
     });
 
-     console.log('[DEBUG] Full API response:', {
-      'code': resp.data?.code || 0,
-      'data': {
-        'revision': resp.data?.data?.revision || null,
-        'spreadsheetToken': resp.data?.data?.spreadsheetToken || null,
-        'valueRange': {
-          'majorDimension': resp.data?.data?.valueRange?.majorDimension || null,
-          'range': resp.data?.data?.valueRange?.range || null,
-          'revision': resp.data?.data?.valueRange?.revision || null,
-          'values': resp.data?.data?.valueRange?.values || []
-        }
-      }
-    });
+console.log('[DEBUG] Full API response:', {
+  'code': resp.data?.code || 0,
+  'data': {
+    'revision': resp.data?.data?.revision || null,
+    'spreadsheetToken': resp.data?.data?.spreadsheetToken || null,
+    'valueRange': {
+      'majorDimension': resp.data?.data?.valueRange?.majorDimension || null,
+      'range': resp.data?.data?.valueRange?.range || null,
+      'revision': resp.data?.data?.valueRange?.revision || null,
+      'values': JSON.stringify(resp.data?.data?.valueRange?.values) || []
+    }
+  }
+});
      
     const values = resp.data?.data?.valueRange?.values;
     if (!values || !Array.isArray(values) || !values[0] || !values[0][0]) {
