@@ -392,8 +392,8 @@ async function safeAnalyzeSalesChange(token) {
 
 async function getTotalStock(token) {
   try {
-    const targetColumn = 'G';
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!${targetColumn}:${targetColumn}`;
+    // Lấy cả cột A và G để lọc trước khi sum
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
@@ -402,18 +402,29 @@ async function getTotalStock(token) {
         dateTimeRenderOption: 'FormattedString'
       }
     });
-    const values = resp.data?.data?.valueRange?.values || [];
-    const sum = values.reduce((acc, row) => {
-      const v = row[0];
+
+    const rows = resp.data?.data?.valueRange?.values || [];
+    if (!rows.length) return null;
+
+    // Lọc bỏ dòng header và các dòng có WH (cột A) = "WTD"
+    const filtered = rows
+      .slice(1) // bỏ header
+      .filter(row => (row[0] || "").trim() !== "WTD");
+
+    // SUM cột G (index = 6)
+    const sum = filtered.reduce((acc, row) => {
+      const v = row[6]; // cột G
       const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
       return isNaN(num) ? acc : acc + num;
     }, 0);
+
     return (sum || sum === 0) ? sum.toString() : null;
   } catch (err) {
     console.error('❌ getTotalStock error:', err?.message || err);
     return null;
   }
 }
+
 
 // Section 10's sendMessageToGroup — giữ nguyên xuống dòng
 async function sendMessageToGroup(token, chatId, messageText) {
