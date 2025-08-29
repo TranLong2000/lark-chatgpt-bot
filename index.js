@@ -347,33 +347,23 @@ async function analyzeSalesChange(token) {
 
     const outOfStock = allOOS.slice(0,5);
 
-    // Trả về mảng dòng để format đẹp trong Lark post
-    let lines = [];
-    lines.push({ tag: 'text', text: `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}\n` });
-
+    let msg = `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}:\n`;
     if (increases.length) {
-      lines.push({ tag: 'text', text: `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n` });
+      msg += `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n`;
       increases.forEach(r => {
         const pct = r.change === Infinity ? '+∞%' : `+${r.change.toFixed(1)}%`;
-        lines.push({ tag: 'text', text: `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n` });
+        msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
       });
     }
-
     if (decreases.length) {
-      lines.push({ tag: 'text', text: `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n` });
-      decreases.forEach(r => {
-        lines.push({ tag: 'text', text: `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n` });
-      });
+      msg += `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n`;
+      decreases.forEach(r => { msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`; });
     }
-
     if (outOfStock.length) {
-      lines.push({ tag: 'text', text: `\n🚨 SKU hết hàng / Tổng ${allOOS.length} SKU OOS:\n` });
-      outOfStock.forEach(r => {
-        lines.push({ tag: 'text', text: `- ${r.productName} (${r.oosLabel})\n` });
-      });
+      msg += `\n🚨 SKU hết hàng / Tổng ${allOOS.length} SKU OOS:\n`;
+      outOfStock.forEach(r => { msg += `- ${r.productName} (${r.oosLabel})\n`; });
     }
-
-    return lines;
+    return msg;
   } catch (err) {
     console.error('❌ analyzeSalesChange error:', err?.message || err);
     return null;
@@ -383,12 +373,12 @@ async function analyzeSalesChange(token) {
 async function safeAnalyzeSalesChange(token) {
   let tries = 3;
   while (tries > 0) {
-    const msgLines = await analyzeSalesChange(token);
-    if (msgLines && Array.isArray(msgLines)) return msgLines;
+    const msg = await analyzeSalesChange(token);
+    if (msg && typeof msg === "string") return msg;
     await new Promise(r => setTimeout(r, 60000));
     tries--;
   }
-  return [{ tag: 'text', text: "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.\n" }];
+  return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
 }
 
 async function getTotalStock(token) {
@@ -409,18 +399,31 @@ async function getTotalStock(token) {
   }
 }
 
-async function sendMessageToGroup(token, chatId, messageLines) {
+/**
+ * GỬI DẠNG TEXT, CHỈNH ĐỂ XUỐNG DÒNG ĐÚNG & TRÁNH [object]
+ */
+async function sendMessageToGroup(token, chatId, messageText) {
   try {
+    // Bảo vệ: luôn ép về string; nếu là mảng -> join theo dòng
+    if (Array.isArray(messageText)) {
+      messageText = messageText.map(x =>
+        typeof x === 'string' ? x :
+        (x && typeof x.text === 'string' ? x.text : String(x))
+      ).join('\n');
+    } else if (typeof messageText !== 'string') {
+      messageText = String(messageText ?? '');
+    }
+
+    // Chuẩn hoá line break về \n
+    const normalized = messageText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
     const payload = {
       receive_id: chatId,
-      msg_type: 'post',
-      content: JSON.stringify({
-        zh_cn: {
-          title: '📢 Báo cáo kho & Sale',
-          content: [messageLines]
-        }
-      })
+      msg_type: 'text',
+      content: JSON.stringify({ text: normalized })
+      // Lark sẽ parse "\n" trong JSON và hiển thị xuống dòng
     };
+
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
       payload,
@@ -447,25 +450,23 @@ async function checkTotalStockChange() {
 
       const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
 
-      // Gửi tin stock
-      const stockLines = [{ tag: 'text', text: `✅ Đã đổ Stock. Số lượng: ${currentTotalStock} thùng\n` }];
+      const stockMsg = `✅ Đã đổ Stock. Số lượng: ${currentTotalStock} thùng`;
       for (const chatId of uniqueGroupIds) {
         try {
-          await sendMessageToGroup(token, chatId, stockLines);
+          await sendMessageToGroup(token, chatId, stockMsg);
         } catch (err) {
           console.error('❌ Lỗi gửi Stock message to', chatId, err?.message || err);
         }
       }
 
-      // Gửi tin sale
-      const salesLines = await safeAnalyzeSalesChange(token);
-      if (salesLines && Array.isArray(salesLines)) {
-        const hash = (s) => s ? JSON.stringify(s).slice(0,500) : '';
-        const h = hash(salesLines);
+      const salesMsg = await safeAnalyzeSalesChange(token);
+      if (salesMsg && typeof salesMsg === 'string') {
+        const hash = (s) => s ? String(s).slice(0,500) : '';
+        const h = hash(salesMsg);
         if (h !== lastSalesMsgHash) {
           for (const chatId of uniqueGroupIds) {
             try {
-              await sendMessageToGroup(token, chatId, salesLines);
+              await sendMessageToGroup(token, chatId, salesMsg);
             } catch (err) {
               console.error('❌ Lỗi gửi Sales message to', chatId, err?.message || err);
             }
@@ -488,6 +489,7 @@ async function checkTotalStockChange() {
     sendingTotalStockLock = false;
   }
 }
+
 
 /* ==========================================================
    SECTION 10 — Check Rebate (on demand)
