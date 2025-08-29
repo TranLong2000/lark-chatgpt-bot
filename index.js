@@ -356,7 +356,7 @@ async function analyzeSalesChange(token) {
 
     const outOfStock = allOOS.slice(0,5);
 
-    let msg = `📊 Biến động Sale (WBT): AVG D-7 → ${currentLabel}:\n`;
+    let msg = `📊 Biến động Sale: AVG D-7 → ${currentLabel}:\n`;
     if (increases.length) {
       msg += `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n`;
       increases.forEach(r => {
@@ -456,7 +456,7 @@ async function checkTotalStockChange() {
 
       const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
 
-      const stockMsg = `✅ Đã đổ Stock. Số lượng: ${currentTotalStock} thùng`;
+      const stockMsg = `✅ Đã đổ Stock. Số lượng (#WTD): ${currentTotalStock} thùng`;
       for (const chatId of uniqueGroupIds) {
         try {
           await sendMessageToGroup(token, chatId, stockMsg);
