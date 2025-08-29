@@ -406,10 +406,10 @@ async function getTotalStock(token) {
     const rows = resp.data?.data?.valueRange?.values || [];
     if (!rows.length) return null;
 
-    // Lọc bỏ dòng header và các dòng có WH (cột A) = "WTD"
+    // Lọc bỏ dòng header và các dòng có WH (cột A) = "WBT"
     const filtered = rows
       .slice(1) // bỏ header
-      .filter(row => (row[0] || "").trim() !== "WTD");
+      .filter(row => (row[0] || "").trim() === "WBT");
 
     // SUM cột G (index = 6)
     const sum = filtered.reduce((acc, row) => {
