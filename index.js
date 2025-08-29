@@ -399,24 +399,22 @@ async function getTotalStock(token) {
   }
 }
 
+// ==== SỬA HÀM NÀY ĐỂ HỖ TRỢ XUỐNG DÒNG ====
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
-    if (Array.isArray(messageText)) {
-      messageText = messageText.join('\n');
-    } else if (typeof messageText !== 'string') {
-      messageText = String(messageText ?? '');
-    }
-
-    // Dùng ký tự xuống dòng thật \u000A thay vì \n
-    const normalized = messageText
-      .replace(/\r\n/g, '\u000A')
-      .replace(/\r/g, '\u000A')
-      .replace(/\n/g, '\u000A');
+    const lines = String(messageText ?? '')
+      .split('\n')
+      .map(line => [{ tag: 'text', text: line }]);
 
     const payload = {
       receive_id: chatId,
-      msg_type: 'text',
-      content: JSON.stringify({ text: normalized })
+      msg_type: 'post',
+      content: JSON.stringify({
+        zh_cn: {
+          title: '',
+          content: lines
+        }
+      })
     };
 
     await axios.post(
@@ -428,7 +426,6 @@ async function sendMessageToGroup(token, chatId, messageText) {
     console.error('❌ sendMessageToGroup error to', chatId, err?.response?.data || err?.message || err);
   }
 }
-
 
 async function checkTotalStockChange() {
   if (sendingTotalStockLock) {
@@ -485,7 +482,6 @@ async function checkTotalStockChange() {
     sendingTotalStockLock = false;
   }
 }
-
 
 /* ==========================================================
    SECTION 10 — Check Rebate (on demand)
