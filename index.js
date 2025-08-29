@@ -526,27 +526,13 @@ async function getRebateValue(token) {
       }
     });
 
-    console.log('[DEBUG] Full API response:', {
-      'code': resp.data?.code || 0,
-      'data': {
-        'revision': resp.data?.data?.revision || null,
-        'spreadsheetToken': resp.data?.data?.spreadsheetToken || null,
-        'valueRange': {
-          'majorDimension': resp.data?.data?.valueRange?.majorDimension || null,
-          'range': resp.data?.data?.valueRange?.range || null,
-          'revision': resp.data?.data?.valueRange?.revision || null,
-          'values': resp.data?.data?.valueRange?.values || []
-        }
-      }
-    });
-
     const values = resp.data?.data?.valueRange?.values;
-    if (!values || !Array.isArray(values) || !values[0] || !values[0][1]) { // Đổi từ values[0][0] thành values[0][1] để lấy ô B1
-      console.warn("[Rebate] ⚠ Cell B1 is empty or not found"); // Cập nhật thông báo cho B1
+    if (!values || !Array.isArray(values) || !values[0] || !values[0][0]) {
+      console.warn("[Rebate] ⚠ Cell C1 is empty or not found");
       return null;
     }
 
-    const rebateValue = values[0][1]; // Lấy giá trị từ cột 1 (B1)
+    const rebateValue = values[0][0];
     return rebateValue;
 
   } catch (err) {
