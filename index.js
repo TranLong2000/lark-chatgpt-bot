@@ -468,6 +468,105 @@ async function checkTotalStockChange() {
   }
 }
 
+/* ==========================================================
+   SECTION 10 — Check Rebate (on demand)
+   ========================================================== */
+
+function safeText(input) {
+  if (input === null || input === undefined) return '';
+  return String(input)
+    .replace(/[\u0000-\u001F\u007F]/g, '') // loại bỏ control chars
+    .trim();
+}
+
+async function getRebateValue(token) {
+  try {
+    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheetToken
+    const SHEET_ID_REBATE = "2rh8Uy"; // sheetId
+    const range = "A1:B1";
+
+    // Truyền trực tiếp sheetId vào range
+    const rangeParam = `${SHEET_ID_REBATE}!${range}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(rangeParam)}`;
+    console.log("[DEBUG] Request URL:", url);
+
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 20000,
+      params: {
+        valueRenderOption: 'FormattedValue', // Đổi sang 'Formula' nếu muốn lấy công thức gốc FormattedValue
+        dateTimeRenderOption: 'FormattedString'
+      }
+    });
+
+    console.log("[DEBUG] Full API response:", JSON.stringify(resp.data, null, 2));
+
+    const values = resp.data?.data?.valueRange?.values;
+    console.log("[DEBUG] Raw values from sheet:", values);
+
+    if (!values || !Array.isArray(values) || !values[0] || !values[0][0]) {
+      console.warn("[Rebate] ⚠ Cell C1 is empty or not found");
+      return null;
+    }
+
+    const rebateValue = values[0][0];
+    console.log("[Rebate] Calculated rebate value:", rebateValue);
+    return rebateValue;
+
+  } catch (err) {
+    console.error("[ERROR] getRebateValue failed:", err.response?.data || err.message);
+    return null;
+  }
+}
+
+async function sendMessageToGroup(token, chatId, messageText) {
+  try {
+    const safeMsg = safeText(messageText);
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+      {
+        receive_id: chatId,
+        msg_type: "text",
+        content: JSON.stringify({ text: safeMsg })
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    console.log(`Message sent to group ${chatId}:`, safeMsg);
+  } catch (err) {
+    console.error(`sendMessageToGroup error to ${chatId}:`, err.response?.data || err.message);
+  }
+}
+
+async function sendRebateMessage() {
+  try {
+    const token = await getAppAccessToken();
+    const rebateValue = await getRebateValue(token);
+
+    if (!rebateValue) {
+      console.warn("Không lấy được giá trị rebate từ sheet.");
+      return false;
+    }
+
+    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
+      ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
+      : [];
+
+    const rebateMsg = `Rebate hiện tại: ${rebateValue}`;
+    for (const chatId of uniqueGroupIds) {
+      await sendMessageToGroup(token, chatId, rebateMsg);
+    }
+    return true;
+  } catch (err) {
+    console.error('sendRebateMessage error:', err?.message || err);
+    return false;
+  }
+}
+
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
    ======================================================= */
