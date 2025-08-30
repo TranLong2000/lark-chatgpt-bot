@@ -381,28 +381,36 @@ async function safeAnalyzeSalesChange() {
 async function getTotalStock(token) {
   try {
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!D:G`;
+    log(`📡 Đang lấy dữ liệu D:G từ sheet...`);
+
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: { valueRenderOption: 'FormattedValue', dateTimeRenderOption: 'FormattedString' }
     });
-    const rows = resp.data?.data?.valueRange?.values || [];
-    if (!rows.length) return null;
 
-    const sum = rows.slice(1)
-      .filter(row => (row[0] || "").trim() === "Binh Tan Warehouse")
-      .reduce((acc, row) => {
-        const num = parseFloat((row[4] ?? '').toString().replace(/,/g, ''));
-        return isNaN(num) ? acc : acc + num;
+    const rows = resp.data?.data?.valueRange?.values || [];
+    if (rows.length <= 1) {
+      log(`⚠ Không có dữ liệu stock (D:G)`);
+      return null;
+    }
+
+    const totalStock = rows
+      .slice(1) // bỏ header
+      .filter(row => (row[2] || '').trim() === 'Binh Tan Warehouse')
+      .reduce((sum, row) => {
+        const num = parseFloat((row[3] ?? '').toString().replace(/,/g, ''));
+        return isNaN(num) ? sum : sum + num;
       }, 0);
 
-    log(`📦 Tổng stock WBT: ${sum}`);
-    return sum.toString();
+    log(`📦 Tổng stock (Binh Tan Warehouse): ${totalStock}`);
+    return totalStock;
   } catch (err) {
     log('❌ getTotalStock lỗi:', err?.message || err);
     return null;
   }
 }
+
 
 async function sendMessageToGroup(token, chatId, text) {
   try {
