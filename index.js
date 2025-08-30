@@ -391,32 +391,37 @@ async function safeAnalyzeSalesChange(token) {
 }
 
 async function getTotalStock(token) {
-  try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!D:G`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000,
-      params: { valueRenderOption: 'FormattedValue', dateTimeRenderOption: 'FormattedString' }
-    });
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!E:G`;
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 60000, // tăng timeout
+        params: { valueRenderOption: 'FormattedValue', dateTimeRenderOption: 'FormattedString' }
+      });
 
-    const rows = resp.data?.data?.valueRange?.values || [];
-    if (rows.length <= 1) return null;
+      const rows = resp.data?.data?.valueRange?.values || [];
+      if (rows.length <= 1) return null;
 
-    // cột F (warehouse) => index = 2; cột G (totalStock) => index = 3
-    const totalStock = rows
-      .slice(1)
-      .filter(row => (row[2] || '').trim() === 'Binh Tan Warehouse')
-      .reduce((sum, row) => {
-        const num = parseFloat((row[3] ?? '').toString().replace(/,/g, ''));
-        return isNaN(num) ? sum : sum + num;
-      }, 0);
+      // cột F (warehouse) => index = 1; cột G (totalStock) => index = 2
+      const totalStock = rows
+        .slice(1)
+        .filter(row => (row[1] || '').trim() === 'Binh Tan Warehouse')
+        .reduce((sum, row) => {
+          const num = parseFloat((row[2] ?? '').toString().replace(/,/g, ''));
+          return isNaN(num) ? sum : sum + num;
+        }, 0);
 
-    return totalStock;
-  } catch (err) {
-    console.error('❌ getTotalStock lỗi:', err?.message || err);
-    return null;
+      return totalStock;
+
+    } catch (err) {
+      console.error(`❌ getTotalStock lỗi attempt ${attempt}:`, err?.message || err);
+      if (attempt < 3) await new Promise(r => setTimeout(r, 2000));
+    }
   }
+  return null;
 }
+
 
 // Section 10's sendMessageToGroup — giữ nguyên xuống dòng
 async function sendMessageToGroup(token, chatId, messageText) {
