@@ -248,8 +248,6 @@ function toNumber(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-Sửa code giúp tôi nhé, tinh gọn và in log giúp tôi nhé
-
 /* ==========================================================
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
