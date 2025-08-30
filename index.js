@@ -116,7 +116,7 @@ async function getAppAccessToken() {
         app_id: process.env.LARK_APP_ID, 
         app_secret: process.env.LARK_APP_SECRET 
       },
-      { timeout: 20000 }
+      { timeout: 60000 }
     );
     return resp.data.app_access_token;
   } catch (error) {
@@ -268,7 +268,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
       const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AK`)}`;
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${freshToken}` },
-        timeout: 20000,
+        timeout: 60000,
         params: {
           valueRenderOption: 'FormattedValue',
           dateTimeRenderOption: 'FormattedString'
@@ -396,7 +396,7 @@ async function getTotalStock(token) {
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000,
+      timeout: 60000,
       params: {
         valueRenderOption: 'FormattedValue',
         dateTimeRenderOption: 'FormattedString'
