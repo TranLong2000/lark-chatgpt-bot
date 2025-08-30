@@ -257,55 +257,71 @@ let lastTotalStock = null;
 let sendingTotalStockLock = false;
 let lastSalesMsgHash = null;
 
-async function getSaleComparisonData(token, prevCol, currentCol) {
-  const col = SALE_COL_MAP;
-  const prevIdx = colToIndex(prevCol);
-  const currIdx = colToIndex(currentCol);
+// ====================== GET SALES COMPARISON ======================
+async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
+  try {
+    const col = SALE_COL_MAP;
+    const prevIdx = colToIndex(prevCol);
+    const currIdx = colToIndex(currentCol);
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const freshToken = await getAppAccessToken();
-      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AK`)}`;
-      const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${freshToken}` },
-        timeout: 60000,
-        params: {
-          valueRenderOption: 'FormattedValue',
-          dateTimeRenderOption: 'FormattedString'
-        }
-      });
-
-      const rows = resp.data?.data?.valueRange?.values || [];
-      if (rows && rows.length > 1) {
-        return rows.slice(1).map((r, i) => {
-          const productName = r[col.E] ?? `Dòng ${i + 2}`;
-          const warehouse   = r[col.F] ?? '';
-          const totalStock  = toNumber(r[col.G]);
-          const avr7daysRaw = r[col.M] ?? '';
-          const sale3day    = toNumber(r[col.N]);
-          const sale2day    = toNumber(r[col.O]);
-          const sale1day    = toNumber(r[col.P]);
-          const finalStatus = (r[col.AK] ?? '').toString().trim();
-          const prev    = toNumber(r[prevIdx]);
-          const current = toNumber(r[currIdx]);
-          let change = 0;
-          if (prev === 0 && current > 0) change = Infinity;
-          else if (prev > 0) change = ((current - prev) / prev) * 100;
-
-          return { productName, warehouse, finalStatus, totalStock, avr7days: avr7daysRaw, sale3day, sale2day, sale1day, prev, current, change };
-        });
+    const freshToken = await getAppAccessToken();
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AK`)}`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${freshToken}` },
+      timeout: 20000, // giảm xuống 20s
+      params: {
+        valueRenderOption: 'FormattedValue',
+        dateTimeRenderOption: 'FormattedString'
       }
+    });
 
-      await new Promise(r => setTimeout(r, 2000));
-    } catch (err) {
-      console.error('❌ getSaleComparisonData error attempt', attempt, err?.message || err);
-      await new Promise(r => setTimeout(r, 2000));
+    const rows = resp.data?.data?.valueRange?.values || [];
+    if (rows && rows.length > 1) {
+      return rows.slice(1).map((r, i) => {
+        const productName = r[col.E] ?? `Dòng ${i + 2}`;
+        const warehouse   = r[col.F] ?? '';
+        const totalStock  = toNumber(r[col.G]);
+        const avr7daysRaw = r[col.M] ?? '';
+        const sale3day    = toNumber(r[col.N]);
+        const sale2day    = toNumber(r[col.O]);
+        const sale1day    = toNumber(r[col.P]);
+        const finalStatus = (r[col.AK] ?? '').toString().trim();
+        const prev    = toNumber(r[prevIdx]);
+        const current = toNumber(r[currIdx]);
+        let change = 0;
+        if (prev === 0 && current > 0) change = Infinity;
+        else if (prev > 0) change = ((current - prev) / prev) * 100;
+
+        return { productName, warehouse, finalStatus, totalStock, avr7days: avr7daysRaw, sale3day, sale2day, sale1day, prev, current, change };
+      });
+    }
+    return null;
+  } catch (err) {
+    console.error('❌ getSaleComparisonDataOnce error:', err?.message || err);
+    return null;
+  }
+}
+
+async function getSaleComparisonData(token, prevCol, currentCol) {
+  const maxRetries = 3;
+  const retryDelayMs = 20000;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    console.log(`📥 Lấy dữ liệu Sale (lần ${attempt}/${maxRetries})...`);
+    const data = await getSaleComparisonDataOnce(token, prevCol, currentCol);
+    if (data && data.length) {
+      console.log(`✅ Lấy dữ liệu Sale thành công ở lần ${attempt}`);
+      return data; // trả về ngay khi có dữ liệu
+    }
+    if (attempt < maxRetries) {
+      console.log(`⏳ Đợi ${retryDelayMs / 1000}s rồi thử lại...`);
+      await new Promise(r => setTimeout(r, retryDelayMs));
     }
   }
-
+  console.error('❌ Thử lấy dữ liệu Sale 3 lần nhưng thất bại.');
   return [];
 }
 
+// ====================== ANALYZE SALES CHANGE ======================
 async function analyzeSalesChange(token) {
   try {
     const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
@@ -384,90 +400,76 @@ async function safeAnalyzeSalesChange(token) {
   while (tries > 0) {
     const msg = await analyzeSalesChange(token);
     if (msg && typeof msg === "string") return msg;
-    await new Promise(r => setTimeout(r, 60000));
+    await new Promise(r => setTimeout(r, 20000)); // giảm xuống 20s
     tries--;
   }
   return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
 }
 
+// ====================== GET TOTAL STOCK ======================
+async function getTotalStockOnce(token) {
+  try {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 20000,
+      params: {
+        valueRenderOption: 'FormattedValue',
+        dateTimeRenderOption: 'FormattedString'
+      }
+    });
+
+    const rows = resp.data?.data?.valueRange?.values || [];
+    if (!rows.length) return null;
+
+    const filtered = rows.slice(1).filter(row => (row[0] || "").trim() === "WBT");
+    const sum = filtered.reduce((acc, row) => {
+      const v = row[6];
+      const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
+      return isNaN(num) ? acc : acc + num;
+    }, 0);
+
+    return (sum || sum === 0) ? sum.toString() : null;
+  } catch (err) {
+    console.error(`❌ getTotalStockOnce error:`, err?.message || err);
+    return null;
+  }
+}
+
 async function getTotalStock(token) {
   const maxRetries = 3;
-  const retryDelayMs = 20000; // 20 giây
-
+  const retryDelayMs = 20000;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`📥 Đang lấy dữ liệu Stock (lần ${attempt}/${maxRetries})...`);
-
-      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
-      const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 60000,
-        params: {
-          valueRenderOption: 'FormattedValue',
-          dateTimeRenderOption: 'FormattedString'
-        }
-      });
-
-      const rows = resp.data?.data?.valueRange?.values || [];
-      if (!rows.length) {
-        console.warn('⚠ Không có dữ liệu từ sheet');
-        return null; // không cần retry nếu sheet rỗng
-      }
-
-      const filtered = rows
-        .slice(1)
-        .filter(row => (row[0] || "").trim() === "WBT");
-
-      const sum = filtered.reduce((acc, row) => {
-        const v = row[6];
-        const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
-        return isNaN(num) ? acc : acc + num;
-      }, 0);
-
-      console.log(`✅ Lấy dữ liệu thành công ở lần ${attempt}`);
-      return (sum || sum === 0) ? sum.toString() : null;
-
-    } catch (err) {
-      console.error(`❌ getTotalStock error (lần ${attempt}):`, err?.message || err);
-      if (attempt < maxRetries) {
-        console.log(`⏳ Đợi ${retryDelayMs / 1000}s rồi thử lại...`);
-        await new Promise(res => setTimeout(res, retryDelayMs));
-      }
+    console.log(`📥 Đang lấy dữ liệu Stock (lần ${attempt}/${maxRetries})...`);
+    const stock = await getTotalStockOnce(token);
+    if (stock !== null) {
+      console.log(`✅ Lấy dữ liệu Stock thành công ở lần ${attempt}`);
+      return stock;
+    }
+    if (attempt < maxRetries) {
+      console.log(`⏳ Đợi ${retryDelayMs / 1000}s rồi thử lại...`);
+      await new Promise(res => setTimeout(res, retryDelayMs));
     }
   }
-
   console.error('❌ Thử lấy dữ liệu Stock 3 lần nhưng đều thất bại.');
   return null;
 }
 
-// sendMessageToGroup — thêm retry
+// ====================== SEND MESSAGE ======================
 async function sendMessageToGroup(token, chatId, messageText) {
-  const maxRetries = 3;
-  const retryDelayMs = 5000; // 5 giây
-
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      console.log(`📤 Gửi tin nhắn tới group ${chatId} (lần ${attempt}/${maxRetries})...`);
-      const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
-      await axios.post(
-        `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
-        payload,
-        { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-      );
-      console.log(`✅ Gửi tin nhắn thành công tới ${chatId} ở lần ${attempt}`);
-      return;
-    } catch (err) {
-      console.error(`❌ sendMessageToGroup error (lần ${attempt}) tới ${chatId}:`, err?.response?.data || err?.message || err);
-      if (attempt < maxRetries) {
-        console.log(`⏳ Đợi ${retryDelayMs / 1000}s rồi thử lại...`);
-        await new Promise(res => setTimeout(res, retryDelayMs));
-      }
-    }
+  try {
+    const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+  } catch (err) {
+    console.error('❌ sendMessageToGroup error to', chatId, err?.response?.data || err?.message || err);
   }
-
-  console.error(`❌ Gửi tin nhắn thất bại sau ${maxRetries} lần tới ${chatId}`);
 }
 
+// ====================== MAIN CHECK ======================
 async function checkTotalStockChange() {
   if (sendingTotalStockLock) {
     console.log('⚠ checkTotalStockChange: đang có tiến trình gửi - bỏ qua lần này');
@@ -517,7 +519,6 @@ async function checkTotalStockChange() {
     sendingTotalStockLock = false;
   }
 }
-
 
 /* ==========================================================
    SECTION 10.1 — Check Rebate (on demand) 
