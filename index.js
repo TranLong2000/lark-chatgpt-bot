@@ -413,7 +413,7 @@ async function getTotalStock(token) {
 
     return totalStock;
   } catch (err) {
-    log('❌ getTotalStock lỗi:', err?.message || err);
+    console.error('❌ getTotalStock lỗi:', err?.message || err);
     return null;
   }
 }
