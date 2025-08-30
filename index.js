@@ -392,31 +392,39 @@ async function safeAnalyzeSalesChange(token) {
 
 async function getTotalStock(token) {
   try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!D:G`;
+    // Lấy cả cột A và G để lọc trước khi sum
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
-      params: { valueRenderOption: 'FormattedValue', dateTimeRenderOption: 'FormattedString' }
+      params: {
+        valueRenderOption: 'FormattedValue',
+        dateTimeRenderOption: 'FormattedString'
+      }
     });
 
     const rows = resp.data?.data?.valueRange?.values || [];
-    if (rows.length <= 1) return null;
+    if (!rows.length) return null;
 
-    // cột F (warehouse) => index = 2; cột G (totalStock) => index = 3
-    const totalStock = rows
-      .slice(1)
-      .filter(row => (row[2] || '').trim() === 'Binh Tan Warehouse')
-      .reduce((sum, row) => {
-        const num = parseFloat((row[3] ?? '').toString().replace(/,/g, ''));
-        return isNaN(num) ? sum : sum + num;
-      }, 0);
+    // Lọc bỏ dòng header và các dòng có WH (cột A) = "WBT"
+    const filtered = rows
+      .slice(1) // bỏ header
+      .filter(row => (row[0] || "").trim() === "WBT");
 
-    return totalStock;
+    // SUM cột G (index = 6)
+    const sum = filtered.reduce((acc, row) => {
+      const v = row[6]; // cột G
+      const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
+      return isNaN(num) ? acc : acc + num;
+    }, 0);
+
+    return (sum || sum === 0) ? sum.toString() : null;
   } catch (err) {
-    log('❌ getTotalStock lỗi:', err?.message || err);
+    console.error('❌ getTotalStock error:', err?.message || err);
     return null;
   }
 }
+
 
 // Section 10's sendMessageToGroup — giữ nguyên xuống dòng
 async function sendMessageToGroup(token, chatId, messageText) {
