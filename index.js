@@ -414,14 +414,12 @@ async function getTotalStock(token) {
         return null; // không cần retry nếu sheet rỗng
       }
 
-      // Lọc bỏ dòng header và các dòng có WH (cột A) = "WBT"
       const filtered = rows
-        .slice(1) // bỏ header
+        .slice(1)
         .filter(row => (row[0] || "").trim() === "WBT");
 
-      // SUM cột G (index = 6)
       const sum = filtered.reduce((acc, row) => {
-        const v = row[6]; // cột G
+        const v = row[6];
         const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
         return isNaN(num) ? acc : acc + num;
       }, 0);
@@ -442,19 +440,32 @@ async function getTotalStock(token) {
   return null;
 }
 
-
-// Section 10's sendMessageToGroup — giữ nguyên xuống dòng
+// sendMessageToGroup — thêm retry
 async function sendMessageToGroup(token, chatId, messageText) {
-  try {
-    const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
-    await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
-      payload,
-      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-    );
-  } catch (err) {
-    console.error('❌ sendMessageToGroup error to', chatId, err?.response?.data || err?.message || err);
+  const maxRetries = 3;
+  const retryDelayMs = 5000; // 5 giây
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`📤 Gửi tin nhắn tới group ${chatId} (lần ${attempt}/${maxRetries})...`);
+      const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
+      await axios.post(
+        `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+        payload,
+        { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+      );
+      console.log(`✅ Gửi tin nhắn thành công tới ${chatId} ở lần ${attempt}`);
+      return;
+    } catch (err) {
+      console.error(`❌ sendMessageToGroup error (lần ${attempt}) tới ${chatId}:`, err?.response?.data || err?.message || err);
+      if (attempt < maxRetries) {
+        console.log(`⏳ Đợi ${retryDelayMs / 1000}s rồi thử lại...`);
+        await new Promise(res => setTimeout(res, retryDelayMs));
+      }
+    }
   }
+
+  console.error(`❌ Gửi tin nhắn thất bại sau ${maxRetries} lần tới ${chatId}`);
 }
 
 async function checkTotalStockChange() {
@@ -481,11 +492,7 @@ async function checkTotalStockChange() {
 
       const stockMsg = `✅ Đã đổ Stock. Số lượng (WBT): ${currentTotalStock} thùng`;
       for (const chatId of uniqueGroupIds) {
-        try {
-          await sendMessageToGroup(token, chatId, stockMsg);
-        } catch (err) {
-          console.error('❌ Lỗi gửi Stock message to', chatId, err?.message || err);
-        }
+        await sendMessageToGroup(token, chatId, stockMsg);
       }
 
       const salesMsg = await safeAnalyzeSalesChange(token);
@@ -494,11 +501,7 @@ async function checkTotalStockChange() {
         const h = hash(salesMsg);
         if (h !== lastSalesMsgHash) {
           for (const chatId of uniqueGroupIds) {
-            try {
-              await sendMessageToGroup(token, chatId, salesMsg);
-            } catch (err) {
-              console.error('❌ Lỗi gửi Sales message to', chatId, err?.message || err);
-            }
+            await sendMessageToGroup(token, chatId, salesMsg);
           }
           lastSalesMsgHash = h;
         } else {
@@ -514,6 +517,7 @@ async function checkTotalStockChange() {
     sendingTotalStockLock = false;
   }
 }
+
 
 /* ==========================================================
    SECTION 10.1 — Check Rebate (on demand) 
