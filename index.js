@@ -391,40 +391,49 @@ async function safeAnalyzeSalesChange(token) {
 }
 
 async function getTotalStock(token) {
-  try {
-    // Lấy cả cột A và G để lọc trước khi sum
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 60000,
-      params: {
-        valueRenderOption: 'FormattedValue',
-        dateTimeRenderOption: 'FormattedString'
+  const maxRetries = 3;
+  const retryDelayMs = 20000; // 20 giây
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Lấy cả cột A và G để lọc trước khi sum
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 60000,
+        params: {
+          valueRenderOption: 'FormattedValue',
+          dateTimeRenderOption: 'FormattedString'
+        }
+      });
+
+      const rows = resp.data?.data?.valueRange?.values || [];
+      if (!rows.length) return null;
+
+      // Lọc bỏ dòng header và các dòng có WH (cột A) = "WBT"
+      const filtered = rows
+        .slice(1) // bỏ header
+        .filter(row => (row[0] || "").trim() === "WBT");
+
+      // SUM cột G (index = 6)
+      const sum = filtered.reduce((acc, row) => {
+        const v = row[6]; // cột G
+        const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
+        return isNaN(num) ? acc : acc + num;
+      }, 0);
+
+      return (sum || sum === 0) ? sum.toString() : null;
+    } catch (err) {
+      console.error(`❌ getTotalStock error (lần ${attempt}):`, err?.message || err);
+      if (attempt < maxRetries) {
+        console.log(`⏳ Đợi ${retryDelayMs / 1000}s rồi thử lại...`);
+        await new Promise(res => setTimeout(res, retryDelayMs));
       }
-    });
-
-    const rows = resp.data?.data?.valueRange?.values || [];
-    if (!rows.length) return null;
-
-    // Lọc bỏ dòng header và các dòng có WH (cột A) = "WBT"
-    const filtered = rows
-      .slice(1) // bỏ header
-      .filter(row => (row[0] || "").trim() === "WBT");
-
-    // SUM cột G (index = 6)
-    const sum = filtered.reduce((acc, row) => {
-      const v = row[6]; // cột G
-      const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
-      return isNaN(num) ? acc : acc + num;
-    }, 0);
-
-    return (sum || sum === 0) ? sum.toString() : null;
-  } catch (err) {
-    console.error('❌ getTotalStock error:', err?.message || err);
-    return null;
+    }
   }
-}
 
+  return null;
+}
 
 // Section 10's sendMessageToGroup — giữ nguyên xuống dòng
 async function sendMessageToGroup(token, chatId, messageText) {
