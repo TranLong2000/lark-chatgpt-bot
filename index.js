@@ -392,7 +392,7 @@ async function getTotalStock(token) {
     const sum = rows.slice(1)
       .filter(row => (row[0] || "").trim() === "Binh Tan Warehouse")
       .reduce((acc, row) => {
-        const num = parseFloat((row[6] ?? '').toString().replace(/,/g, ''));
+        const num = parseFloat((row[4] ?? '').toString().replace(/,/g, ''));
         return isNaN(num) ? acc : acc + num;
       }, 0);
 
