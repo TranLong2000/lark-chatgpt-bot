@@ -422,6 +422,77 @@ async function getTotalStock(token) {
   return null;
 }
 
+// Section 10's sendMessageToGroup — giữ nguyên xuống dòng
+async function sendMessageToGroup(token, chatId, messageText) {
+  try {
+    const payload = { receive_id: chatId, msg_type: 'text', content: JSON.stringify({ text: messageText }) };
+    await axios.post(
+      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+      payload,
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+  } catch (err) {
+    console.error('❌ sendMessageToGroup error to', chatId, err?.response?.data || err?.message || err);
+  }
+}
+
+async function checkTotalStockChange() {
+  if (sendingTotalStockLock) {
+    console.log('⚠ checkTotalStockChange: đang có tiến trình gửi - bỏ qua lần này');
+    return;
+  }
+  sendingTotalStockLock = true;
+
+  try {
+    const token = await getAppAccessToken();
+    const currentTotalStock = await getTotalStock(token);
+
+    if (
+      currentTotalStock !== null &&
+      lastTotalStock !== null &&
+      currentTotalStock !== lastTotalStock
+    ) {
+      console.log(`🔄 TotalStock thay đổi: ${lastTotalStock} → ${currentTotalStock}`);
+
+      const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
+        ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
+        : [];
+
+      const stockMsg = `✅ Đã đổ Stock. Số lượng (WBT): ${currentTotalStock} thùng`;
+      for (const chatId of uniqueGroupIds) {
+        try {
+          await sendMessageToGroup(token, chatId, stockMsg);
+        } catch (err) {
+          console.error('❌ Lỗi gửi Stock message to', chatId, err?.message || err);
+        }
+      }
+
+      const salesMsg = await safeAnalyzeSalesChange(token);
+      if (salesMsg && typeof salesMsg === 'string') {
+        const hash = (s) => s ? String(s).slice(0, 500) : '';
+        const h = hash(salesMsg);
+        if (h !== lastSalesMsgHash) {
+          for (const chatId of uniqueGroupIds) {
+            try {
+              await sendMessageToGroup(token, chatId, salesMsg);
+            } catch (err) {
+              console.error('❌ Lỗi gửi Sales message to', chatId, err?.message || err);
+            }
+          }
+          lastSalesMsgHash = h;
+        } else {
+          console.log('ℹ Sales message giống lần trước → không gửi lại');
+        }
+      }
+    }
+
+    lastTotalStock = currentTotalStock;
+  } catch (err) {
+    console.error('❌ checkTotalStockChange error:', err?.message || err);
+  } finally {
+    sendingTotalStockLock = false;
+  }
+}
 
 // Section 10's sendMessageToGroup — giữ nguyên xuống dòng
 async function sendMessageToGroup(token, chatId, messageText) {
