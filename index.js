@@ -396,7 +396,8 @@ async function getTotalStock(token) {
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // Lấy cả cột A và G để lọc trước khi sum
+      console.log(`📥 Đang lấy dữ liệu Stock (lần ${attempt}/${maxRetries})...`);
+
       const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${token}` },
@@ -408,7 +409,10 @@ async function getTotalStock(token) {
       });
 
       const rows = resp.data?.data?.valueRange?.values || [];
-      if (!rows.length) return null;
+      if (!rows.length) {
+        console.warn('⚠ Không có dữ liệu từ sheet');
+        return null; // không cần retry nếu sheet rỗng
+      }
 
       // Lọc bỏ dòng header và các dòng có WH (cột A) = "WBT"
       const filtered = rows
@@ -422,7 +426,9 @@ async function getTotalStock(token) {
         return isNaN(num) ? acc : acc + num;
       }, 0);
 
+      console.log(`✅ Lấy dữ liệu thành công ở lần ${attempt}`);
       return (sum || sum === 0) ? sum.toString() : null;
+
     } catch (err) {
       console.error(`❌ getTotalStock error (lần ${attempt}):`, err?.message || err);
       if (attempt < maxRetries) {
@@ -432,8 +438,10 @@ async function getTotalStock(token) {
     }
   }
 
+  console.error('❌ Thử lấy dữ liệu Stock 3 lần nhưng đều thất bại.');
   return null;
 }
+
 
 // Section 10's sendMessageToGroup — giữ nguyên xuống dòng
 async function sendMessageToGroup(token, chatId, messageText) {
