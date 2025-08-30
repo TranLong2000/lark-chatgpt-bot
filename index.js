@@ -396,7 +396,7 @@ async function getTotalStock(token) {
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000,
+      timeout: 60000,
       params: {
         valueRenderOption: 'FormattedValue',
         dateTimeRenderOption: 'FormattedString'
