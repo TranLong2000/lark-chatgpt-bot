@@ -393,7 +393,7 @@ async function safeAnalyzeSalesChange(token) {
 async function getTotalStock(token) {
   try {
     // Lấy cả cột A và G để lọc trước khi sum
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!D:G`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
@@ -406,10 +406,10 @@ async function getTotalStock(token) {
     const rows = resp.data?.data?.valueRange?.values || [];
     if (!rows.length) return null;
 
-    // Lọc bỏ dòng header và các dòng có WH (cột A) = "WBT"
+    // Lọc bỏ dòng header và các dòng có WH (cột D) = "Binh Tan Warehouse"
     const filtered = rows
       .slice(1) // bỏ header
-      .filter(row => (row[0] || "").trim() === "WBT");
+      .filter(row => (row[0] || "").trim() === "Binh Tan Warehouse");
 
     // SUM cột G (index = 6)
     const sum = filtered.reduce((acc, row) => {
