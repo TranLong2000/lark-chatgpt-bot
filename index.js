@@ -524,8 +524,22 @@ async function checkTotalStockChange() {
    SECTION 10.1 — Check Rebate (on demand) 
    ========================================================== */
 
-async function getRebateData() {
-  // Mapping index dựa trên RANGE AG:BL (AG = 0)
+function _parseNumber(v) {
+  if (v === undefined || v === null || v === '') return 0;
+  // remove commas & spaces, handle number-like strings
+  const cleaned = String(v).replace(/[,\s]/g, '');
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function _parseRemainsDay(v) {
+  if (v === undefined || v === null || v === '') return 0;
+  const n = Number(String(v).trim());
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function getRebateData(token) {
+  // Column indices relative to AG (AG = 0)
   const col = {
     AH: 1,   // PO
     BA: 20,  // Supplier
@@ -539,102 +553,138 @@ async function getRebateData() {
   const SHEET_ID = '5cr5RK';
   const RANGE = `${SHEET_ID}!AG:BL`;
 
+  // debug: tổng số cột trong AG:BL
+  console.log('[Rebate] RANGE', RANGE, '- columns count = 32 (AG..BL)');
+
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const freshToken = await getAppAccessToken();
+      const authToken = token || await getAppAccessToken();
       const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=ToString`;
 
       const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${freshToken}` },
+        headers: { Authorization: `Bearer ${authToken}` },
         timeout: 20000
       });
 
       const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
       console.log(`DEBUG attempt ${attempt} - rebate sheet rows length:`, rows.length);
 
+      // rows[0] là header (AG..BL), dữ liệu thực bắt đầu từ rows[1]
       if (rows && rows.length > 1) {
-        return rows.slice(1).map(r => ({
-          supplier: r[col.BA] || '',
-          rebateMethod: r[col.BE] || '',
-          po: r[col.AH] || '',
-          actualRebate: parseFloat(r[col.BC] || 0),
-          paymentMethod: r[col.BH] || '',
-          remainsDay: Number(r[col.BI]) || 0
-        }));
+        const data = rows.slice(1).map(r => {
+          return {
+            supplier: (r[col.BA] !== undefined && r[col.BA] !== null) ? String(r[col.BA]).trim() : '',
+            rebateMethod: (r[col.BE] !== undefined && r[col.BE] !== null) ? String(r[col.BE]).trim() : '',
+            po: (r[col.AH] !== undefined && r[col.AH] !== null) ? String(r[col.AH]).trim() : '',
+            actualRebate: _parseNumber(r[col.BC]),
+            paymentMethod: (r[col.BH] !== undefined && r[col.BH] !== null) ? String(r[col.BH]).trim() : '',
+            remainsDay: _parseRemainsDay(r[col.BI])
+          };
+        });
+
+        return data;
       }
 
-      console.warn(`⚠ Attempt ${attempt}: Rebate data rỗng hoặc quá ít, thử lại...`);
-      await new Promise(r => setTimeout(r, 2000));
-
+      console.warn(`⚠ Attempt ${attempt}: Rebate data empty or too short, retrying...`);
+      await new Promise(res => setTimeout(res, 2000));
     } catch (err) {
-      console.error(`Lỗi khi lấy dữ liệu rebate sheet (attempt ${attempt}):`, err.message);
-      await new Promise(r => setTimeout(r, 2000));
+      console.error(`Error fetching rebate sheet (attempt ${attempt}):`, err?.message || err);
+      await new Promise(res => setTimeout(res, 2000));
     }
   }
 
   return [];
 }
 
-// Hàm phân tích dữ liệu rebate theo logic yêu cầu
 async function analyzeRebateData(token) {
-  const data = await getRebateData();
-  if (!data.length) return "⚠ Không có dữ liệu Rebate.";
+  const data = await getRebateData(token);
+  if (!Array.isArray(data) || data.length === 0) return "⚠ Không có dữ liệu Rebate.";
 
-  // Bỏ dòng tiêu đề (nếu có)
-  const filteredData = data.filter(r => r.rebateMethod && r.rebateMethod.trim().toLowerCase() !== 'rebate method');
+  // Bỏ các dòng không có rebateMethod
+  const filtered = data.filter(row => row.rebateMethod && String(row.rebateMethod).trim() !== '');
 
-  // Gom nhóm theo rebateMethod
+  if (!filtered.length) return "⚠ Không có dữ liệu Rebate (không có Rebate Method).";
+
+  // Gom nhóm theo rebateMethod (BE)
   const groupedByMethod = {};
-  filteredData.forEach(row => {
-    if (!groupedByMethod[row.rebateMethod]) groupedByMethod[row.rebateMethod] = [];
-    groupedByMethod[row.rebateMethod].push(row);
+  filtered.forEach(row => {
+    const methodKey = String(row.rebateMethod).trim();
+    if (!groupedByMethod[methodKey]) groupedByMethod[methodKey] = [];
+    groupedByMethod[methodKey].push(row);
   });
 
   let msg = `📋 Báo cáo Rebate:\n`;
 
+  // Duyệt theo từng rebate method
   for (const method of Object.keys(groupedByMethod)) {
     msg += `\n💳 ${method}\n`;
 
-    // Gom theo supplier + remainsDay
-    const supplierMap = {};
+    // Trong mỗi method: gom theo supplier + remainsDay
+    const supplierMap = {}; // key => { supplier, remainsDay, poSet, totalRebate, paymentMethod }
     groupedByMethod[method].forEach(r => {
-      const key = `${r.supplier}|${r.remainsDay}`;
+      const supplierName = (r.supplier && r.supplier !== '') ? r.supplier : '(Không xác định)';
+      const key = `${supplierName}|${r.remainsDay}`;
+
       if (!supplierMap[key]) {
         supplierMap[key] = {
-          supplier: r.supplier,
+          supplier: supplierName,
           remainsDay: r.remainsDay,
           poSet: new Set(),
           totalRebate: 0,
-          paymentMethod: r.paymentMethod
+          paymentMethod: r.paymentMethod || ''
         };
       }
-      supplierMap[key].poSet.add(r.po);
-      supplierMap[key].totalRebate += r.actualRebate;
+
+      // Thêm PO (chỉ thêm khi có giá trị)
+      const poVal = (r.po && String(r.po).trim() !== '') ? String(r.po).trim() : null;
+      if (poVal) supplierMap[key].poSet.add(poVal);
+
+      // Tổng actual rebate
+      supplierMap[key].totalRebate += (typeof r.actualRebate === 'number' ? r.actualRebate : 0);
+
+      // Lưu paymentMethod (nếu chưa có, lấy cái đầu tiên không rỗng)
+      if ((!supplierMap[key].paymentMethod || supplierMap[key].paymentMethod === '') && r.paymentMethod) {
+        supplierMap[key].paymentMethod = r.paymentMethod;
+      }
     });
 
-// Sắp xếp theo remainsDay tăng dần
-const sorted = Object.values(supplierMap).sort((a, b) => a.remainsDay - b.remainsDay);
+    // Chuyển sang mảng và sắp xếp theo remainsDay tăng dần
+    const rowsArr = Object.values(supplierMap).sort((a, b) => a.remainsDay - b.remainsDay);
 
-sorted.forEach(r => {
-  const totalFormatted = Math.round(r.totalRebate).toLocaleString('en-US');
-  msg += `- ${r.supplier}: ${r.poSet.size} PO | ${totalFormatted} | ${r.paymentMethod} | ${r.remainsDay}\n`;
-});
-
+    // Tạo chuỗi hiển thị: làm tròn totalRebate, format số nguyên với dấu phẩy
+    rowsArr.forEach(item => {
+      const poCount = item.poSet.size;
+      const totalRounded = Math.round(item.totalRebate);
+      const totalFormatted = totalRounded.toLocaleString('en-US');
+      const paymentMethodDisplay = item.paymentMethod || '';
+      const remainsDisplay = (item.remainsDay !== undefined && item.remainsDay !== null) ? item.remainsDay : '';
+      msg += `- ${item.supplier}: ${poCount} PO | ${totalFormatted} | ${paymentMethodDisplay} | ${remainsDisplay}\n`;
+    });
   }
 
   return msg;
 }
 
-// Hàm gửi báo cáo rebate
 async function sendRebateReport() {
   try {
     const token = await getAppAccessToken();
     const reportMsg = await analyzeRebateData(token);
-    for (const chatId of GROUP_CHAT_IDS) {
-      await sendMessageToGroup(token, chatId, reportMsg);
+    if (!reportMsg) {
+      console.warn('[Rebate] No report message to send.');
+      return;
+    }
+
+    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
+    for (const chatId of uniqueGroupIds) {
+      try {
+        await sendMessageToGroup(token, chatId, reportMsg);
+        console.log('[Rebate] Sent report to group', chatId);
+      } catch (err) {
+        console.error('[Rebate] Failed sending report to', chatId, err?.message || err);
+      }
     }
   } catch (err) {
-    console.log('Lỗi gửi báo cáo Rebate:', err.message);
+    console.error('Lỗi gửi báo cáo Rebate:', err?.message || err);
   }
 }
 
@@ -771,49 +821,45 @@ app.post('/webhook',
         messageContent = messageContent.replace(/@L-GPT/gi, 'bạn').trim();
         console.log('[Webhook] 📨 Text after full cleanup:', JSON.stringify(messageContent));
 
-      /* ===================== REBATE HANDLER ===================== */
+/* ===================== REBATE HANDLER ===================== */
 if (messageType === 'text' && messageContent) {
   const normalized = messageContent.replace(/[.!?…]+$/g, '').trim().toLowerCase();
   const isCheckRebate = /^\s*check\s+rebate\s*$/.test(normalized);
 
-  console.log('[Rebate] Normalized command for check:', normalized);
-  console.log('[Rebate] Check command?', { normalized, isCheckRebate });
+  console.log('[Rebate] Normalized command for check:', normalized, 'isCheckRebate=', isCheckRebate);
 
   if (isCheckRebate) {
-    console.log('[Rebate] ✅ Command matched, processing rebate...');
+    console.log('[Rebate] Command matched, preparing report...');
     try {
-      const rebateValue = await analyzeRebateData(token);
+      const report = await analyzeRebateData(token);
 
-      if (!rebateValue) {
-        console.warn('[Rebate] ⚠ Không có dữ liệu rebate');
+      if (!report) {
         await replyToLark(messageId, `Không tìm thấy dữ liệu rebate.`, mentionUserId, mentionUserName);
       } else {
-        console.log('[Rebate] 📤 Will send rebate report to GROUP_CHAT_IDS', { rebateValue });
-        const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
-          ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
-          : [];
-
-        console.log('[Rebate] Target groups:', uniqueGroupIds);
+        const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
         for (const gid of uniqueGroupIds) {
           try {
-            await sendMessageToGroup(token, gid, rebateValue);
-            console.log('[Rebate] ✅ Sent to group:', gid);
+            await sendMessageToGroup(token, gid, report);
+            console.log('[Rebate] Sent report to group:', gid);
           } catch (e) {
-            console.error('[Rebate] ❌ Send to group failed:', gid, e?.response?.data || e?.message || e);
+            console.error('[Rebate] Send to group failed:', gid, e?.message || e);
           }
         }
         await replyToLark(messageId, `Đã gửi báo cáo rebate tới nhóm: ${uniqueGroupIds.join(', ')}`, mentionUserId, mentionUserName);
       }
     } catch (e) {
-      console.error('[Rebate] ❌ Read error:', e?.response?.data || e?.message || e);
+      console.error('[Rebate] Read error:', e?.message || e);
       await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi không thể đọc dữ liệu rebate.`, mentionUserId, mentionUserName);
     }
-    console.log('[Rebate] ⛔ Skip AI because rebate command matched');
+
+    console.log('[Rebate] Skip AI because rebate command matched');
     return;
   } else {
-    console.log('[Rebate] ❌ Command did not match, proceeding to AI handler');
+    // continue to other handlers (AI etc.)
   }
 }
+/* =================== END REBATE HANDLER =================== */
+         
         /* =================== CHAT AI =================== */
         if (messageType === 'text' && messageContent) {
           try {
