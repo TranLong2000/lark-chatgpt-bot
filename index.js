@@ -612,12 +612,14 @@ async function analyzeRebateData(token) {
       supplierMap[key].totalRebate += r.actualRebate;
     });
 
-    // Sắp xếp theo remainsDay tăng dần
-    const sorted = Object.values(supplierMap).sort((a, b) => a.remainsDay - b.remainsDay);
+// Sắp xếp theo remainsDay tăng dần
+const sorted = Object.values(supplierMap).sort((a, b) => a.remainsDay - b.remainsDay);
 
-    sorted.forEach(r => {
-      msg += `- ${r.supplier}: ${r.poSet.size} PO | ${r.totalRebate} | ${r.paymentMethod} | ${r.remainsDay}\n`;
-    });
+sorted.forEach(r => {
+  const totalFormatted = Math.round(r.totalRebate).toLocaleString('en-US');
+  msg += `- ${r.supplier}: ${r.poSet.size} PO | ${totalFormatted} | ${r.paymentMethod} | ${r.remainsDay}\n`;
+});
+
   }
 
   return msg;
