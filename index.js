@@ -527,7 +527,7 @@ async function checkTotalStockChange() {
 function safeText(input) {
   if (input === null || input === undefined) return '';
   return String(input)
-    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, '')
+    .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, '') // bỏ ký tự control
     .trim();
 }
 
@@ -535,7 +535,7 @@ async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
     const SHEET_ID_REBATE = "ttJhHC";
-    const range = "B34:B200"; // mở rộng range để lấy hết spill
+    const range = "B34:B200"; // mở rộng để lấy hết spill
 
     const rangeParam = `${SHEET_ID_REBATE}!${range}`;
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(rangeParam)}`;
@@ -543,23 +543,14 @@ async function getRebateValue(token) {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FormattedValue',
+        valueRenderOption: 'FormattedValue', // lấy giá trị đã render
         dateTimeRenderOption: 'FormattedString'
       }
     });
 
     console.log('[DEBUG] Full API response:', {
       code: resp.data?.code || 0,
-      data: {
-        revision: resp.data?.data?.revision || null,
-        spreadsheetToken: resp.data?.data?.spreadsheetToken || null,
-        valueRange: {
-          majorDimension: resp.data?.data?.valueRange?.majorDimension || null,
-          range: resp.data?.data?.valueRange?.range || null,
-          revision: resp.data?.data?.valueRange?.revision || null,
-          values: JSON.stringify(resp.data?.data?.valueRange?.values) || []
-        }
-      }
+      values: resp.data?.data?.valueRange?.values || []
     });
 
     const values = resp.data?.data?.valueRange?.values;
@@ -579,7 +570,7 @@ async function getRebateValue(token) {
       return null;
     }
 
-    return flatValues; // trả về mảng
+    return flatValues; // mảng rebate
   } catch (err) {
     console.error("[ERROR] getRebateValue failed:", err.response?.data || err.message);
     return null;
@@ -588,25 +579,29 @@ async function getRebateValue(token) {
 
 async function sendMessageToGroupSafe(token, chatId, messageText) {
   try {
-    // Làm sạch và escape xuống dòng
-    const safeMsg = safeText(messageText).replace(/\r?\n/g, '\n');
+    // Loại ký tự control + escape newline thành \n
+    const safeMsg = safeText(messageText).replace(/\r?\n/g, '\\n');
     const contentStr = JSON.stringify({ text: safeMsg });
 
+    // Payload object
     const payload = {
       receive_id: chatId,
       msg_type: "text",
       content: contentStr
     };
 
-    console.log('[DEBUG] Sending payload:', payload);
+    // Convert thành JSON string để tránh axios encode sai
+    const payloadJson = JSON.stringify(payload);
+
+    console.log('[DEBUG] Final payload JSON:', payloadJson);
 
     await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
-      payload,
+      payloadJson,
       {
         headers: {
           Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json; charset=utf-8'
         }
       }
     );
