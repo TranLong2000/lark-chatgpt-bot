@@ -524,27 +524,25 @@ async function checkTotalStockChange() {
    SECTION 10.1 — Check Rebate (on demand) 
    ========================================================== */
 
-/* ====== Rebate (AG:BI) — dựa trên Payment Method style ====== */
-
-async function getRebateSheetData() {
-  // Mapping cột mới (AG:BI) — AG index 0, AH index 1, ..., BI index 28
-  const col = {
-    po: 1,             // AH (tương ứng B cũ)
-    supplier: 19,      // AZ (tương ứng T cũ)
-    actualRebate: 21,  // BB (tương ứng V cũ)
-    rebateMethod: 23,  // BD (tương ứng X cũ)
-    paymentMethod2: 26,// BG (tương ứng AA cũ)
-    remainsDay: 27     // BH (tương ứng AB cũ)
+async function getPaymentMethodData() {
+  // Mapping mới: cột mới nhưng index giữ nguyên để giữ logic tính toán
+  const col = { 
+    AH: 1,   // B -> AH
+    AT: 19,  // T -> AT
+    AV: 21,  // V -> AV
+    AX: 23,  // X -> AX
+    BA: 26,  // AA -> BA
+    BB: 27   // AB -> BB
   };
 
-  const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheet token từ link
-  const SHEET_ID_REBATE = "5cr5RK"; // sheet id từ link
-  const RANGE = `${SHEET_ID_REBATE}!AG:BI`; // AG..BI tương ứng A..AC
+  const SPREADSHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
+  const SHEET_ID = '5cr5RK';
+  const RANGE = `${SHEET_ID}!AG:BL`;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const freshToken = await getAppAccessToken();
-      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values_batch_get?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=ToString`;
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=ToString`;
 
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${freshToken}` },
@@ -552,24 +550,24 @@ async function getRebateSheetData() {
       });
 
       const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
-      console.log(`DEBUG attempt ${attempt} - rebate sheet rows length:`, rows.length);
+      console.log(`DEBUG attempt ${attempt} - payment sheet rows length:`, rows.length);
 
       if (rows && rows.length > 1) {
         return rows.slice(1).map(r => ({
-          supplier: r[col.supplier] || '',
-          rebateMethod: r[col.rebateMethod] || '',
-          po: r[col.po] || '',
-          actualRebate: parseFloat(r[col.actualRebate] || 0),
-          paymentMethod2: r[col.paymentMethod2] || '',
-          remainsDay: Number(r[col.remainsDay]) || 0
+          supplier: r[col.AT] || '',
+          rebateMethod: r[col.AX] || '',
+          po: r[col.AH] || '',
+          actualRebate: parseFloat(r[col.AV] || 0),
+          paymentMethod2: r[col.BA] || '',
+          remainsDay: Number(r[col.BB]) || 0
         }));
       }
 
-      console.warn(`⚠ Attempt ${attempt}: Rebate sheet data rỗng hoặc quá ít, thử lại...`);
+      console.warn(`⚠ Attempt ${attempt}: Payment data rỗng hoặc quá ít, thử lại...`);
       await new Promise(r => setTimeout(r, 2000));
 
     } catch (err) {
-      console.error(`Lỗi khi lấy dữ liệu rebate sheet (attempt ${attempt}):`, err.message || err);
+      console.error(`Lỗi khi lấy dữ liệu Payment sheet (attempt ${attempt}):`, err.message);
       await new Promise(r => setTimeout(r, 2000));
     }
   }
@@ -577,9 +575,9 @@ async function getRebateSheetData() {
   return [];
 }
 
-async function analyzeRebateSheet(token) {
-  const data = await getRebateSheetData();
-  if (!data.length) return "⚠ Không có dữ liệu Rebate Sheet.";
+async function analyzePaymentMethod(token) {
+  const data = await getPaymentMethodData();
+  if (!data.length) return "⚠ Không có dữ liệu Payment Method.";
 
   // Gom nhóm theo rebateMethod
   const groupedByMethod = {};
@@ -588,10 +586,11 @@ async function analyzeRebateSheet(token) {
     groupedByMethod[row.rebateMethod].push(row);
   });
 
-  let msg = `📋 Báo cáo Rebate Sheet:\n`;
+  let msg = `📋 Báo cáo Payment Method:\n`;
   for (const method of Object.keys(groupedByMethod)) {
     msg += `\n💳 ${method || 'Không xác định'}\n`;
 
+    // Gom tiếp theo supplier + remainsDay
     const supplierRows = [];
     groupedByMethod[method].forEach(r => {
       supplierRows.push({
@@ -631,17 +630,18 @@ async function analyzeRebateSheet(token) {
   return msg;
 }
 
-async function sendRebateSheetReport() {
+async function sendPaymentMethodReport() {
   try {
     const token = await getAppAccessToken();
-    const reportMsg = await analyzeRebateSheet(token);
+    const reportMsg = await analyzePaymentMethod(token);
     for (const chatId of GROUP_CHAT_IDS) {
       await sendMessageToGroup(token, chatId, reportMsg);
     }
   } catch (err) {
-    console.log('Lỗi gửi báo cáo Rebate Sheet:', err.message || err);
+    console.log('Lỗi gửi báo cáo Payment Method:', err.message);
   }
 }
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
