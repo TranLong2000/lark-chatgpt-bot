@@ -787,7 +787,7 @@ app.post('/webhook',
           if (isCheckRebate) {
             console.log('[Rebate] ✅ Command matched, processing rebate...');
             try {
-              const rebateValue = await getRebateValue(token);
+              const rebateValue = await getPaymentMethodData(token);
 
               if (!rebateValue) {
                 console.warn('[Rebate] ⚠ A1 empty or not found');
