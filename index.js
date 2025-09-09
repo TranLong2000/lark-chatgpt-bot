@@ -533,8 +533,8 @@ function safeText(input) {
 
 async function getRebateValue(token) {
   try {
-    const SHEET_TOKEN_REBATE = "UMU1s9pS9hqtkft1yQvlfRqpgqc";
-    const SHEET_ID_REBATE = "ExK78P";
+    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
+    const SHEET_ID_REBATE = "ttJhHC";
     const range = "A2:C2";
 
     const rangeParam = `${SHEET_ID_REBATE}!${range}`;
