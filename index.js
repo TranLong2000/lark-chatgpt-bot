@@ -559,7 +559,7 @@ async function getRebateData(token) {
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const authToken = token || await getAppAccessToken();
-      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values_batch_get?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=ToString`;
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values_batch_get` + `?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=FormattedValue`;
 
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${authToken}` },
