@@ -538,7 +538,7 @@ function safeText(input) {
 async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-    const range = `ttJhHC!B34:B200`; // SHEET_ID_REBATE!range
+    const range = `5cr5RK!AG3:AG4`; // SHEET_ID_REBATE!range
 
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values_batch_get?ranges=${encodeURIComponent(range)}&valueRenderOption=FormattedValue&dateTimeRenderOption=FormattedString`;
 
