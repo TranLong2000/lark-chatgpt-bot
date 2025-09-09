@@ -527,19 +527,18 @@ async function checkTotalStockChange() {
 /* ====== Rebate (AG:BI) — dựa trên Payment Method style ====== */
 
 async function getRebateSheetData() {
-  // Mapping semantic (index trong mảng trả về từ range AG:BI)
-  // NOTE: AG là index 0, AH index 1, ..., BI index 28
+  // Mapping cột mới (AG:BI) — AG index 0, AH index 1, ..., BI index 28
   const col = {
-    po: 1,            // AH (tương ứng B cũ)
-    supplier: 19,     // AZ (tương ứng T cũ)
-    actualRebate: 21, // BB (tương ứng V cũ)
-    rebateMethod: 23, // BD (tương ứng X cũ)
-    paymentMethod2: 26, // BG (tương ứng AA cũ)
-    remainsDay: 27    // BH (tương ứng AB cũ)
+    po: 1,             // AH (tương ứng B cũ)
+    supplier: 19,      // AZ (tương ứng T cũ)
+    actualRebate: 21,  // BB (tương ứng V cũ)
+    rebateMethod: 23,  // BD (tương ứng X cũ)
+    paymentMethod2: 26,// BG (tương ứng AA cũ)
+    remainsDay: 27     // BH (tương ứng AB cũ)
   };
 
-  const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheet token (từ link)
-  const SHEET_ID_REBATE = "5cr5RK"; // sheet id (sheet param trong link)
+  const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheet token từ link
+  const SHEET_ID_REBATE = "5cr5RK"; // sheet id từ link
   const RANGE = `${SHEET_ID_REBATE}!AG:BI`; // AG..BI tương ứng A..AC
 
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -643,7 +642,6 @@ async function sendRebateSheetReport() {
     console.log('Lỗi gửi báo cáo Rebate Sheet:', err.message || err);
   }
 }
-
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
