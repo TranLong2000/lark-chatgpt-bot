@@ -543,7 +543,7 @@ async function getRebateValue(token) {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'Formula',
+        valueRenderOption: 'UnformattedValue',
         dateTimeRenderOption: 'FormattedString'
       }
     });
