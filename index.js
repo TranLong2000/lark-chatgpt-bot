@@ -524,6 +524,9 @@ async function checkTotalStockChange() {
    SECTION 10.1 — Check Rebate (on demand) 
    ========================================================== */
 
+const axios = require('axios');
+
+// Làm sạch text (loại bỏ ký tự control)
 function safeText(input) {
   if (input === null || input === undefined) return '';
   return String(input)
@@ -531,13 +534,12 @@ function safeText(input) {
     .trim();
 }
 
+// Lấy giá trị rebate từ sheet
 async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
     const SHEET_ID_REBATE = "ttJhHC";
-
-    // Lấy rộng hơn để đảm bảo quét hết spill range
-    const range = "B34:B200";
+    const range = "B34:B200"; // mở rộng range để cover spill range
 
     const rangeParam = `${SHEET_ID_REBATE}!${range}`;
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(rangeParam)}`;
@@ -545,24 +547,12 @@ async function getRebateValue(token) {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'FormattedValue', // Lấy kết quả hiển thị
+        valueRenderOption: 'FormattedValue', // trả về giá trị đã render
         dateTimeRenderOption: 'FormattedString'
       }
     });
 
-    console.log('[DEBUG] Full API response:', {
-      code: resp.data?.code || 0,
-      data: {
-        revision: resp.data?.data?.revision || null,
-        spreadsheetToken: resp.data?.data?.spreadsheetToken || null,
-        valueRange: {
-          majorDimension: resp.data?.data?.valueRange?.majorDimension || null,
-          range: resp.data?.data?.valueRange?.range || null,
-          revision: resp.data?.data?.valueRange?.revision || null,
-          values: JSON.stringify(resp.data?.data?.valueRange?.values) || []
-        }
-      }
-    });
+    console.log('[DEBUG] sheets response valueRange:', resp.data?.data?.valueRange);
 
     const values = resp.data?.data?.valueRange?.values;
     if (!values || !Array.isArray(values)) {
@@ -570,7 +560,7 @@ async function getRebateValue(token) {
       return null;
     }
 
-    // Gộp các hàng thành 1 mảng, loại bỏ null/chuỗi rỗng
+    // Gộp tất cả và lọc null/trống
     const flatValues = values
       .flat()
       .map(v => safeText(v))
@@ -581,23 +571,32 @@ async function getRebateValue(token) {
       return null;
     }
 
-    return flatValues; // Trả về toàn bộ mảng rebate
-
+    return flatValues; // trả về mảng rebate
   } catch (err) {
     console.error("[ERROR] getRebateValue failed:", err.response?.data || err.message);
     return null;
   }
 }
 
+// Gửi tin nhắn tới group (fix lỗi 230001)
 async function sendMessageToGroupSafe(token, chatId, messageText) {
   try {
-    const safeMsg = safeText(messageText);
-    await axios.post(
+    const safeMsg = safeText(messageText); // giữ nguyên \n để JSON.stringify escape
+
+    const contentStr = JSON.stringify({ text: safeMsg }); // JSON string đúng chuẩn
+
+    console.log('[DEBUG] Sending IM message', {
+      receive_id: chatId,
+      msg_type: "text",
+      content: contentStr
+    });
+
+    const resp = await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
       {
         receive_id: chatId,
         msg_type: "text",
-        content: JSON.stringify({ text: safeMsg })
+        content: contentStr
       },
       {
         headers: {
@@ -606,12 +605,16 @@ async function sendMessageToGroupSafe(token, chatId, messageText) {
         }
       }
     );
-    console.log(`Message sent to group ${chatId}:`, safeMsg);
+
+    console.log(`Message sent to group ${chatId}:`, resp.data);
+    return true;
   } catch (err) {
-    console.error(`sendMessageToGroupSafe error to ${chatId}:`, err.response?.data || err.message);
+    console.error(`❌ sendMessageToGroupSafe error to ${chatId}:`, err.response?.data || err.message);
+    return false;
   }
 }
 
+// Gửi rebate tới tất cả group
 async function sendRebateMessage() {
   try {
     const token = await getAppAccessToken();
@@ -637,11 +640,10 @@ async function sendRebateMessage() {
       rebateMsg = `Rebate hiện tại: ${rebateValues}`;
     }
 
-    // Escape xuống dòng để Lark API không báo lỗi
-    const safeMsg = safeText(rebateMsg).replace(/\n/g, '\\n');
+    console.log('[DEBUG] Final rebateMsg (raw):', rebateMsg);
 
     for (const chatId of uniqueGroupIds) {
-      await sendMessageToGroupSafe(token, chatId, safeMsg);
+      await sendMessageToGroupSafe(token, chatId, rebateMsg);
     }
     return true;
 
@@ -650,7 +652,6 @@ async function sendRebateMessage() {
     return false;
   }
 }
-
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
