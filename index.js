@@ -637,8 +637,11 @@ async function sendRebateMessage() {
       rebateMsg = `Rebate hiện tại: ${rebateValues}`;
     }
 
+    // Escape xuống dòng để Lark API không báo lỗi
+    const safeMsg = safeText(rebateMsg).replace(/\n/g, '\\n');
+
     for (const chatId of uniqueGroupIds) {
-      await sendMessageToGroupSafe(token, chatId, rebateMsg);
+      await sendMessageToGroupSafe(token, chatId, safeMsg);
     }
     return true;
 
