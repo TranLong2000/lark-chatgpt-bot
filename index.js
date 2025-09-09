@@ -535,7 +535,9 @@ async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
     const SHEET_ID_REBATE = "ttJhHC";
-    const range = "B34:B35";
+
+    // Lấy rộng hơn để đảm bảo quét hết spill range
+    const range = "B34:B200";
 
     const rangeParam = `${SHEET_ID_REBATE}!${range}`;
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values/${encodeURIComponent(rangeParam)}`;
@@ -543,33 +545,43 @@ async function getRebateValue(token) {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
       params: {
-        valueRenderOption: 'Formula',
+        valueRenderOption: 'FormattedValue', // Lấy kết quả hiển thị
         dateTimeRenderOption: 'FormattedString'
       }
     });
 
-console.log('[DEBUG] Full API response:', {
-  'code': resp.data?.code || 0,
-  'data': {
-    'revision': resp.data?.data?.revision || null,
-    'spreadsheetToken': resp.data?.data?.spreadsheetToken || null,
-    'valueRange': {
-      'majorDimension': resp.data?.data?.valueRange?.majorDimension || null,
-      'range': resp.data?.data?.valueRange?.range || null,
-      'revision': resp.data?.data?.valueRange?.revision || null,
-      'values': JSON.stringify(resp.data?.data?.valueRange?.values) || []
-    }
-  }
-});
-     
+    console.log('[DEBUG] Full API response:', {
+      code: resp.data?.code || 0,
+      data: {
+        revision: resp.data?.data?.revision || null,
+        spreadsheetToken: resp.data?.data?.spreadsheetToken || null,
+        valueRange: {
+          majorDimension: resp.data?.data?.valueRange?.majorDimension || null,
+          range: resp.data?.data?.valueRange?.range || null,
+          revision: resp.data?.data?.valueRange?.revision || null,
+          values: JSON.stringify(resp.data?.data?.valueRange?.values) || []
+        }
+      }
+    });
+
     const values = resp.data?.data?.valueRange?.values;
-    if (!values || !Array.isArray(values) || !values[0] || !values[0][0]) {
-      console.warn("[Rebate] ⚠ Cell C1 is empty or not found");
+    if (!values || !Array.isArray(values)) {
+      console.warn("[Rebate] ⚠ Không tìm thấy dữ liệu rebate.");
       return null;
     }
 
-    const rebateValue = values[0][0];
-    return rebateValue;
+    // Gộp các hàng thành 1 mảng, loại bỏ null/chuỗi rỗng
+    const flatValues = values
+      .flat()
+      .map(v => safeText(v))
+      .filter(v => v !== '');
+
+    if (flatValues.length === 0) {
+      console.warn("[Rebate] ⚠ Không có giá trị rebate hợp lệ.");
+      return null;
+    }
+
+    return flatValues; // Trả về toàn bộ mảng rebate
 
   } catch (err) {
     console.error("[ERROR] getRebateValue failed:", err.response?.data || err.message);
