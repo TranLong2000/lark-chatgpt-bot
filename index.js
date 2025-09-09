@@ -615,9 +615,9 @@ async function sendMessageToGroupSafe(token, chatId, messageText) {
 async function sendRebateMessage() {
   try {
     const token = await getAppAccessToken();
-    const rebateValue = await getRebateValue(token);
+    const rebateValues = await getRebateValue(token);
 
-    if (!rebateValue) {
+    if (!rebateValues || rebateValues.length === 0) {
       console.warn("Không lấy được giá trị rebate từ sheet.");
       return false;
     }
@@ -626,16 +626,28 @@ async function sendRebateMessage() {
       ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
       : [];
 
-    const rebateMsg = `Rebate hiện tại: ${rebateValue}`;
+    let rebateMsg;
+    if (Array.isArray(rebateValues)) {
+      if (rebateValues.length === 1) {
+        rebateMsg = `Rebate hiện tại: ${rebateValues[0]}`;
+      } else {
+        rebateMsg = `Rebate hiện tại:\n- ${rebateValues.join("\n- ")}`;
+      }
+    } else {
+      rebateMsg = `Rebate hiện tại: ${rebateValues}`;
+    }
+
     for (const chatId of uniqueGroupIds) {
       await sendMessageToGroupSafe(token, chatId, rebateMsg);
     }
     return true;
+
   } catch (err) {
     console.error('sendRebateMessage error:', err?.message || err);
     return false;
   }
 }
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
