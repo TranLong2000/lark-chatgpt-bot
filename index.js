@@ -594,9 +594,15 @@ async function analyzeRebateData(token) {
   const data = await getRebateData(token);
   if (!Array.isArray(data) || data.length === 0) return "⚠ Không có dữ liệu Rebate.";
 
-  const filtered = data.filter(row => row.rebateMethod && String(row.rebateMethod).trim() !== '');
-  if (!filtered.length) return "⚠ Không có dữ liệu Rebate (không có Rebate Method).";
+  // Lọc bỏ rebateMethod rỗng, = "0" hoặc = "Rebate Method"
+  const filtered = data.filter(row => {
+    const method = String(row.rebateMethod || '').trim();
+    return method !== '' && method !== '0' && method.toLowerCase() !== 'rebate method';
+  });
 
+  if (!filtered.length) return "⚠ Không có dữ liệu Rebate (sau khi lọc).";
+
+  // Gom nhóm theo rebateMethod
   const groupedByMethod = {};
   filtered.forEach(row => {
     const methodKey = String(row.rebateMethod).trim();
