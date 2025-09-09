@@ -528,11 +528,11 @@ async function getRebateData() {
   // Mapping index dựa trên RANGE AG:BL (AG = 0)
   const col = {
     AH: 1,   // PO
-    BA: 26,  // Supplier
-    BC: 28,  // Actual Rebate
-    BE: 30,  // Rebate Method
-    BH: 33,  // Payment Method
-    BI: 34   // Remains Day
+    BA: 20,  // Supplier
+    BC: 22,  // Actual Rebate
+    BE: 24,  // Rebate Method
+    BH: 27,  // Payment Method
+    BI: 28   // Remains Day
   };
 
   const SPREADSHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
