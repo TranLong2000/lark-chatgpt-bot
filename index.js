@@ -524,109 +524,123 @@ async function checkTotalStockChange() {
    SECTION 10.1 — Check Rebate (on demand) 
    ========================================================== */
 
-/* ================= Rebate — compatible with Payment Method style ================= */
+/* ====== Rebate (AG:BI) — dựa trên Payment Method style ====== */
 
-function safeText(input) {
-  if (input === null || input === undefined) return '';
-  return String(input)
-    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F]/g, '') // control chars
-    .replace(/[\u200B-\u200F\u2028-\u202F\u2060-\u206F\uFEFF]/g, '') // zero-width/BOM
-    .trim();
+async function getRebateSheetData() {
+  // Mapping semantic (index trong mảng trả về từ range AG:BI)
+  // NOTE: AG là index 0, AH index 1, ..., BI index 28
+  const col = {
+    po: 1,            // AH (tương ứng B cũ)
+    supplier: 19,     // AZ (tương ứng T cũ)
+    actualRebate: 21, // BB (tương ứng V cũ)
+    rebateMethod: 23, // BD (tương ứng X cũ)
+    paymentMethod2: 26, // BG (tương ứng AA cũ)
+    remainsDay: 27    // BH (tương ứng AB cũ)
+  };
+
+  const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // spreadsheet token (từ link)
+  const SHEET_ID_REBATE = "5cr5RK"; // sheet id (sheet param trong link)
+  const RANGE = `${SHEET_ID_REBATE}!AG:BI`; // AG..BI tương ứng A..AC
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const freshToken = await getAppAccessToken();
+      const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values_batch_get?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=ToString`;
+
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${freshToken}` },
+        timeout: 20000
+      });
+
+      const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
+      console.log(`DEBUG attempt ${attempt} - rebate sheet rows length:`, rows.length);
+
+      if (rows && rows.length > 1) {
+        return rows.slice(1).map(r => ({
+          supplier: r[col.supplier] || '',
+          rebateMethod: r[col.rebateMethod] || '',
+          po: r[col.po] || '',
+          actualRebate: parseFloat(r[col.actualRebate] || 0),
+          paymentMethod2: r[col.paymentMethod2] || '',
+          remainsDay: Number(r[col.remainsDay]) || 0
+        }));
+      }
+
+      console.warn(`⚠ Attempt ${attempt}: Rebate sheet data rỗng hoặc quá ít, thử lại...`);
+      await new Promise(r => setTimeout(r, 2000));
+
+    } catch (err) {
+      console.error(`Lỗi khi lấy dữ liệu rebate sheet (attempt ${attempt}):`, err.message || err);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+
+  return [];
 }
 
-// dùng values_batch_get (giống Payment Method) để chắc chắn lấy được các ô spill
-async function getRebateValue(token) {
-  try {
-    const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-    const range = `5cr5RK!AG3:AG4`; // SHEET_ID_REBATE!range
+async function analyzeRebateSheet(token) {
+  const data = await getRebateSheetData();
+  if (!data.length) return "⚠ Không có dữ liệu Rebate Sheet.";
 
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values_batch_get?ranges=${encodeURIComponent(range)}&valueRenderOption=FormattedValue&dateTimeRenderOption=FormattedString`;
+  // Gom nhóm theo rebateMethod
+  const groupedByMethod = {};
+  data.forEach(row => {
+    if (!groupedByMethod[row.rebateMethod]) groupedByMethod[row.rebateMethod] = [];
+    groupedByMethod[row.rebateMethod].push(row);
+  });
 
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-      timeout: 20000
+  let msg = `📋 Báo cáo Rebate Sheet:\n`;
+  for (const method of Object.keys(groupedByMethod)) {
+    msg += `\n💳 ${method || 'Không xác định'}\n`;
+
+    const supplierRows = [];
+    groupedByMethod[method].forEach(r => {
+      supplierRows.push({
+        supplier: r.supplier,
+        po: r.po,
+        actualRebate: r.actualRebate,
+        paymentMethod2: r.paymentMethod2,
+        remainsDay: r.remainsDay
+      });
     });
 
-    const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
-    console.log('[DEBUG] Rebate sheet rows length:', rows.length);
-
-    const flat = rows.flat().map(v => safeText(v)).filter(Boolean);
-    if (!flat.length) {
-      console.warn('[Rebate] ⚠ Không có giá trị rebate.');
-      return null;
-    }
-    return flat; // ví dụ: ['MAI VÀNG', 'ACECOOK']
-  } catch (err) {
-    console.error('[ERROR] getRebateValue failed:', err.response?.data || err.message);
-    return null;
-  }
-}
-
-/*
-  Sử dụng sendMessageToGroup giống y hệt style Payment Method report.
-  Nếu bạn đã có sendMessageToGroup ở nơi khác trong code (vì Payment Method dùng nó),
-  hàm dưới đây là bản "dự phòng" nếu bạn cần copy vào file.
-*/
-async function sendMessageToGroup(token, chatId, messageText) {
-  try {
-    const safeMsg = safeText(messageText);
-    const payload = {
-      receive_id: chatId,
-      msg_type: "text",
-      content: JSON.stringify({ text: safeMsg })
-    };
-
-    // Log payload giống như Payment Method để so sánh
-    console.log('[DEBUG] sendMessageToGroup payload:', payload);
-
-    const resp = await axios.post(
-      `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
+    // Gom unique PO, tính tổng rebate
+    const supplierMap = {};
+    supplierRows.forEach(r => {
+      const key = `${r.supplier}|${r.remainsDay}`;
+      if (!supplierMap[key]) {
+        supplierMap[key] = {
+          supplier: r.supplier,
+          remainsDay: r.remainsDay,
+          poSet: new Set(),
+          totalRebate: 0,
+          paymentMethod2: r.paymentMethod2
+        };
       }
-    );
+      supplierMap[key].poSet.add(r.po);
+      supplierMap[key].totalRebate += r.actualRebate;
+    });
 
-    console.log('[DEBUG] sendMessageToGroup response:', resp.data);
-    return resp.data;
-  } catch (err) {
-    console.error(`❌ sendMessageToGroup error to ${chatId}:`, err.response?.data || err.message);
-    throw err;
+    // Sắp xếp theo remainsDay
+    const sorted = Object.values(supplierMap).sort((a, b) => a.remainsDay - b.remainsDay);
+
+    sorted.forEach(r => {
+      msg += `- ${r.supplier}: ${r.poSet.size} PO | ${r.totalRebate} | ${r.paymentMethod2} | ${r.remainsDay}\n`;
+    });
   }
+
+  return msg;
 }
 
-async function sendRebateMessage() {
+async function sendRebateSheetReport() {
   try {
     const token = await getAppAccessToken();
-    const rebateValues = await getRebateValue(token);
-
-    if (!rebateValues || rebateValues.length === 0) {
-      console.warn("Không lấy được giá trị rebate từ sheet.");
-      return false;
+    const reportMsg = await analyzeRebateSheet(token);
+    for (const chatId of GROUP_CHAT_IDS) {
+      await sendMessageToGroup(token, chatId, reportMsg);
     }
-
-    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
-      ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
-      : [];
-
-    const rebateMsg = rebateValues.length === 1
-      ? `Rebate hiện tại: ${rebateValues[0]}`
-      : `Rebate hiện tại:\n- ${rebateValues.join("\n- ")}`;
-
-    console.log("[Rebate] 📤 Will send to GROUP_CHAT_IDS", { rebateValue: rebateValues, rebateMsg });
-    console.log("[Rebate] Target groups:", uniqueGroupIds);
-
-    for (const chatId of uniqueGroupIds) {
-      // dùng sendMessageToGroup (phiên bản chạy được trong Payment Method)
-      await sendMessageToGroup(token, chatId, rebateMsg);
-    }
-    return true;
   } catch (err) {
-    console.error('sendRebateMessage error:', err?.response?.data || err?.message || err);
-    return false;
+    console.log('Lỗi gửi báo cáo Rebate Sheet:', err.message || err);
   }
 }
 
