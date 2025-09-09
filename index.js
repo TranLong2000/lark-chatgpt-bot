@@ -524,19 +524,21 @@ async function checkTotalStockChange() {
    SECTION 10.1 — Check Rebate (on demand) 
    ========================================================== */
 
+/* ================= Rebate — compatible with Payment Method style ================= */
+
 function safeText(input) {
   if (input === null || input === undefined) return '';
   return String(input)
-    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F]/g, '')
-    .replace(/[\u200B-\u200F\u2028-\u202F\u2060-\u206F\uFEFF]/g, '')
+    .replace(/[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F]/g, '') // control chars
+    .replace(/[\u200B-\u200F\u2028-\u202F\u2060-\u206F\uFEFF]/g, '') // zero-width/BOM
     .trim();
 }
 
+// dùng values_batch_get (giống Payment Method) để chắc chắn lấy được các ô spill
 async function getRebateValue(token) {
   try {
     const SHEET_TOKEN_REBATE = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-    const SHEET_ID_REBATE = "ttJhHC";
-    const range = `${SHEET_ID_REBATE}!B34:B200`; // Lấy rộng để cover hết spill
+    const range = `ttJhHC!B34:B200`; // SHEET_ID_REBATE!range
 
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SHEET_TOKEN_REBATE}/values_batch_get?ranges=${encodeURIComponent(range)}&valueRenderOption=FormattedValue&dateTimeRenderOption=FormattedString`;
 
@@ -546,28 +548,26 @@ async function getRebateValue(token) {
     });
 
     const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
-    console.log(`[DEBUG] Rebate sheet rows length: ${rows.length}`);
+    console.log('[DEBUG] Rebate sheet rows length:', rows.length);
 
-    // Flatten mảng 2D và lọc bỏ rỗng
-    const flatValues = rows
-      .flat()
-      .map(v => safeText(v))
-      .filter(Boolean);
-
-    if (!flatValues.length) {
-      console.warn("[Rebate] ⚠ Không có giá trị rebate.");
+    const flat = rows.flat().map(v => safeText(v)).filter(Boolean);
+    if (!flat.length) {
+      console.warn('[Rebate] ⚠ Không có giá trị rebate.');
       return null;
     }
-
-    return flatValues;
+    return flat; // ví dụ: ['MAI VÀNG', 'ACECOOK']
   } catch (err) {
-    console.error("[ERROR] getRebateValue failed:", err.response?.data || err.message);
+    console.error('[ERROR] getRebateValue failed:', err.response?.data || err.message);
     return null;
   }
 }
 
-
-async function sendMessageToGroupSafe(token, chatId, messageText) {
+/*
+  Sử dụng sendMessageToGroup giống y hệt style Payment Method report.
+  Nếu bạn đã có sendMessageToGroup ở nơi khác trong code (vì Payment Method dùng nó),
+  hàm dưới đây là bản "dự phòng" nếu bạn cần copy vào file.
+*/
+async function sendMessageToGroup(token, chatId, messageText) {
   try {
     const safeMsg = safeText(messageText);
     const payload = {
@@ -576,7 +576,10 @@ async function sendMessageToGroupSafe(token, chatId, messageText) {
       content: JSON.stringify({ text: safeMsg })
     };
 
-    await axios.post(
+    // Log payload giống như Payment Method để so sánh
+    console.log('[DEBUG] sendMessageToGroup payload:', payload);
+
+    const resp = await axios.post(
       `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
       payload,
       {
@@ -587,9 +590,11 @@ async function sendMessageToGroupSafe(token, chatId, messageText) {
       }
     );
 
-    console.log(`✅ Message sent to group ${chatId}`);
+    console.log('[DEBUG] sendMessageToGroup response:', resp.data);
+    return resp.data;
   } catch (err) {
-    console.error(`❌ sendMessageToGroupSafe error to ${chatId}:`, err.response?.data || err.message);
+    console.error(`❌ sendMessageToGroup error to ${chatId}:`, err.response?.data || err.message);
+    throw err;
   }
 }
 
@@ -598,8 +603,8 @@ async function sendRebateMessage() {
     const token = await getAppAccessToken();
     const rebateValues = await getRebateValue(token);
 
-    if (!rebateValues) {
-      console.warn("⚠ Không lấy được giá trị rebate từ sheet.");
+    if (!rebateValues || rebateValues.length === 0) {
+      console.warn("Không lấy được giá trị rebate từ sheet.");
       return false;
     }
 
@@ -611,15 +616,20 @@ async function sendRebateMessage() {
       ? `Rebate hiện tại: ${rebateValues[0]}`
       : `Rebate hiện tại:\n- ${rebateValues.join("\n- ")}`;
 
+    console.log("[Rebate] 📤 Will send to GROUP_CHAT_IDS", { rebateValue: rebateValues, rebateMsg });
+    console.log("[Rebate] Target groups:", uniqueGroupIds);
+
     for (const chatId of uniqueGroupIds) {
-      await sendMessageToGroupSafe(token, chatId, rebateMsg);
+      // dùng sendMessageToGroup (phiên bản chạy được trong Payment Method)
+      await sendMessageToGroup(token, chatId, rebateMsg);
     }
     return true;
   } catch (err) {
-    console.error('sendRebateMessage error:', err?.message || err);
+    console.error('sendRebateMessage error:', err?.response?.data || err?.message || err);
     return false;
   }
 }
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
