@@ -524,8 +524,6 @@ async function checkTotalStockChange() {
    SECTION 10.1 — Check Rebate (on demand) 
    ========================================================== */
 
-const axios = require('axios');
-
 // Làm sạch text (loại bỏ ký tự control)
 function safeText(input) {
   if (input === null || input === undefined) return '';
