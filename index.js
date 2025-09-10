@@ -40,7 +40,11 @@ const SHEET_MAPPINGS = {
    =============================== */
 const SPREADSHEET_TOKEN = process.env.SPREADSHEET_TOKEN || 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
 const SHEET_ID = process.env.SHEET_ID || '48e2fd';
-const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')
+const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')   
+  .split(',')
+  .map(s => s.trim())
+  .filter(Boolean);
+const GROUP_CHAT_IDS_TEST = (process.env.LARK_GROUP_CHAT_IDS_TEST || '')   
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
@@ -655,7 +659,7 @@ async function sendRebateReport() {
       return;
     }
 
-    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
+    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST) ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))] : [];
     for (const chatId of uniqueGroupIds) {
       try {
         await sendMessageToGroup(token, chatId, reportMsg);
@@ -811,7 +815,7 @@ if (messageType === 'text' && messageContent) {
     try {
       const report = await analyzeRebateData(token);
       if (report) {
-        const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
+        const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST) ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))] : [];
         for (const gid of uniqueGroupIds) {
           try {
             await sendMessageToGroup(token, gid, report);
