@@ -657,7 +657,7 @@ async function analyzeRebateData(token) {
     rowsArr.forEach(item => {
       const poCount = item.poSet.size;
       const totalFormatted = Math.round(item.totalRebate).toLocaleString('en-US');
-      msg += `- ${item.supplier}: ${poCount} PO | ${totalFormatted} | ${item.paymentMethod} | ${item.remainsDay}\n`;
+      msg += `- ${item.supplier}: ${poCount} PO | ${totalFormatted} | ${item.paymentMethod} | ${item.remainsDay} ngày\n`;
     });
   }
 
