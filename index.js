@@ -14,6 +14,7 @@ const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
 const moment = require('moment-timezone');
 const QuickChart = require('quickchart-js');
+const cron = require('node-cron');
 require('dotenv').config();
 
 /* ===== App boot ===== */
@@ -974,4 +975,8 @@ app.listen(port, () => {
   console.log(`Server running on port ${port}`);
   checkTotalStockChange();
   setInterval(checkTotalStockChange, 60 * 1000);
+});
+
+cron.schedule('*/1 * * * *', () => { // mỗi phút
+  sendRebateReport();
 });
