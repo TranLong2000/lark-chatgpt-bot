@@ -596,36 +596,46 @@ async function getRebateData(token) {
 
 async function analyzeRebateData(token) {
   const data = await getRebateData(token);
-  if (!Array.isArray(data) || data.length === 0) return "⚠ Không có dữ liệu Rebate.";
+  if (!Array.isArray(data) || data.length === 0) {
+    return "⚠ Không có dữ liệu Rebate.";
+  }
 
-  // Lọc bỏ rebateMethod rỗng, = "0" hoặc = "Rebate Method"
+  // Lọc dữ liệu hợp lệ: rebateMethod không rỗng, khác '0', khác 'Rebate Method' và actualRebate ≠ 0
   const filtered = data.filter(row => {
     const method = String(row.rebateMethod || '').trim();
-    return method !== '' && method !== '0' && method.toLowerCase() !== 'rebate method';
+    return (
+      method &&
+      method !== '0' &&
+      method.toLowerCase() !== 'rebate method' &&
+      Number(row.actualRebate) !== 0
+    );
   });
 
-  if (!filtered.length) return "⚠ Không có dữ liệu Rebate (sau khi lọc).";
+  if (filtered.length === 0) {
+    return "⚠ Không có dữ liệu Rebate (sau khi lọc).";
+  }
 
   // Gom nhóm theo rebateMethod
-  const groupedByMethod = {};
-  filtered.forEach(row => {
+  const groupedByMethod = filtered.reduce((acc, row) => {
     const methodKey = String(row.rebateMethod).trim();
-    if (!groupedByMethod[methodKey]) groupedByMethod[methodKey] = [];
-    groupedByMethod[methodKey].push(row);
-  });
+    if (!acc[methodKey]) acc[methodKey] = [];
+    acc[methodKey].push(row);
+    return acc;
+  }, {});
 
   let msg = `📋 Báo cáo Rebate:\n`;
 
-  for (const method of Object.keys(groupedByMethod)) {
+  // Xử lý từng nhóm
+  for (const [method, rows] of Object.entries(groupedByMethod)) {
     msg += `\n💳 ${method}\n`;
 
-    const supplierMap = {};
-    groupedByMethod[method].forEach(r => {
+    // Gom nhóm theo supplier + remainsDay
+    const supplierMap = rows.reduce((acc, r) => {
       const supplierName = r.supplier || '(Không xác định)';
       const key = `${supplierName}|${r.remainsDay}`;
 
-      if (!supplierMap[key]) {
-        supplierMap[key] = {
+      if (!acc[key]) {
+        acc[key] = {
           supplier: supplierName,
           remainsDay: r.remainsDay,
           poSet: new Set(),
@@ -634,12 +644,16 @@ async function analyzeRebateData(token) {
         };
       }
 
-      if (r.po) supplierMap[key].poSet.add(r.po);
-      supplierMap[key].totalRebate += r.actualRebate;
-    });
+      if (r.po) acc[key].poSet.add(r.po);
+      acc[key].totalRebate += Number(r.actualRebate) || 0;
 
+      return acc;
+    }, {});
+
+    // Sắp xếp theo ngày còn lại
     const rowsArr = Object.values(supplierMap).sort((a, b) => a.remainsDay - b.remainsDay);
 
+    // Xuất dữ liệu
     rowsArr.forEach(item => {
       const poCount = item.poSet.size;
       const totalFormatted = Math.round(item.totalRebate).toLocaleString('en-US');
