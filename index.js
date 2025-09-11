@@ -597,7 +597,7 @@ async function analyzeRebateData(token) {
     return "⚠ Không có dữ liệu Rebate.";
   }
 
-  // Lọc dữ liệu hợp lệ: rebateMethod không rỗng, khác '0', khác 'Rebate Method' và actualRebate ≠ 0
+  // Lọc dữ liệu hợp lệ
   const filtered = data.filter(row => {
     const method = String(row.rebateMethod || '').trim();
     return (
@@ -622,44 +622,62 @@ async function analyzeRebateData(token) {
 
   let msg = `📋 Báo cáo Rebate:\n`;
 
-  // Xử lý từng nhóm
   for (const [method, rows] of Object.entries(groupedByMethod)) {
     msg += `\n💳 ${method}\n`;
 
-    // Gom nhóm theo supplier + remainsDay
-    const supplierMap = rows.reduce((acc, r) => {
+    // Gom nhóm theo supplier trước
+    const supplierGroup = rows.reduce((acc, r) => {
       const supplierName = r.supplier || '(Không xác định)';
-      const key = `${supplierName}|${r.remainsDay}`;
-
-      if (!acc[key]) {
-        acc[key] = {
-          supplier: supplierName,
-          remainsDay: r.remainsDay,
-          poSet: new Set(),
-          totalRebate: 0,
-          paymentMethod: r.paymentMethod || ''
-        };
-      }
-
-      if (r.po) acc[key].poSet.add(r.po);
-      acc[key].totalRebate += Number(r.actualRebate) || 0;
-
+      if (!acc[supplierName]) acc[supplierName] = [];
+      acc[supplierName].push(r);
       return acc;
     }, {});
 
-    // Sắp xếp theo ngày còn lại
-    const rowsArr = Object.values(supplierMap).sort((a, b) => a.remainsDay - b.remainsDay);
+    // Duyệt từng supplier
+    for (const [supplier, supplierRows] of Object.entries(supplierGroup)) {
+      // Tính tổng rebate quá hạn (remainsDay < 0)
+      const overdueTotal = supplierRows.reduce((sum, r) => {
+        return r.remainsDay < 0 ? sum + (Number(r.actualRebate) || 0) : sum;
+      }, 0);
 
-    // Xuất dữ liệu
-    rowsArr.forEach(item => {
-      const poCount = item.poSet.size;
-      const totalFormatted = Math.round(item.totalRebate).toLocaleString('en-US');
-      msg += `- ${item.supplier}: ${poCount} PO | ${totalFormatted} | ${item.paymentMethod} | ${item.remainsDay} ngày\n`;
-    });
+      const overdueText = overdueTotal > 0
+        ? ` (${Math.round(overdueTotal).toLocaleString('en-US')} quá hạn)`
+        : '';
+
+      msg += `- ${supplier}${overdueText}:\n`;
+
+      // Gom tiếp theo remainsDay
+      const byRemainsDay = supplierRows.reduce((acc, r) => {
+        const dayKey = r.remainsDay;
+        if (!acc[dayKey]) {
+          acc[dayKey] = {
+            supplier,
+            remainsDay: r.remainsDay,
+            poSet: new Set(),
+            totalRebate: 0,
+            paymentMethod: r.paymentMethod || ''
+          };
+        }
+        if (r.po) acc[dayKey].poSet.add(r.po);
+        acc[dayKey].totalRebate += Number(r.actualRebate) || 0;
+        return acc;
+      }, {});
+
+      // Sắp xếp theo remainsDay
+      const rowsArr = Object.values(byRemainsDay).sort((a, b) => a.remainsDay - b.remainsDay);
+
+      // Xuất từng dòng cho supplier (thụt đầu dòng)
+      rowsArr.forEach(item => {
+        const poCount = item.poSet.size;
+        const totalFormatted = Math.round(item.totalRebate).toLocaleString('en-US');
+        msg += `   • ${poCount} PO | ${totalFormatted} | ${item.paymentMethod} | ${item.remainsDay} ngày\n`;
+      });
+    }
   }
 
   return msg;
 }
+
 
 async function sendRebateReport() {
   try {
@@ -670,7 +688,7 @@ async function sendRebateReport() {
       return;
     }
 
-    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
+    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST) ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))] : [];
     for (const chatId of uniqueGroupIds) {
       try {
         await sendMessageToGroup(token, chatId, reportMsg);
@@ -826,7 +844,7 @@ if (messageType === 'text' && messageContent) {
     try {
       const report = await analyzeRebateData(token);
       if (report) {
-        const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
+        const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST) ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))] : [];
         for (const gid of uniqueGroupIds) {
           try {
             await sendMessageToGroup(token, gid, report);
