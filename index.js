@@ -648,7 +648,7 @@ async function analyzeRebateData(token) {
         : '';
 
       // Dòng supplier
-      msg += `- ${supplier} (${paymentMethod})${overdueText}:\n`;
+      msg += `- ${supplier} (${paymentMethod})${overdueText}\n`;
 
       // Gom tiếp theo remainsDay
       const byRemainsDay = supplierRows.reduce((acc, r) => {
