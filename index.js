@@ -644,7 +644,7 @@ async function analyzeRebateData(token) {
       }, 0);
 
       const overdueText = overdueTotal > 0
-        ? ` -> ${Math.round(overdueTotal).toLocaleString('en-US')} quá hạn`
+        ? ` → ${Math.round(overdueTotal).toLocaleString('en-US')} quá hạn`
         : '';
 
       // Dòng supplier
