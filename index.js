@@ -635,16 +635,20 @@ async function analyzeRebateData(token) {
 
     // Duyệt từng supplier
     for (const [supplier, supplierRows] of Object.entries(supplierGroup)) {
+      // Lấy paymentMethod (ưu tiên lấy từ dòng đầu tiên)
+      const paymentMethod = supplierRows[0]?.paymentMethod || '';
+
       // Tính tổng rebate quá hạn (remainsDay < 0)
       const overdueTotal = supplierRows.reduce((sum, r) => {
         return r.remainsDay < 0 ? sum + (Number(r.actualRebate) || 0) : sum;
       }, 0);
 
       const overdueText = overdueTotal > 0
-        ? ` (${Math.round(overdueTotal).toLocaleString('en-US')} quá hạn)`
+        ? ` -> ${Math.round(overdueTotal).toLocaleString('en-US')} quá hạn`
         : '';
 
-      msg += `- ${supplier}${overdueText}:\n`;
+      // Dòng supplier
+      msg += `- ${supplier} (${paymentMethod})${overdueText}:\n`;
 
       // Gom tiếp theo remainsDay
       const byRemainsDay = supplierRows.reduce((acc, r) => {
@@ -654,8 +658,7 @@ async function analyzeRebateData(token) {
             supplier,
             remainsDay: r.remainsDay,
             poSet: new Set(),
-            totalRebate: 0,
-            paymentMethod: r.paymentMethod || ''
+            totalRebate: 0
           };
         }
         if (r.po) acc[dayKey].poSet.add(r.po);
@@ -670,14 +673,13 @@ async function analyzeRebateData(token) {
       rowsArr.forEach(item => {
         const poCount = item.poSet.size;
         const totalFormatted = Math.round(item.totalRebate).toLocaleString('en-US');
-        msg += `   • ${poCount} PO | ${totalFormatted} | ${item.paymentMethod} | ${item.remainsDay} ngày\n`;
+        msg += `   • ${poCount} PO | ${totalFormatted} | ${item.remainsDay} ngày\n`;
       });
     }
   }
 
   return msg;
 }
-
 
 async function sendRebateReport() {
   try {
