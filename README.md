@@ -1,6 +1,6 @@
 # Lark ChatGPT Bot
 
-Một bot đơn giản cho Lark Suite, dùng ChatGPT để phản hồi tin nhắn.
+Một Bot đơn giản cho Lark Suite, dùng AI để phản hồi tin nhắn.
 
 ## Setup
 
