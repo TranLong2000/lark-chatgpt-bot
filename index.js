@@ -1025,8 +1025,8 @@ app.listen(port, () => {
 });
 
 // Cron job: chạy mỗi 5 phút (để test)
-cron.schedule('*/5 * * * *', async () => {
-  console.log('[Rebate] Cron job chạy (mỗi 5 phút)');
+cron.schedule('0 9 * * 1', async () => {
+  console.log('[Rebate] Cron job chạy: 9h sáng Thứ 2');
   try {
     await sendRebateReport();
   } catch (err) {
