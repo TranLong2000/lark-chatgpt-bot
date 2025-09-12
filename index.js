@@ -867,34 +867,35 @@ app.post('/webhook',
         messageContent = messageContent.replace(/@L-GPT/gi, 'bạn').trim();
         console.log('[Webhook] 📨 Text after full cleanup:', JSON.stringify(messageContent));
 
-/* ===================== REBATE HANDLER ===================== */
-if (messageType === 'text' && messageContent) {
-  const normalized = messageContent.replace(/[.!?…]+$/g, '').trim().toLowerCase();
-  const isCheckRebate = /^\s*check\s+rebate\s*$/.test(normalized);
-
-  if (isCheckRebate) {
-    try {
-      const report = await analyzeRebateData(token);
-      if (report) {
-        const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST) ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))] : [];
-        for (const gid of uniqueGroupIds) {
+      /* ===================== REBATE HANDLER ===================== */
+      if (messageType === 'text' && messageContent) {
+        const normalized = messageContent.replace(/[.!?…]+$/g, '').trim().toLowerCase();
+        const isCheckRebate = /^\s*check\s+rebate\s*$/.test(normalized);
+      
+        if (isCheckRebate) {
           try {
-            await sendMessageToGroup(token, gid, report);
+            const report = await analyzeRebateData(token);
+            if (report) {
+              // Gửi phản hồi trực tiếp vào group vừa mention BOT
+              try {
+                await sendMessageToGroup(token, chatId, report);
+                console.log('[Rebate] Sent report to group (mention)', chatId);
+              } catch (e) {
+                console.error('[Rebate] Send to group failed:', chatId, e?.message || e);
+                await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi không thể gửi báo cáo rebate vào nhóm này.`, mentionUserId, mentionUserName);
+              }
+            } else {
+              await replyToLark(messageId, `Không tìm thấy dữ liệu rebate.`, mentionUserId, mentionUserName);
+            }
           } catch (e) {
-            console.error('[Rebate] Send to group failed:', gid, e?.message || e);
+            console.error('[Rebate] Read error:', e?.message || e);
+            await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi không thể đọc dữ liệu rebate.`, mentionUserId, mentionUserName);
           }
+          return;
         }
-      } else {
-        await replyToLark(messageId, `Không tìm thấy dữ liệu rebate.`, mentionUserId, mentionUserName);
       }
-    } catch (e) {
-      console.error('[Rebate] Read error:', e?.message || e);
-      await replyToLark(messageId, `Xin lỗi ${mentionUserName}, tôi không thể đọc dữ liệu rebate.`, mentionUserId, mentionUserName);
-    }
-    return;
-  }
-}
-/* =================== END REBATE HANDLER =================== */
+      /* =================== END REBATE HANDLER =================== */
+
          
         /* =================== CHAT AI =================== */
         if (messageType === 'text' && messageContent) {
