@@ -696,20 +696,29 @@ async function analyzeRebateData(token) {
       // Dòng supplier
       msg += `- ${supplier} (${paymentMethod})${overdueText}\n`;
 
-      // Gom nhóm tiếp theo AZ + remainsDay
+      // Gom nhóm theo (PeriodLabel + remainsDay)
       const byPeriod = supplierRows.reduce((acc, r) => {
         const date = r.rebateDateAZ ? new Date(r.rebateDateAZ) : null;
         let periodLabel = '';
-        if (date && !isNaN(date)) {
-          const month = date.getMonth() + 1;
-          if (method.toLowerCase() === 'monthly') {
+
+        if (method.toLowerCase() === 'monthly') {
+          if (date && !isNaN(date)) {
+            const month = date.getMonth() + 1;
             periodLabel = `Tháng ${month}`;
-          } else if (method.toLowerCase() === 'quarterly') {
+          } else {
+            periodLabel = 'Tháng ?';
+          }
+        } else if (method.toLowerCase() === 'quarterly') {
+          if (date && !isNaN(date)) {
+            const month = date.getMonth() + 1;
             const quarter = Math.floor((month - 1) / 3) + 1;
             periodLabel = `Quý ${quarter}`;
           } else {
-            periodLabel = `${r.po ? 'PO ' + r.po : ''}`;
+            periodLabel = 'Quý ?';
           }
+        } else {
+          // Daily giữ nguyên
+          periodLabel = `${r.po ? 'PO ' + r.po : ''}`;
         }
 
         const key = `${periodLabel}|${r.remainsDay}`;
@@ -726,7 +735,7 @@ async function analyzeRebateData(token) {
         return acc;
       }, {});
 
-      // Sắp xếp theo remainsDay
+      // Sắp xếp theo ngày còn lại
       const rowsArr = Object.values(byPeriod).sort((a, b) => a.remainsDay - b.remainsDay);
 
       rowsArr.forEach(item => {
@@ -735,7 +744,7 @@ async function analyzeRebateData(token) {
         if (method.toLowerCase() === 'daily') {
           label = `${item.poSet.size} PO`;
         } else {
-          label = item.periodLabel || '';
+          label = item.periodLabel;
         }
         msg += `   • ${label} | ${totalFormatted} | ${item.remainsDay} ngày\n`;
       });
@@ -745,6 +754,28 @@ async function analyzeRebateData(token) {
   return msg;
 }
 
+async function sendRebateReport() {
+  try {
+    const token = await getAppAccessToken();
+    const reportMsg = await analyzeRebateData(token);
+    if (!reportMsg) {
+      console.warn('[Rebate] No report message to send.');
+      return;
+    }
+
+    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST) ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))] : [];
+    for (const chatId of uniqueGroupIds) {
+      try {
+        await sendMessageToGroup(token, chatId, reportMsg);
+        console.log('[Rebate] Sent report to group', chatId);
+      } catch (err) {
+        console.error('[Rebate] Failed sending report to', chatId, err?.message || err);
+      }
+    }
+  } catch (err) {
+    console.error('Lỗi gửi báo cáo Rebate:', err?.message || err);
+  }
+}
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
