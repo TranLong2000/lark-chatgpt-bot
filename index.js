@@ -556,12 +556,12 @@ function _parseMonthAndQuarter(dateStr) {
 async function getRebateData(token) {
   const col = {
     AH: 1,   // PO
+    AZ: 19,  // Rebate Date (m/d/yyyy)
     BA: 20,  // Supplier
     BC: 22,  // Actual Rebate
     BE: 24,  // Rebate Method
     BH: 27,  // Payment Method
-    BI: 28,  // Remains Day
-    AZ: 51   // Rebate Date (m/d/yyyy)
+    BI: 28   // Remains Day
   };
 
   const SPREADSHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
@@ -587,12 +587,10 @@ async function getRebateData(token) {
 
       if (rows && rows.length > 1) {
         return rows.slice(1).map((r, idx) => {
-          const azVal = r[col.AZ] ? String(r[col.AZ]).trim() : '';
-          if (idx < 5) {
-            // In log 5 dòng đầu để kiểm tra format cột AZ
-            console.log(`[DEBUG][AZ] row ${idx + 2} ->`, azVal);
+          const rebateDateRaw = r[col.AZ] ? String(r[col.AZ]).trim() : '';
+          if (rebateDateRaw) {
+            console.log(`[DEBUG][AZ] row ${idx + 2} ->`, rebateDateRaw);
           }
-      
           return {
             supplier: r[col.BA] ? String(r[col.BA]).trim() : '',
             rebateMethod: r[col.BE] ? String(r[col.BE]).trim() : '',
@@ -600,7 +598,7 @@ async function getRebateData(token) {
             actualRebate: _parseNumber(r[col.BC]),
             paymentMethod: r[col.BH] ? String(r[col.BH]).trim() : '',
             remainsDay: _parseRemainsDay(r[col.BI]),
-            rebateDateAZ: azVal
+            rebateDateAZ: rebateDateRaw
           };
         });
       }
