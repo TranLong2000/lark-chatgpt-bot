@@ -591,51 +591,21 @@ async function getRebateData(token) {
   return [];
 }
 
-async function getRebateData(token) {
-  const col = {
-    AH: 1,   // PO
-    BA: 20,  // Supplier
-    BC: 22,  // Actual Rebate
-    BE: 24,  // Rebate Method
-    BH: 27,  // Payment Method
-    BI: 28,  // Remains Day
-    AZ: 51   // Period (Month/Quarter)  <-- thêm cột này
-  };
+// Hàm parse thủ công từ m/d/yyyy
+function parseMonthAndQuarter(dateStr) {
+  if (!dateStr) return { month: null, quarter: null };
 
-  const SPREADSHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
-  const SHEET_ID = '5cr5RK';
-  const RANGE = `${SHEET_ID}!AG:BL`;
+  const clean = String(dateStr).trim();
+  const parts = clean.split('/');
+  if (parts.length < 2) return { month: null, quarter: null };
 
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const authToken = token || await getAppAccessToken();
-      const url =
-        `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values_batch_get` +
-        `?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=FormattedValue`;
-
-      const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${authToken}` },
-        timeout: 20000
-      });
-
-      const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
-      if (rows && rows.length > 1) {
-        return rows.slice(1).map(r => ({
-          supplier: r[col.BA] ? String(r[col.BA]).trim() : '',
-          rebateMethod: r[col.BE] ? String(r[col.BE]).trim() : '',
-          po: r[col.AH] ? String(r[col.AH]).trim() : '',
-          actualRebate: _parseNumber(r[col.BC]),
-          paymentMethod: r[col.BH] ? String(r[col.BH]).trim() : '',
-          remainsDay: _parseRemainsDay(r[col.BI]),
-          period: r[col.AZ] ? String(r[col.AZ]).trim() : '' // thêm period
-        }));
-      }
-    } catch (err) {
-      console.error(`Error fetching rebate sheet (attempt ${attempt}):`, err?.message || err);
-      await new Promise(res => setTimeout(res, 2000));
-    }
+  const month = parseInt(parts[0], 10);
+  if (isNaN(month) || month < 1 || month > 12) {
+    return { month: null, quarter: null };
   }
-  return [];
+
+  const quarter = Math.floor((month - 1) / 3) + 1;
+  return { month, quarter };
 }
 
 async function analyzeRebateData(token) {
@@ -672,7 +642,7 @@ async function analyzeRebateData(token) {
   for (const [method, rows] of Object.entries(groupedByMethod)) {
     msg += `\n💳 ${method}\n`;
 
-    // Gom nhóm theo supplier
+    // Gom nhóm theo supplier trước
     const supplierGroup = rows.reduce((acc, r) => {
       const supplierName = r.supplier || '(Không xác định)';
       if (!acc[supplierName]) acc[supplierName] = [];
@@ -684,7 +654,7 @@ async function analyzeRebateData(token) {
     for (const [supplier, supplierRows] of Object.entries(supplierGroup)) {
       const paymentMethod = supplierRows[0]?.paymentMethod || '';
 
-      // Tổng rebate quá hạn (remainsDay < 0)
+      // Tính tổng rebate quá hạn
       const overdueTotal = supplierRows.reduce((sum, r) => {
         return r.remainsDay < 0 ? sum + (Number(r.actualRebate) || 0) : sum;
       }, 0);
@@ -693,66 +663,57 @@ async function analyzeRebateData(token) {
         ? ` → ${Math.round(overdueTotal).toLocaleString('en-US')}`
         : '';
 
-      // Dòng supplier
+      // Header supplier
       msg += `- ${supplier} (${paymentMethod})${overdueText}\n`;
 
-      // Gom nhóm theo (PeriodLabel + remainsDay)
+      // Gom theo period (tháng / quý / daily)
       const byPeriod = supplierRows.reduce((acc, r) => {
-        const date = r.rebateDateAZ ? new Date(r.rebateDateAZ) : null;
         let periodLabel = '';
+        const { month, quarter } = parseMonthAndQuarter(r.rebateDateAZ);
 
         if (method.toLowerCase() === 'monthly') {
-          if (date && !isNaN(date)) {
-            const month = date.getMonth() + 1;
-            periodLabel = `Tháng ${month}`;
-          } else {
-            periodLabel = 'Tháng ?';
-          }
+          periodLabel = month ? `Tháng ${month}` : 'Tháng ?';
         } else if (method.toLowerCase() === 'quarterly') {
-          if (date && !isNaN(date)) {
-            const month = date.getMonth() + 1;
-            const quarter = Math.floor((month - 1) / 3) + 1;
-            periodLabel = `Quý ${quarter}`;
-          } else {
-            periodLabel = 'Quý ?';
-          }
+          periodLabel = quarter ? `Quý ${quarter}` : 'Quý ?';
         } else {
-          // Daily giữ nguyên
-          periodLabel = `${r.po ? 'PO ' + r.po : ''}`;
+          periodLabel = r.po ? `PO ${r.po}` : '';
         }
 
-        const key = `${periodLabel}|${r.remainsDay}`;
-        if (!acc[key]) {
-          acc[key] = {
-            periodLabel,
-            remainsDay: r.remainsDay,
+        if (!acc[periodLabel]) {
+          acc[periodLabel] = {
+            label: periodLabel,
             poSet: new Set(),
-            totalRebate: 0
+            totalRebate: 0,
+            remainsDay: r.remainsDay
           };
         }
-        if (r.po) acc[key].poSet.add(r.po);
-        acc[key].totalRebate += Number(r.actualRebate) || 0;
+
+        if (r.po) acc[periodLabel].poSet.add(r.po);
+        acc[periodLabel].totalRebate += Number(r.actualRebate) || 0;
+        acc[periodLabel].remainsDay = r.remainsDay;
+
         return acc;
       }, {});
 
-      // Sắp xếp theo ngày còn lại
+      // Sắp xếp theo remainsDay
       const rowsArr = Object.values(byPeriod).sort((a, b) => a.remainsDay - b.remainsDay);
 
+      // Xuất chi tiết
       rowsArr.forEach(item => {
+        const poCount = item.poSet.size;
         const totalFormatted = Math.round(item.totalRebate).toLocaleString('en-US');
-        let label = '';
         if (method.toLowerCase() === 'daily') {
-          label = `${item.poSet.size} PO`;
+          msg += `   • ${poCount} PO | ${totalFormatted} | ${item.remainsDay} ngày\n`;
         } else {
-          label = item.periodLabel;
+          msg += `   • ${item.label} | ${totalFormatted} | ${item.remainsDay} ngày\n`;
         }
-        msg += `   • ${label} | ${totalFormatted} | ${item.remainsDay} ngày\n`;
       });
     }
   }
 
   return msg;
 }
+
 
 async function sendRebateReport() {
   try {
