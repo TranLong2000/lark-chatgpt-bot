@@ -586,21 +586,15 @@ async function getRebateData(token) {
       console.log(`DEBUG attempt ${attempt} - rebate sheet rows length:`, rows.length);
 
       if (rows && rows.length > 1) {
-        return rows.slice(1).map((r, idx) => {
-          const rebateDateRaw = r[col.AZ] ? String(r[col.AZ]).trim() : '';
-          if (rebateDateRaw) {
-            console.log(`[DEBUG][AZ] row ${idx + 2} ->`, rebateDateRaw);
-          }
-          return {
-            supplier: r[col.BA] ? String(r[col.BA]).trim() : '',
-            rebateMethod: r[col.BE] ? String(r[col.BE]).trim() : '',
-            po: r[col.AH] ? String(r[col.AH]).trim() : '',
-            actualRebate: _parseNumber(r[col.BC]),
-            paymentMethod: r[col.BH] ? String(r[col.BH]).trim() : '',
-            remainsDay: _parseRemainsDay(r[col.BI]),
-            rebateDateAZ: rebateDateRaw
-          };
-        });
+        return rows.slice(1).map(r => ({
+          supplier: r[col.BA] ? String(r[col.BA]).trim() : '',
+          rebateMethod: r[col.BE] ? String(r[col.BE]).trim() : '',
+          po: r[col.AH] ? String(r[col.AH]).trim() : '',
+          actualRebate: _parseNumber(r[col.BC]),
+          paymentMethod: r[col.BH] ? String(r[col.BH]).trim() : '',
+          remainsDay: _parseRemainsDay(r[col.BI]),
+          rebateDateAZ: r[col.AZ] ? String(r[col.AZ]).trim() : ''
+        }));
       }
 
       console.warn(`⚠ Attempt ${attempt}: Rebate data empty or too short, retrying...`);
