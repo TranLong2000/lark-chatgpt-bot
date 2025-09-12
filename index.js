@@ -544,6 +544,7 @@ async function getRebateData(token) {
     BA: 20,  // Supplier
     BC: 22,  // Actual Rebate
     BE: 24,  // Rebate Method
+    AZ: 25,  // Rebate Date (m/d/yyyy)
     BH: 27,  // Payment Method
     BI: 28   // Remains Day
   };
@@ -576,6 +577,7 @@ async function getRebateData(token) {
           po: r[col.AH] ? String(r[col.AH]).trim() : '',
           actualRebate: _parseNumber(r[col.BC]),
           paymentMethod: r[col.BH] ? String(r[col.BH]).trim() : '',
+          rebateDateAZ: r[col.AZ] ? String(r[col.AZ]).trim() : '',
           remainsDay: _parseRemainsDay(r[col.BI])
         }));
       }
@@ -714,7 +716,6 @@ async function analyzeRebateData(token) {
   return msg;
 }
 
-
 async function sendRebateReport() {
   try {
     const token = await getAppAccessToken();
@@ -737,6 +738,7 @@ async function sendRebateReport() {
     console.error('Lỗi gửi báo cáo Rebate:', err?.message || err);
   }
 }
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
