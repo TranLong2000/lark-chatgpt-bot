@@ -644,6 +644,7 @@ async function analyzeRebateData(token) {
     return "⚠ Không có dữ liệu Rebate.";
   }
 
+  // Lọc dữ liệu hợp lệ
   const filtered = data.filter(row => {
     const method = String(row.rebateMethod || '').trim();
     return (
@@ -658,7 +659,7 @@ async function analyzeRebateData(token) {
     return "⚠ Không có dữ liệu Rebate (sau khi lọc).";
   }
 
-  // Nhóm theo method
+  // Gom nhóm theo rebateMethod
   const groupedByMethod = filtered.reduce((acc, row) => {
     const methodKey = String(row.rebateMethod).trim();
     if (!acc[methodKey]) acc[methodKey] = [];
@@ -671,7 +672,7 @@ async function analyzeRebateData(token) {
   for (const [method, rows] of Object.entries(groupedByMethod)) {
     msg += `\n💳 ${method}\n`;
 
-    // Nhóm theo supplier
+    // Gom nhóm theo supplier
     const supplierGroup = rows.reduce((acc, r) => {
       const supplierName = r.supplier || '(Không xác định)';
       if (!acc[supplierName]) acc[supplierName] = [];
@@ -679,9 +680,11 @@ async function analyzeRebateData(token) {
       return acc;
     }, {});
 
+    // Duyệt từng supplier
     for (const [supplier, supplierRows] of Object.entries(supplierGroup)) {
       const paymentMethod = supplierRows[0]?.paymentMethod || '';
 
+      // Tổng rebate quá hạn (remainsDay < 0)
       const overdueTotal = supplierRows.reduce((sum, r) => {
         return r.remainsDay < 0 ? sum + (Number(r.actualRebate) || 0) : sum;
       }, 0);
@@ -690,16 +693,30 @@ async function analyzeRebateData(token) {
         ? ` → ${Math.round(overdueTotal).toLocaleString('en-US')}`
         : '';
 
+      // Dòng supplier
       msg += `- ${supplier} (${paymentMethod})${overdueText}\n`;
 
-      // Gom tiếp theo remainsDay + period
-      const byKey = supplierRows.reduce((acc, r) => {
-        const key = `${r.remainsDay}|${r.period}`;
+      // Gom nhóm tiếp theo AZ + remainsDay
+      const byPeriod = supplierRows.reduce((acc, r) => {
+        const date = r.rebateDateAZ ? new Date(r.rebateDateAZ) : null;
+        let periodLabel = '';
+        if (date && !isNaN(date)) {
+          const month = date.getMonth() + 1;
+          if (method.toLowerCase() === 'monthly') {
+            periodLabel = `Tháng ${month}`;
+          } else if (method.toLowerCase() === 'quarterly') {
+            const quarter = Math.floor((month - 1) / 3) + 1;
+            periodLabel = `Quý ${quarter}`;
+          } else {
+            periodLabel = `${r.po ? 'PO ' + r.po : ''}`;
+          }
+        }
+
+        const key = `${periodLabel}|${r.remainsDay}`;
         if (!acc[key]) {
           acc[key] = {
-            supplier,
+            periodLabel,
             remainsDay: r.remainsDay,
-            period: r.period,
             poSet: new Set(),
             totalRebate: 0
           };
@@ -709,17 +726,16 @@ async function analyzeRebateData(token) {
         return acc;
       }, {});
 
-      const rowsArr = Object.values(byKey).sort((a, b) => a.remainsDay - b.remainsDay);
+      // Sắp xếp theo remainsDay
+      const rowsArr = Object.values(byPeriod).sort((a, b) => a.remainsDay - b.remainsDay);
 
       rowsArr.forEach(item => {
         const totalFormatted = Math.round(item.totalRebate).toLocaleString('en-US');
         let label = '';
         if (method.toLowerCase() === 'daily') {
           label = `${item.poSet.size} PO`;
-        } else if (method.toLowerCase() === 'monthly') {
-          label = `Tháng ${item.period}`;
-        } else if (method.toLowerCase() === 'quarterly') {
-          label = `Quý ${item.period}`;
+        } else {
+          label = item.periodLabel || '';
         }
         msg += `   • ${label} | ${totalFormatted} | ${item.remainsDay} ngày\n`;
       });
@@ -728,6 +744,7 @@ async function analyzeRebateData(token) {
 
   return msg;
 }
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
