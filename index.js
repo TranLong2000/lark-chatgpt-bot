@@ -253,7 +253,7 @@ function toNumber(v) {
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 
-const SALE_COL_MAP = { A:0,E:4,F:5,G:6,M:12,N:13,O:14,P:15,Q:16,AK:36 };
+const SALE_COL_MAP = { A:0,E:5,F:6,G:7,M:13,N:14,O:15,P:16,Q:17,AK:37 };
 let lastTotalStock = null;
 let sendingTotalStockLock = false;
 let lastSalesMsgHash = null;
