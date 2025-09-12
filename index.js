@@ -538,15 +538,30 @@ function _parseRemainsDay(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// parse từ cột AZ (m/d/yyyy)
+function _parseMonthAndQuarter(dateStr) {
+  if (!dateStr) return { month: null, quarter: null };
+  const clean = String(dateStr).trim();
+  const parts = clean.split('/');
+  if (parts.length < 2) return { month: null, quarter: null };
+
+  const month = parseInt(parts[0], 10);
+  if (isNaN(month) || month < 1 || month > 12) {
+    return { month: null, quarter: null };
+  }
+  const quarter = Math.floor((month - 1) / 3) + 1;
+  return { month, quarter };
+}
+
 async function getRebateData(token) {
   const col = {
     AH: 1,   // PO
     BA: 20,  // Supplier
     BC: 22,  // Actual Rebate
     BE: 24,  // Rebate Method
-    AZ: 25,  // Rebate Date (m/d/yyyy)
     BH: 27,  // Payment Method
-    BI: 28   // Remains Day
+    BI: 28,  // Remains Day
+    AZ: 51   // Rebate Date (m/d/yyyy)
   };
 
   const SPREADSHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
@@ -577,8 +592,8 @@ async function getRebateData(token) {
           po: r[col.AH] ? String(r[col.AH]).trim() : '',
           actualRebate: _parseNumber(r[col.BC]),
           paymentMethod: r[col.BH] ? String(r[col.BH]).trim() : '',
-          rebateDateAZ: r[col.AZ] ? String(r[col.AZ]).trim() : '',
-          remainsDay: _parseRemainsDay(r[col.BI])
+          remainsDay: _parseRemainsDay(r[col.BI]),
+          rebateDateAZ: r[col.AZ] ? String(r[col.AZ]).trim() : ''
         }));
       }
 
@@ -591,23 +606,6 @@ async function getRebateData(token) {
   }
 
   return [];
-}
-
-// Hàm parse thủ công từ m/d/yyyy
-function parseMonthAndQuarter(dateStr) {
-  if (!dateStr) return { month: null, quarter: null };
-
-  const clean = String(dateStr).trim();
-  const parts = clean.split('/');
-  if (parts.length < 2) return { month: null, quarter: null };
-
-  const month = parseInt(parts[0], 10);
-  if (isNaN(month) || month < 1 || month > 12) {
-    return { month: null, quarter: null };
-  }
-
-  const quarter = Math.floor((month - 1) / 3) + 1;
-  return { month, quarter };
 }
 
 async function analyzeRebateData(token) {
@@ -644,7 +642,7 @@ async function analyzeRebateData(token) {
   for (const [method, rows] of Object.entries(groupedByMethod)) {
     msg += `\n💳 ${method}\n`;
 
-    // Gom nhóm theo supplier trước
+    // Gom nhóm theo supplier
     const supplierGroup = rows.reduce((acc, r) => {
       const supplierName = r.supplier || '(Không xác định)';
       if (!acc[supplierName]) acc[supplierName] = [];
@@ -652,11 +650,10 @@ async function analyzeRebateData(token) {
       return acc;
     }, {});
 
-    // Duyệt từng supplier
     for (const [supplier, supplierRows] of Object.entries(supplierGroup)) {
       const paymentMethod = supplierRows[0]?.paymentMethod || '';
 
-      // Tính tổng rebate quá hạn
+      // Tổng rebate quá hạn
       const overdueTotal = supplierRows.reduce((sum, r) => {
         return r.remainsDay < 0 ? sum + (Number(r.actualRebate) || 0) : sum;
       }, 0);
@@ -665,13 +662,12 @@ async function analyzeRebateData(token) {
         ? ` → ${Math.round(overdueTotal).toLocaleString('en-US')}`
         : '';
 
-      // Header supplier
       msg += `- ${supplier} (${paymentMethod})${overdueText}\n`;
 
-      // Gom theo period (tháng / quý / daily)
+      // Gom theo period
       const byPeriod = supplierRows.reduce((acc, r) => {
         let periodLabel = '';
-        const { month, quarter } = parseMonthAndQuarter(r.rebateDateAZ);
+        const { month, quarter } = _parseMonthAndQuarter(r.rebateDateAZ);
 
         if (method.toLowerCase() === 'monthly') {
           periodLabel = month ? `Tháng ${month}` : 'Tháng ?';
@@ -697,13 +693,12 @@ async function analyzeRebateData(token) {
         return acc;
       }, {});
 
-      // Sắp xếp theo remainsDay
       const rowsArr = Object.values(byPeriod).sort((a, b) => a.remainsDay - b.remainsDay);
 
-      // Xuất chi tiết
       rowsArr.forEach(item => {
         const poCount = item.poSet.size;
         const totalFormatted = Math.round(item.totalRebate).toLocaleString('en-US');
+
         if (method.toLowerCase() === 'daily') {
           msg += `   • ${poCount} PO | ${totalFormatted} | ${item.remainsDay} ngày\n`;
         } else {
@@ -738,7 +733,6 @@ async function sendRebateReport() {
     console.error('Lỗi gửi báo cáo Rebate:', err?.message || err);
   }
 }
-
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
