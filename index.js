@@ -1024,8 +1024,12 @@ app.listen(port, () => {
   setInterval(checkTotalStockChange, 60 * 1000);
 });
 
-// Cron job: 9h sáng thứ 2 hàng tuần
-cron.schedule('0 9 * * 1', () => {
-  console.log('[Rebate] Cron job chạy: 9h sáng Thứ 2');
-  sendRebateReport();
+// Cron job: chạy mỗi 5 phút (để test)
+cron.schedule('*/5 * * * *', async () => {
+  console.log('[Rebate] Cron job chạy (mỗi 5 phút)');
+  try {
+    await sendRebateReport();
+  } catch (err) {
+    console.error('[Rebate] Cron job error:', err);
+  }
 });
