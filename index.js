@@ -720,7 +720,7 @@ async function sendRebateReport() {
       return;
     }
 
-    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST) ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))] : [];
+    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS) ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))] : [];
     for (const chatId of uniqueGroupIds) {
       try {
         await sendMessageToGroup(token, chatId, reportMsg);
