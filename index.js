@@ -591,13 +591,59 @@ async function getRebateData(token) {
   return [];
 }
 
+async function getRebateData(token) {
+  const col = {
+    AH: 1,   // PO
+    BA: 20,  // Supplier
+    BC: 22,  // Actual Rebate
+    BE: 24,  // Rebate Method
+    BH: 27,  // Payment Method
+    BI: 28,  // Remains Day
+    AZ: 51   // Period (Month/Quarter)  <-- thêm cột này
+  };
+
+  const SPREADSHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
+  const SHEET_ID = '5cr5RK';
+  const RANGE = `${SHEET_ID}!AG:BL`;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const authToken = token || await getAppAccessToken();
+      const url =
+        `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values_batch_get` +
+        `?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=FormattedValue`;
+
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${authToken}` },
+        timeout: 20000
+      });
+
+      const rows = resp.data?.data?.valueRanges?.[0]?.values || [];
+      if (rows && rows.length > 1) {
+        return rows.slice(1).map(r => ({
+          supplier: r[col.BA] ? String(r[col.BA]).trim() : '',
+          rebateMethod: r[col.BE] ? String(r[col.BE]).trim() : '',
+          po: r[col.AH] ? String(r[col.AH]).trim() : '',
+          actualRebate: _parseNumber(r[col.BC]),
+          paymentMethod: r[col.BH] ? String(r[col.BH]).trim() : '',
+          remainsDay: _parseRemainsDay(r[col.BI]),
+          period: r[col.AZ] ? String(r[col.AZ]).trim() : '' // thêm period
+        }));
+      }
+    } catch (err) {
+      console.error(`Error fetching rebate sheet (attempt ${attempt}):`, err?.message || err);
+      await new Promise(res => setTimeout(res, 2000));
+    }
+  }
+  return [];
+}
+
 async function analyzeRebateData(token) {
   const data = await getRebateData(token);
   if (!Array.isArray(data) || data.length === 0) {
     return "⚠ Không có dữ liệu Rebate.";
   }
 
-  // Lọc dữ liệu hợp lệ
   const filtered = data.filter(row => {
     const method = String(row.rebateMethod || '').trim();
     return (
@@ -612,7 +658,7 @@ async function analyzeRebateData(token) {
     return "⚠ Không có dữ liệu Rebate (sau khi lọc).";
   }
 
-  // Gom nhóm theo rebateMethod
+  // Nhóm theo method
   const groupedByMethod = filtered.reduce((acc, row) => {
     const methodKey = String(row.rebateMethod).trim();
     if (!acc[methodKey]) acc[methodKey] = [];
@@ -625,7 +671,7 @@ async function analyzeRebateData(token) {
   for (const [method, rows] of Object.entries(groupedByMethod)) {
     msg += `\n💳 ${method}\n`;
 
-    // Gom nhóm theo supplier trước
+    // Nhóm theo supplier
     const supplierGroup = rows.reduce((acc, r) => {
       const supplierName = r.supplier || '(Không xác định)';
       if (!acc[supplierName]) acc[supplierName] = [];
@@ -633,12 +679,9 @@ async function analyzeRebateData(token) {
       return acc;
     }, {});
 
-    // Duyệt từng supplier
     for (const [supplier, supplierRows] of Object.entries(supplierGroup)) {
-      // Lấy paymentMethod (ưu tiên lấy từ dòng đầu tiên)
       const paymentMethod = supplierRows[0]?.paymentMethod || '';
 
-      // Tính tổng rebate quá hạn (remainsDay < 0)
       const overdueTotal = supplierRows.reduce((sum, r) => {
         return r.remainsDay < 0 ? sum + (Number(r.actualRebate) || 0) : sum;
       }, 0);
@@ -647,61 +690,43 @@ async function analyzeRebateData(token) {
         ? ` → ${Math.round(overdueTotal).toLocaleString('en-US')}`
         : '';
 
-      // Dòng supplier
       msg += `- ${supplier} (${paymentMethod})${overdueText}\n`;
 
-      // Gom tiếp theo remainsDay
-      const byRemainsDay = supplierRows.reduce((acc, r) => {
-        const dayKey = r.remainsDay;
-        if (!acc[dayKey]) {
-          acc[dayKey] = {
+      // Gom tiếp theo remainsDay + period
+      const byKey = supplierRows.reduce((acc, r) => {
+        const key = `${r.remainsDay}|${r.period}`;
+        if (!acc[key]) {
+          acc[key] = {
             supplier,
             remainsDay: r.remainsDay,
+            period: r.period,
             poSet: new Set(),
             totalRebate: 0
           };
         }
-        if (r.po) acc[dayKey].poSet.add(r.po);
-        acc[dayKey].totalRebate += Number(r.actualRebate) || 0;
+        if (r.po) acc[key].poSet.add(r.po);
+        acc[key].totalRebate += Number(r.actualRebate) || 0;
         return acc;
       }, {});
 
-      // Sắp xếp theo remainsDay
-      const rowsArr = Object.values(byRemainsDay).sort((a, b) => a.remainsDay - b.remainsDay);
+      const rowsArr = Object.values(byKey).sort((a, b) => a.remainsDay - b.remainsDay);
 
-      // Xuất từng dòng cho supplier (thụt đầu dòng)
       rowsArr.forEach(item => {
-        const poCount = item.poSet.size;
         const totalFormatted = Math.round(item.totalRebate).toLocaleString('en-US');
-        msg += `   • ${poCount} PO | ${totalFormatted} | ${item.remainsDay} ngày\n`;
+        let label = '';
+        if (method.toLowerCase() === 'daily') {
+          label = `${item.poSet.size} PO`;
+        } else if (method.toLowerCase() === 'monthly') {
+          label = `Tháng ${item.period}`;
+        } else if (method.toLowerCase() === 'quarterly') {
+          label = `Quý ${item.period}`;
+        }
+        msg += `   • ${label} | ${totalFormatted} | ${item.remainsDay} ngày\n`;
       });
     }
   }
 
   return msg;
-}
-
-async function sendRebateReport() {
-  try {
-    const token = await getAppAccessToken();
-    const reportMsg = await analyzeRebateData(token);
-    if (!reportMsg) {
-      console.warn('[Rebate] No report message to send.');
-      return;
-    }
-
-    const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST) ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))] : [];
-    for (const chatId of uniqueGroupIds) {
-      try {
-        await sendMessageToGroup(token, chatId, reportMsg);
-        console.log('[Rebate] Sent report to group', chatId);
-      } catch (err) {
-        console.error('[Rebate] Failed sending report to', chatId, err?.message || err);
-      }
-    }
-  } catch (err) {
-    console.error('Lỗi gửi báo cáo Rebate:', err?.message || err);
-  }
 }
 
 /* =======================================================
