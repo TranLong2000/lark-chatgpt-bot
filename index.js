@@ -253,7 +253,7 @@ function toNumber(v) {
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 
-const SALE_COL_MAP = { A:0,E:5,F:6,G:7,M:13,N:14,O:15,P:16,Q:17,AK:37 };
+const SALE_COL_MAP = { A:0,F:5,G:6,H:7,N:13,O:14,P:15,Q:16,R:17,AL:37 };
 let lastTotalStock = null;
 let sendingTotalStockLock = false;
 let lastSalesMsgHash = null;
@@ -266,7 +266,7 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
     const currIdx = colToIndex(currentCol);
 
     const freshToken = await getAppAccessToken();
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AK`)}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AL`)}`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${freshToken}` },
       timeout: 20000, // giảm xuống 20s
@@ -279,14 +279,14 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
     const rows = resp.data?.data?.valueRange?.values || [];
     if (rows && rows.length > 1) {
       return rows.slice(1).map((r, i) => {
-        const productName = r[col.E] ?? `Dòng ${i + 2}`;
-        const warehouse   = r[col.F] ?? '';
-        const totalStock  = toNumber(r[col.G]);
-        const avr7daysRaw = r[col.M] ?? '';
-        const sale3day    = toNumber(r[col.N]);
-        const sale2day    = toNumber(r[col.O]);
-        const sale1day    = toNumber(r[col.P]);
-        const finalStatus = (r[col.AK] ?? '').toString().trim();
+        const productName = r[col.F] ?? `Dòng ${i + 2}`;
+        const warehouse   = r[col.G] ?? '';
+        const totalStock  = toNumber(r[col.H]);
+        const avr7daysRaw = r[col.N] ?? '';
+        const sale3day    = toNumber(r[col.O]);
+        const sale2day    = toNumber(r[col.P]);
+        const sale1day    = toNumber(r[col.Q]);
+        const finalStatus = (r[col.AL] ?? '').toString().trim();
         const prev    = toNumber(r[prevIdx]);
         const current = toNumber(r[currIdx]);
         let change = 0;
@@ -327,8 +327,8 @@ async function analyzeSalesChange(token) {
   try {
     const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
     const hourVN = nowVN.getHours();
-    const prevCol = 'M';
-    const currentCol = hourVN < 12 ? 'P' : 'Q';
+    const prevCol = 'N';
+    const currentCol = hourVN < 12 ? 'Q' : 'R';
     const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
     const allData = await getSaleComparisonData(token, prevCol, currentCol);
