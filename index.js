@@ -418,10 +418,9 @@ async function safeAnalyzeSalesChange(token) {
   return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
 }
 
-// ====================== GET TOTAL STOCK ======================
 async function getTotalStockOnce(token) {
   try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:G`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:H`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
@@ -436,7 +435,7 @@ async function getTotalStockOnce(token) {
 
     const filtered = rows.slice(1).filter(row => (row[0] || "").trim() === "WBT");
     const sum = filtered.reduce((acc, row) => {
-      const v = row[6];
+      const v = row[7]; // cột H (tồn kho) sau khi thêm cột mới
       const num = parseFloat((v ?? '').toString().replace(/,/g, ''));
       return isNaN(num) ? acc : acc + num;
     }, 0);
