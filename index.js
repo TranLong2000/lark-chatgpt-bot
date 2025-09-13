@@ -412,25 +412,25 @@ async function analyzeSalesChange(token) {
       .sort((a, b) => a.change - b.change)
       .slice(0, 5);
 
-       // SKU hết hàng (OOS)
-   const allOOS = totalData
-     .filter(r => r.avr7days > 0 && r.totalStock === 0) // ✅ chỉ lấy SKU có AVG > 0
-     .map(r => {
-       let label = '';
-       if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
-       else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
-       else if (r.sale1day === 0) label = 'OOS 1 ngày';
-       return { ...r, oosLabel: label };
-     })
-     .filter(r => r.oosLabel) // chỉ giữ SKU có label
-     .sort((a, b) => {
-       const weight = lbl =>
-         lbl.includes('> 3') ? 3 :
-         lbl.includes('2')   ? 2 : 1;
-       return weight(b.oosLabel) - weight(a.oosLabel);
-     });
-   
-   const outOfStock = allOOS.slice(0, 5);
+      // SKU hết hàng (OOS)
+      const allOOS = totalData
+        .filter(r => String(r.avr7days).trim() !== '' && r.totalStock === 0) // ✅ AVG khác rỗng + hết hàng
+        .map(r => {
+          let label = '';
+          if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
+          else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
+          else if (r.sale1day === 0) label = 'OOS 1 ngày';
+          return { ...r, oosLabel: label };
+        })
+        .filter(r => r.oosLabel) // chỉ giữ SKU có label
+        .sort((a, b) => {
+          const weight = lbl =>
+            lbl.includes('> 3') ? 3 :
+            lbl.includes('2')   ? 2 : 1;
+          return weight(b.oosLabel) - weight(a.oosLabel);
+        });
+      
+      const outOfStock = allOOS.slice(0, 5);
 
 
     // Build message
