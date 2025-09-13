@@ -363,12 +363,16 @@ async function analyzeSalesChange(token) {
     if (!allData.length) return null;
 
     // Lọc dữ liệu
-    const topData = allData.filter(
-      (r) => r.warehouse === "Binh Tan Warehouse" && !isNaN(r.avr7days) && r.avr7days > 0
-    );
-    const totalData = allData.filter(
-      (r) => r.finalStatus === "On sale" && r.warehouse === "Binh Tan Warehouse" && !isNaN(r.avr7days) && r.avr7days > 0
-    );
+   const topData = allData.filter(r =>
+     r.warehouse === 'Binh Tan Warehouse' &&
+     String(r.avr7days).trim() !== ''
+   );
+   
+   const totalData = allData.filter(r =>
+     r.finalStatus === 'On sale' &&
+     r.warehouse === 'Binh Tan Warehouse' &&
+     String(r.avr7days).trim() !== ''
+   );
 
     if (!topData.length) return "Không có dữ liệu cho Warehouse: Binh Tan Warehouse";
 
