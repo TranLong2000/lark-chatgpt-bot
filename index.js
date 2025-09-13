@@ -339,7 +339,7 @@ async function analyzeSalesChange(token) {
     const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
     const hourVN = nowVN.getHours();
 
-    // dịch sang +1 cột
+    // cột đã dịch +1
     const prevCol = 'N';  // trước là 'M'
     const currentCol = hourVN < 12 ? 'Q' : 'R';  // trước là 'P'/'Q'
     const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
@@ -369,22 +369,36 @@ async function analyzeSalesChange(token) {
       .sort((a,b) => a.change - b.change)
       .slice(0,5);
 
-   const allOOS = totalData
-     .filter(r => Number(r.totalStock) === 0 && String(r.avr7days).trim() !== '')
-     .map(r => {
-       let label = '';
-       if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
-       else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
-       else if (r.sale1day === 0) label = 'OOS 1 ngày';
-       return { ...r, oosLabel: label };
-     })
-     .filter(r => r.oosLabel)
-     .sort((a,b) => {
-       const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
-       return w(b.oosLabel) - w(a.oosLabel);
-     });
+    // ===== OOS logic (sửa) =====
+    // 1) Tất cả candidate OOS: totalStock === 0 && avr7days khác rỗng
+    const oosCandidates = totalData.filter(r => Number(r.totalStock) === 0 && String(r.avr7days).trim() !== '');
+    const totalOosCount = oosCandidates.length;
 
-    const outOfStock = allOOS.slice(0,5);
+    // helper để gán label OOS dựa vào sale1/2/3
+    const getOosLabel = (r) => {
+      if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) return 'OOS > 3 ngày';
+      if (r.sale1day === 0 && r.sale2day === 0) return 'OOS 2 ngày';
+      if (r.sale1day === 0) return 'OOS 1 ngày';
+      return '';
+    };
+
+    // 2) Các SKU có label (thực sự không bán trong 1/2/3 ngày)
+    const labeledOOS = oosCandidates
+      .map(r => ({ ...r, oosLabel: getOosLabel(r) }))
+      .filter(r => r.oosLabel)
+      .sort((a,b) => {
+        const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
+        return w(b.oosLabel) - w(a.oosLabel);
+      });
+
+    // 3) Các SKU OOS khác (totalStock=0 & avr7days có dữ liệu) nhưng vẫn có sale gần đây => không có oosLabel
+    const unlabeledOOS = oosCandidates
+      .map(r => ({ ...r, oosLabel: getOosLabel(r) }))
+      .filter(r => !r.oosLabel);
+
+    // Hiển thị: ưu tiên show labeled (top 5), sau đó show 1 số unlabeled nếu có
+    const outOfStock = labeledOOS.slice(0,5);
+    // =============================
 
     let msg = `📊 Biến động Sale: AVG D-7 → ${currentLabel}:\n`;
     if (increases.length) {
@@ -398,10 +412,29 @@ async function analyzeSalesChange(token) {
       msg += `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n`;
       decreases.forEach(r => { msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`; });
     }
-    if (outOfStock.length) {
-      msg += `\n🚨 SKU hết hàng / Tổng ${allOOS.length} SKU OOS:\n`;
+
+    if (totalOosCount > 0) {
+      msg += `\n🚨 SKU hết hàng / Tổng ${totalOosCount} SKU OOS:\n`;
+
+      // danh sách labeled (ưu tiên)
       outOfStock.forEach(r => { msg += `- ${r.productName} (${r.oosLabel})\n`; });
+
+      // nếu còn labeled nhưng không nằm trong top5, cho biết số lượng còn lại (nếu cần)
+      if (labeledOOS.length > outOfStock.length) {
+        msg += `  (còn ${labeledOOS.length - outOfStock.length} SKU OOS có label khác)\n`;
+      }
+
+      // hiển thị một vài SKU OOS khác (không có label) để biết là còn những SKU có sale gần đây
+      if (unlabeledOOS.length) {
+        const showUnlabeled = unlabeledOOS.slice(0,5); // show tối đa 5, bạn có thể tăng nếu muốn
+        msg += `\n  ▪ Các SKU OOS khác (vẫn có sale gần đây):\n`;
+        showUnlabeled.forEach(r => { msg += `  - ${r.productName}\n`; });
+        if (unlabeledOOS.length > showUnlabeled.length) {
+          msg += `  (và ${unlabeledOOS.length - showUnlabeled.length} SKU khác)\n`;
+        }
+      }
     }
+
     return msg;
   } catch (err) {
     console.error('❌ analyzeSalesChange error:', err?.message || err);
