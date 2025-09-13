@@ -369,20 +369,20 @@ async function analyzeSalesChange(token) {
       .sort((a,b) => a.change - b.change)
       .slice(0,5);
 
-    const allOOS = totalData
-      .filter(r => Number(r.totalStock) === 0)
-      .map(r => {
-        let label = '';
-        if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
-        else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
-        else if (r.sale1day === 0) label = 'OOS 1 ngày';
-        return { ...r, oosLabel: label };
-      })
-      .filter(r => r.oosLabel)
-      .sort((a,b) => {
-        const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
-        return w(b.oosLabel) - w(a.oosLabel);
-      });
+   const allOOS = totalData
+     .filter(r => Number(r.totalStock) === 0 && String(r.avr7days).trim() !== '')
+     .map(r => {
+       let label = '';
+       if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
+       else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
+       else if (r.sale1day === 0) label = 'OOS 1 ngày';
+       return { ...r, oosLabel: label };
+     })
+     .filter(r => r.oosLabel)
+     .sort((a,b) => {
+       const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
+       return w(b.oosLabel) - w(a.oosLabel);
+     });
 
     const outOfStock = allOOS.slice(0,5);
 
