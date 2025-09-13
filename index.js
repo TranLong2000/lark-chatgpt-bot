@@ -351,90 +351,81 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 // ====================== ANALYZE SALES CHANGE ======================
 async function analyzeSalesChange(token) {
   try {
-    const nowVN = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Ho_Chi_Minh" }));
+    const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
     const hourVN = nowVN.getHours();
-
-    // So sánh N (AVG 7 ngày) với Q (hôm qua) hoặc R (hôm nay)
-    const prevCol = "N";
-    const currentCol = hourVN < 12 ? "Q" : "R";
-    const currentLabel = hourVN < 12 ? "hôm qua" : "hôm nay";
+    const prevCol = 'N';
+    const currentCol = hourVN < 12 ? 'Q' : 'R';
+    const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
     const allData = await getSaleComparisonData(token, prevCol, currentCol);
-    if (!allData.length) return null;
+    if (!allData || !allData.length) return null;
 
-    // Lọc dữ liệu
-   const topData = allData.filter(r =>
-     r.warehouse === 'Binh Tan Warehouse' &&
-     String(r.avr7days).trim() !== ''
-   );
-   
-   const totalData = allData.filter(r =>
-     r.finalStatus === 'On sale' &&
-     r.warehouse === 'Binh Tan Warehouse' &&
-     String(r.avr7days).trim() !== ''
-   );
+    // --- CHÚ Ý: lọc AVG 7 ngày khác rỗng bằng cách check string không rỗng
+    const hasAvg7 = r => String(r.avr7days).trim() !== '';
 
-    if (!topData.length) return "Không có dữ liệu cho Warehouse: Binh Tan Warehouse";
+    const topData = allData.filter(r =>
+      r.warehouse === 'Binh Tan Warehouse' && hasAvg7(r)
+    );
 
-    // Tổng SKU tăng / giảm
-    const totalIncrease = totalData.filter((r) => r.change > 0).length;
-    const totalDecrease = totalData.filter((r) => r.change < 0).length;
+    const totalData = allData.filter(r =>
+      r.finalStatus === 'On sale' &&
+      r.warehouse === 'Binh Tan Warehouse' &&
+      hasAvg7(r)
+    );
 
-    // Top tăng
+    if (!topData.length) return 'Không có dữ liệu cho Warehouse: Binh Tan Warehouse';
+
+    // Tổng SKU tăng / giảm (so sánh trực tiếp current vs prev)
+    const totalIncrease = totalData.filter(r => Number(r.current) > Number(r.prev)).length;
+    const totalDecrease = totalData.filter(r => Number(r.current) < Number(r.prev)).length;
+
     const increases = topData
-      .filter((r) => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
-      .sort((a, b) => (b.change === Infinity ? 1e12 : b.change) - (a.change === Infinity ? 1e12 : a.change))
-      .slice(0, 5);
+      .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
+      .sort((a,b) => (b.change === Infinity ? 1e12 : b.change) - (a.change === Infinity ? 1e12 : a.change))
+      .slice(0,5);
 
-    // Top giảm
     const decreases = topData
-      .filter((r) => r.prev > 10 && r.change < 0)
-      .sort((a, b) => a.change - b.change)
-      .slice(0, 5);
+      .filter(r => r.prev > 10 && r.change < 0)
+      .sort((a,b) => a.change - b.change)
+      .slice(0,5);
 
-    // SKU hết hàng
+    // --- OOS: chắc chắn lọc AVG7 khác rỗng trước khi xét totalStock === 0
     const allOOS = totalData
-      .filter((r) => Number(r.totalStock) === 0)
-      .map((r) => {
-        let label = "";
-        if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = "OOS > 3 ngày";
-        else if (r.sale1day === 0 && r.sale2day === 0) label = "OOS 2 ngày";
-        else if (r.sale1day === 0) label = "OOS 1 ngày";
+      .filter(r => hasAvg7(r) && Number(r.totalStock) === 0)
+      .map(r => {
+        let label = '';
+        if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
+        else if (r.sale1day === 0 && r.sale2day === 0) label = 'OOS 2 ngày';
+        else if (r.sale1day === 0) label = 'OOS 1 ngày';
         return { ...r, oosLabel: label };
       })
-      .filter((r) => r.oosLabel)
-      .sort((a, b) => {
-        const w = (lbl) => (lbl.includes("> 3") ? 3 : lbl.includes("2") ? 2 : 1);
+      .filter(r => r.oosLabel)
+      .sort((a,b) => {
+        const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
         return w(b.oosLabel) - w(a.oosLabel);
       });
 
-    const outOfStock = allOOS.slice(0, 5);
+    const outOfStock = allOOS.slice(0,5);
 
-    // Message
-    let msg = `📊 Biến động Sale: AVG 7 ngày → ${currentLabel}:\n`;
+    let msg = `📊 Biến động Sale: AVG D-7 → ${currentLabel}:\n`;
     if (increases.length) {
       msg += `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n`;
-      increases.forEach((r) => {
-        const pct = r.change === Infinity ? "+∞%" : `+${r.change.toFixed(1)}%`;
+      increases.forEach(r => {
+        const pct = r.change === Infinity ? '+∞%' : `+${r.change.toFixed(1)}%`;
         msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
       });
     }
     if (decreases.length) {
       msg += `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n`;
-      decreases.forEach((r) => {
-        msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
-      });
+      decreases.forEach(r => { msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`; });
     }
     if (outOfStock.length) {
       msg += `\n🚨 SKU hết hàng / Tổng ${allOOS.length} SKU OOS:\n`;
-      outOfStock.forEach((r) => {
-        msg += `- ${r.productName} (${r.oosLabel})\n`;
-      });
+      outOfStock.forEach(r => { msg += `- ${r.productName} (${r.oosLabel})\n`; });
     }
-
     return msg;
   } catch (err) {
-    console.error("❌ analyzeSalesChange error:", err?.message || err);
+    console.error('❌ analyzeSalesChange error:', err?.message || err);
     return null;
   }
 }
