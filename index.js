@@ -338,10 +338,8 @@ async function analyzeSalesChange(token) {
   try {
     const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
     const hourVN = nowVN.getHours();
-
-    // cột đã dịch +1
-    const prevCol = 'N';  // trước là 'M'
-    const currentCol = hourVN < 12 ? 'Q' : 'R';  // trước là 'P'/'Q'
+    const prevCol = 'M';
+    const currentCol = hourVN < 12 ? 'P' : 'Q';
     const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
     const allData = await getSaleComparisonData(token, prevCol, currentCol);
@@ -351,7 +349,9 @@ async function analyzeSalesChange(token) {
       r.warehouse === 'Binh Tan Warehouse' && String(r.avr7days).trim() !== ''
     );
     const totalData = allData.filter(r =>
-      r.finalStatus === 'On sale' && r.warehouse === 'Binh Tan Warehouse' && String(r.avr7days).trim() !== ''
+      r.finalStatus === 'On sale' &&
+      r.warehouse === 'Binh Tan Warehouse' &&
+      String(r.avr7days).trim() !== ''
     );
 
     if (!topData.length) return 'Không có dữ liệu cho Warehouse: Binh Tan Warehouse';
@@ -369,12 +369,12 @@ async function analyzeSalesChange(token) {
       .sort((a,b) => a.change - b.change)
       .slice(0,5);
 
-    // ===== OOS logic (sửa) =====
-    // 1) Tất cả candidate OOS: totalStock === 0 && avr7days khác rỗng
-    const oosCandidates = totalData.filter(r => Number(r.totalStock) === 0 && String(r.avr7days).trim() !== '');
+    // ===== OOS logic (đếm đúng, show top 5) =====
+    const oosCandidates = totalData.filter(
+      r => Number(r.totalStock) === 0 && String(r.avr7days).trim() !== ''
+    );
     const totalOosCount = oosCandidates.length;
 
-    // helper để gán label OOS dựa vào sale1/2/3
     const getOosLabel = (r) => {
       if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) return 'OOS > 3 ngày';
       if (r.sale1day === 0 && r.sale2day === 0) return 'OOS 2 ngày';
@@ -382,23 +382,15 @@ async function analyzeSalesChange(token) {
       return '';
     };
 
-    // 2) Các SKU có label (thực sự không bán trong 1/2/3 ngày)
-    const labeledOOS = oosCandidates
+    const outOfStock = oosCandidates
       .map(r => ({ ...r, oosLabel: getOosLabel(r) }))
       .filter(r => r.oosLabel)
       .sort((a,b) => {
         const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
         return w(b.oosLabel) - w(a.oosLabel);
-      });
-
-    // 3) Các SKU OOS khác (totalStock=0 & avr7days có dữ liệu) nhưng vẫn có sale gần đây => không có oosLabel
-    const unlabeledOOS = oosCandidates
-      .map(r => ({ ...r, oosLabel: getOosLabel(r) }))
-      .filter(r => !r.oosLabel);
-
-    // Hiển thị: ưu tiên show labeled (top 5), sau đó show 1 số unlabeled nếu có
-    const outOfStock = labeledOOS.slice(0,5);
-    // =============================
+      })
+      .slice(0,5);
+    // ============================================
 
     let msg = `📊 Biến động Sale: AVG D-7 → ${currentLabel}:\n`;
     if (increases.length) {
@@ -410,29 +402,15 @@ async function analyzeSalesChange(token) {
     }
     if (decreases.length) {
       msg += `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n`;
-      decreases.forEach(r => { msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`; });
+      decreases.forEach(r => {
+        msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
+      });
     }
-
     if (totalOosCount > 0) {
       msg += `\n🚨 SKU hết hàng / Tổng ${totalOosCount} SKU OOS:\n`;
-
-      // danh sách labeled (ưu tiên)
-      outOfStock.forEach(r => { msg += `- ${r.productName} (${r.oosLabel})\n`; });
-
-      // nếu còn labeled nhưng không nằm trong top5, cho biết số lượng còn lại (nếu cần)
-      if (labeledOOS.length > outOfStock.length) {
-        msg += `  (còn ${labeledOOS.length - outOfStock.length} SKU OOS có label khác)\n`;
-      }
-
-      // hiển thị một vài SKU OOS khác (không có label) để biết là còn những SKU có sale gần đây
-      if (unlabeledOOS.length) {
-        const showUnlabeled = unlabeledOOS.slice(0,5); // show tối đa 5, bạn có thể tăng nếu muốn
-        msg += `\n  ▪ Các SKU OOS khác (vẫn có sale gần đây):\n`;
-        showUnlabeled.forEach(r => { msg += `  - ${r.productName}\n`; });
-        if (unlabeledOOS.length > showUnlabeled.length) {
-          msg += `  (và ${unlabeledOOS.length - showUnlabeled.length} SKU khác)\n`;
-        }
-      }
+      outOfStock.forEach(r => {
+        msg += `- ${r.productName} (${r.oosLabel})\n`;
+      });
     }
 
     return msg;
