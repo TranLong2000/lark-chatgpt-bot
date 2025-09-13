@@ -250,40 +250,54 @@ function toNumber(v) {
 }
 
 /* ==========================================================
-   SECTION 10 — Sales compare + message (scheduled analysis)
+   SALES COMPARISON + MESSAGE
    ========================================================== */
 
+// ====================== COLUMN MAPPING ======================
 const SALE_COL_MAP = {
-  F: 5,   // Product Name
-  G: 6,   // Warehouse
-  H: 7,   // Tồn kho
+  A: 0,   // warehouse (ID code)
+  F: 5,   // product name
+  G: 6,   // warehouse name
+  H: 7,   // tồn kho
   N: 13,  // AVG sale 7 ngày
-  O: 14,  // Sale 3 ngày trước
-  P: 15,  // Sale 2 ngày trước
-  Q: 16,  // Sale hôm qua
-  R: 17,  // Sale hôm nay
-  AL: 37  // Status (On sale)
+  O: 14,  // sale 3 ngày trước
+  P: 15,  // sale 2 ngày trước (so với hôm nay)
+  Q: 16,  // sale hôm qua
+  R: 17,  // sale hôm nay
+  AL: 37  // status
 };
 
-let lastTotalStock = null;
-let sendingTotalStockLock = false;
-let lastSalesMsgHash = null;
+// ====================== HELPER FUNCTIONS ======================
+function safeGet(row, idx) {
+  return (row && row[idx] !== undefined) ? row[idx] : '';
+}
+
+function toNumber(v) {
+  if (v === null || v === undefined) return 0;
+  const num = parseFloat(v.toString().replace(/,/g, '').trim());
+  return isNaN(num) ? 0 : num;
+}
+
+function colToIndex(col) {
+  // A=0, B=1, ... Z=25, AA=26, ...
+  let result = 0;
+  for (let i = 0; i < col.length; i++) {
+    result = result * 26 + (col.charCodeAt(i) - 64);
+  }
+  return result - 1;
+}
 
 // ====================== GET SALES COMPARISON ======================
 async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
   try {
     const col = SALE_COL_MAP;
-
-    const prevIdx = (typeof col[prevCol] !== 'undefined')
-      ? col[prevCol]
-      : colToIndex(prevCol);
-
-    const currIdx = (typeof col[currentCol] !== 'undefined')
-      ? col[currentCol]
-      : colToIndex(currentCol);
+    const prevIdx = (typeof col[prevCol] !== 'undefined') ? col[prevCol] : colToIndex(prevCol);
+    const currIdx = (typeof col[currentCol] !== 'undefined') ? col[currentCol] : colToIndex(currentCol);
 
     const freshToken = await getAppAccessToken();
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AL`)}`;
+    const url =
+      `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/` +
+      encodeURIComponent(`${SHEET_ID}!A:AL`);
 
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${freshToken}` },
@@ -301,7 +315,7 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
       const productName = safeGet(r, col.F) || `Dòng ${i + 2}`;
       const warehouse   = safeGet(r, col.G) || '';
       const totalStock  = toNumber(safeGet(r, col.H));
-      const avr7days    = toNumber(safeGet(r, col.N));   // ✅ ép số để dùng tính toán
+      const avr7days    = toNumber(safeGet(r, col.N)); // ✅ ép số
       const sale3day    = toNumber(safeGet(r, col.O));
       const sale2day    = toNumber(safeGet(r, col.P));
       const sale1day    = toNumber(safeGet(r, col.Q));
@@ -360,8 +374,9 @@ async function analyzeSalesChange(token) {
   try {
     const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
     const hourVN = nowVN.getHours();
+
     const prevCol = 'N'; // ✅ AVG 7 ngày
-    const currentCol = hourVN < 12 ? 'P' : 'Q';
+    const currentCol = hourVN < 12 ? 'P' : 'Q'; // hôm qua / hôm nay
     const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
     const allData = await getSaleComparisonData(token, prevCol, currentCol);
@@ -372,16 +387,16 @@ async function analyzeSalesChange(token) {
     );
 
     const totalData = allData.filter(r =>
-      r.finalStatus === 'On sale' &&
-      r.warehouse === 'Binh Tan Warehouse' &&
-      r.avr7days > 0
+      r.finalStatus === 'On sale' && r.warehouse === 'Binh Tan Warehouse' && r.avr7days > 0
     );
 
     if (!topData.length) return 'Không có dữ liệu cho Warehouse: Binh Tan Warehouse';
 
-    const totalIncrease = totalData.filter(r => r.change > 0).length;
-    const totalDecrease = totalData.filter(r => r.change < 0).length;
+    // Đếm SKU tăng / giảm
+    const totalIncrease = totalData.filter(r => r.current > r.prev).length;
+    const totalDecrease = totalData.filter(r => r.current < r.prev).length;
 
+    // Top tăng mạnh
     const increases = topData
       .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
       .sort((a, b) =>
@@ -390,13 +405,15 @@ async function analyzeSalesChange(token) {
       )
       .slice(0, 5);
 
+    // Top giảm mạnh
     const decreases = topData
       .filter(r => r.prev > 10 && r.change < 0)
       .sort((a, b) => a.change - b.change)
       .slice(0, 5);
 
+    // SKU hết hàng (OOS)
     const allOOS = totalData
-      .filter(r => r.avr7days > 0 && Number(r.totalStock) === 0)
+      .filter(r => r.avr7days > 0 && r.totalStock === 0)
       .map(r => {
         let label = '';
         if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
@@ -414,7 +431,7 @@ async function analyzeSalesChange(token) {
 
     const outOfStock = allOOS.slice(0, 5);
 
-    // build báo cáo
+    // Build message
     let msg = `📊 Biến động Sale: AVG D-7 → ${currentLabel}:\n`;
     if (increases.length) {
       msg += `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n`;
