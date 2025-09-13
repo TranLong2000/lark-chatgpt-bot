@@ -338,8 +338,10 @@ async function analyzeSalesChange(token) {
   try {
     const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
     const hourVN = nowVN.getHours();
-    const prevCol = 'M';
-    const currentCol = hourVN < 12 ? 'P' : 'Q';
+
+    // Cột đã dịch +1 so với phiên bản cũ
+    const prevCol = 'N';              // trước là 'M'
+    const currentCol = hourVN < 12 ? 'Q' : 'R'; // trước là 'P' / 'Q'
     const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
     const allData = await getSaleComparisonData(token, prevCol, currentCol);
@@ -369,7 +371,7 @@ async function analyzeSalesChange(token) {
       .sort((a,b) => a.change - b.change)
       .slice(0,5);
 
-    // ===== OOS logic (đếm đúng, show top 5) =====
+    // ===== OOS logic (đếm đúng, show top 5 có label) =====
     const oosCandidates = totalData.filter(
       r => Number(r.totalStock) === 0 && String(r.avr7days).trim() !== ''
     );
@@ -390,7 +392,7 @@ async function analyzeSalesChange(token) {
         return w(b.oosLabel) - w(a.oosLabel);
       })
       .slice(0,5);
-    // ============================================
+    // ======================================================
 
     let msg = `📊 Biến động Sale: AVG D-7 → ${currentLabel}:\n`;
     if (increases.length) {
