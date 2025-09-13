@@ -255,16 +255,16 @@ function toNumber(v) {
 
 // --- CẬP NHẬT MAPPING (theo bạn đã mô tả)
 const SALE_COL_MAP = {
-  A: 0,   // warehouse (code, ví dụ "WBT")
-  F: 5,   // product name
-  G: 6,   // warehouse (name, ví dụ "Binh Tan Warehouse")
-  H: 7,   // tồn kho
-  N: 14,  // AVG sale 7 ngày
-  O: 15,  // sale 3 ngày trước
-  P: 16,  // sale 2 ngày trước
-  Q: 17,  // sale hôm qua
-  R: 18,  // sale hôm nay
-  AL: 38  // status
+  A: 0,   // warehouse code
+  F: 5,   // Product Name
+  G: 6,   // Warehouse
+  H: 7,   // Tồn kho
+  K: 10,  // AVG sale 7 ngày
+  M: 12,  // Sale 3 ngày trước
+  N: 13,  // Sale 2 ngày trước
+  O: 14,  // Sale hôm qua
+  P: 15,  // Sale hôm nay
+  AL: 37  // Status
 };
 
 let lastTotalStock = null;
