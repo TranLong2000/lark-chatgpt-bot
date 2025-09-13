@@ -253,34 +253,6 @@ function toNumber(v) {
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 
-// --- CẬP NHẬT MAPPING (theo bạn đã mô tả)
-const SALE_COL_MAP = {
-  A: 0,   // warehouse code
-  F: 5,   // Product Name
-  G: 6,   // Warehouse
-  H: 7,   // Tồn kho
-  K: 10,  // AVG sale 7 ngày
-  M: 12,  // Sale 3 ngày trước
-  N: 13,  // Sale 2 ngày trước
-  O: 14,  // Sale hôm qua
-  P: 15,  // Sale hôm nay
-  AL: 37  // Status
-};
-
-let lastTotalStock = null;
-let sendingTotalStockLock = false;
-let lastSalesMsgHash = null;
-
-// helper an toàn: lấy giá trị tránh undefined do rows "ragged"
-function safeGet(row, idx) {
-  if (!Array.isArray(row)) return '';
-  return (typeof row[idx] !== 'undefined') ? row[idx] : '';
-}
-
-/* ==========================================================
-   SECTION 10 — Sales compare + message (scheduled analysis)
-   ========================================================== */
-
 const SALE_COL_MAP = {
   F: 5,   // Product Name
   G: 6,   // Warehouse
@@ -584,6 +556,7 @@ async function checkTotalStockChange() {
     sendingTotalStockLock = false;
   }
 }
+
 
 /* ==========================================================
    SECTION 10.1 — Check Rebate (on demand) 
