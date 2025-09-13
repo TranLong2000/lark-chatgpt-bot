@@ -253,7 +253,18 @@ function toNumber(v) {
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 
-const SALE_COL_MAP = { A:0,F:5,G:6,H:7,N:13,O:14,P:15,Q:16,R:17,AL:37 };
+const SALE_COL_MAP = { 
+  A: 0,   // warehouse
+  F: 5,   // product name
+  G: 6,   // warehouse
+  H: 7,   // tồn kho
+  N: 14,  // AVG sale 7 ngày
+  O: 15,  // sale 3 ngày trước
+  P: 16,  // sale 2 ngày trước
+  Q: 17,  // sale hôm qua
+  R: 18,  // sale hôm nay
+  AL: 38  // status
+};
 let lastTotalStock = null;
 let sendingTotalStockLock = false;
 let lastSalesMsgHash = null;
