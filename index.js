@@ -273,14 +273,16 @@ let lastSalesMsgHash = null;
 async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
   try {
     const col = SALE_COL_MAP;
-    const prevIdx = colToIndex(prevCol);
-    const currIdx = colToIndex(currentCol);
+
+    // === FIX: lấy index từ SALE_COL_MAP trước, nếu không có thì fallback về colToIndex
+    const prevIdx = (typeof col[prevCol] !== 'undefined') ? col[prevCol] : colToIndex(prevCol);
+    const currIdx = (typeof col[currentCol] !== 'undefined') ? col[currentCol] : colToIndex(currentCol);
 
     const freshToken = await getAppAccessToken();
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AL`)}`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${freshToken}` },
-      timeout: 20000, // giảm xuống 20s
+      timeout: 20000,
       params: {
         valueRenderOption: 'FormattedValue',
         dateTimeRenderOption: 'FormattedString'
@@ -298,8 +300,11 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
         const sale2day    = toNumber(r[col.P]);
         const sale1day    = toNumber(r[col.Q]);
         const finalStatus = (r[col.AL] ?? '').toString().trim();
+
+        // prev / current dùng prevIdx / currIdx (đã fix)
         const prev    = toNumber(r[prevIdx]);
         const current = toNumber(r[currIdx]);
+
         let change = 0;
         if (prev === 0 && current > 0) change = Infinity;
         else if (prev > 0) change = ((current - prev) / prev) * 100;
