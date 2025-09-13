@@ -262,8 +262,7 @@ const SALE_COL_MAP = {
   P: 15,  // Sale 2 ngày trước
   Q: 16,  // Sale hôm qua
   R: 17,  // Sale hôm nay
-  L: 11,  // Trạng thái
-  AL: 37  // Status (giữ nguyên nếu bạn vẫn dùng cột AL cho logic khác)
+  AL: 37  // Status (On sale)
 };
 
 let lastTotalStock = null;
@@ -298,7 +297,7 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
         const sale2day    = toNumber(r[SALE_COL_MAP.P]);
         const sale1day    = toNumber(r[SALE_COL_MAP.Q]);
         const saleToday   = toNumber(r[SALE_COL_MAP.R]);
-        const finalStatus = (r[SALE_COL_MAP.L] ?? "").toString().trim();
+        const finalStatus = (r[SALE_COL_MAP.AL] ?? "").toString().trim();
 
         const prev    = toNumber(r[prevIdx]);
         const current = toNumber(r[currIdx]);
