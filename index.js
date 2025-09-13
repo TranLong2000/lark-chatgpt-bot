@@ -253,10 +253,11 @@ function toNumber(v) {
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 
-const SALE_COL_MAP = { 
-  A: 0,   // warehouse
+// --- CẬP NHẬT MAPPING (theo bạn đã mô tả)
+const SALE_COL_MAP = {
+  A: 0,   // warehouse (code, ví dụ "WBT")
   F: 5,   // product name
-  G: 6,   // warehouse
+  G: 6,   // warehouse (name, ví dụ "Binh Tan Warehouse")
   H: 7,   // tồn kho
   N: 14,  // AVG sale 7 ngày
   O: 15,  // sale 3 ngày trước
@@ -265,16 +266,23 @@ const SALE_COL_MAP = {
   R: 18,  // sale hôm nay
   AL: 38  // status
 };
+
 let lastTotalStock = null;
 let sendingTotalStockLock = false;
 let lastSalesMsgHash = null;
+
+// helper an toàn: lấy giá trị tránh undefined do rows "ragged"
+function safeGet(row, idx) {
+  if (!Array.isArray(row)) return '';
+  return (typeof row[idx] !== 'undefined') ? row[idx] : '';
+}
 
 // ====================== GET SALES COMPARISON ======================
 async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
   try {
     const col = SALE_COL_MAP;
 
-    // === FIX: lấy index từ SALE_COL_MAP trước, nếu không có thì fallback về colToIndex
+    // lấy index từ SALE_COL_MAP nếu có, fallback về colToIndex (nếu bạn vẫn có hàm đó)
     const prevIdx = (typeof col[prevCol] !== 'undefined') ? col[prevCol] : colToIndex(prevCol);
     const currIdx = (typeof col[currentCol] !== 'undefined') ? col[currentCol] : colToIndex(currentCol);
 
@@ -292,24 +300,37 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
     const rows = resp.data?.data?.valueRange?.values || [];
     if (rows && rows.length > 1) {
       return rows.slice(1).map((r, i) => {
-        const productName = r[col.F] ?? `Dòng ${i + 2}`;
-        const warehouse   = r[col.G] ?? '';
-        const totalStock  = toNumber(r[col.H]);
-        const avr7daysRaw = r[col.N] ?? '';
-        const sale3day    = toNumber(r[col.O]);
-        const sale2day    = toNumber(r[col.P]);
-        const sale1day    = toNumber(r[col.Q]);
-        const finalStatus = (r[col.AL] ?? '').toString().trim();
+        // dùng safeGet để tránh undefined
+        const productName = safeGet(r, col.F) || `Dòng ${i + 2}`;
+        const warehouse   = safeGet(r, col.G) || '';
+        const totalStock  = toNumber(safeGet(r, col.H));
+        const avr7daysRaw = safeGet(r, col.N) || '';
+        const sale3day    = toNumber(safeGet(r, col.O));
+        const sale2day    = toNumber(safeGet(r, col.P));
+        const sale1day    = toNumber(safeGet(r, col.Q));
+        const finalStatus = (safeGet(r, col.AL) || '').toString().trim();
 
-        // prev / current dùng prevIdx / currIdx (đã fix)
-        const prev    = toNumber(r[prevIdx]);
-        const current = toNumber(r[currIdx]);
+        // prev / current: lấy từ prevIdx / currIdx (đã tính ở trên)
+        const prev    = toNumber(safeGet(r, prevIdx));
+        const current = toNumber(safeGet(r, currIdx));
 
         let change = 0;
         if (prev === 0 && current > 0) change = Infinity;
         else if (prev > 0) change = ((current - prev) / prev) * 100;
 
-        return { productName, warehouse, finalStatus, totalStock, avr7days: avr7daysRaw, sale3day, sale2day, sale1day, prev, current, change };
+        return {
+          productName,
+          warehouse,
+          finalStatus,
+          totalStock,
+          avr7days: avr7daysRaw,
+          sale3day,
+          sale2day,
+          sale1day,
+          prev,
+          current,
+          change
+        };
       });
     }
     return null;
@@ -359,8 +380,9 @@ async function analyzeSalesChange(token) {
 
     if (!topData.length) return 'Không có dữ liệu cho Warehouse: Binh Tan Warehouse';
 
-    const totalIncrease = totalData.filter(r => r.change > 0).length;
-    const totalDecrease = totalData.filter(r => r.change < 0).length;
+    // --- FIX: đếm tăng/giảm dựa trên so sánh current vs prev (ổn định hơn)
+    const totalIncrease = totalData.filter(r => Number(r.current) > Number(r.prev)).length;
+    const totalDecrease = totalData.filter(r => Number(r.current) < Number(r.prev)).length;
 
     const increases = topData
       .filter(r => r.prev > 0 && r.current > 10 && (r.change >= 0 || r.change === Infinity))
@@ -411,6 +433,7 @@ async function analyzeSalesChange(token) {
     return null;
   }
 }
+
 
 async function safeAnalyzeSalesChange(token) {
   let tries = 3;
