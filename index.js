@@ -514,11 +514,6 @@ async function sendMessageToGroup(token, chatId, messageText) {
 
 // ====================== MAIN CHECK ======================
 
-// Biến toàn cục để tránh crash khi gọi nhiều lần
-let lastTotalStock = null;         // Lưu giá trị total stock lần trước
-let lastSalesMsgHash = "";         // Lưu hash của message Sale đã gửi
-let sendingTotalStockLock = false; // Lock tránh chạy song song
-
 async function checkTotalStockChange() {
   if (sendingTotalStockLock) {
     console.log("⚠ checkTotalStockChange: đang có tiến trình gửi - bỏ qua lần này");
