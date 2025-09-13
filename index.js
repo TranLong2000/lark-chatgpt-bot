@@ -250,7 +250,7 @@ function toNumber(v) {
 }
 
 /* ==========================================================
-   SALES COMPARISON + MESSAGE
+   SALES COMPARISON + MESSAGE (FULL CLEAN VERSION)
    ========================================================== */
 
 // ====================== COLUMN MAPPING ======================
@@ -259,9 +259,9 @@ const SALE_COL_MAP = {
   F: 5,   // product name
   G: 6,   // warehouse name
   H: 7,   // tồn kho
-  N: 13,  // AVG sale 7 ngày
+  N: 13,  // ✅ AVG sale 7 ngày
   O: 14,  // sale 3 ngày trước
-  P: 15,  // sale 2 ngày trước (so với hôm nay)
+  P: 15,  // sale 2 ngày trước
   Q: 16,  // sale hôm qua
   R: 17,  // sale hôm nay
   AL: 37  // status
@@ -288,11 +288,11 @@ function colToIndex(col) {
 }
 
 // ====================== GET SALES COMPARISON ======================
-async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
+async function getSaleComparisonDataOnce(prevCol, currentCol) {
   try {
     const col = SALE_COL_MAP;
-    const prevIdx = (typeof col[prevCol] !== 'undefined') ? col[prevCol] : colToIndex(prevCol);
-    const currIdx = (typeof col[currentCol] !== 'undefined') ? col[currentCol] : colToIndex(currentCol);
+    const prevIdx = col[prevCol] ?? colToIndex(prevCol);
+    const currIdx = col[currentCol] ?? colToIndex(currentCol);
 
     const freshToken = await getAppAccessToken();
     const url =
@@ -309,13 +309,13 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
     });
 
     const rows = resp.data?.data?.valueRange?.values || [];
-    if (rows.length <= 1) return null;
+    if (rows.length <= 1) return [];
 
     return rows.slice(1).map((r, i) => {
       const productName = safeGet(r, col.F) || `Dòng ${i + 2}`;
       const warehouse   = safeGet(r, col.G) || '';
       const totalStock  = toNumber(safeGet(r, col.H));
-      const avr7days    = toNumber(safeGet(r, col.N)); // ✅ ép số
+      const avr7days    = toNumber(safeGet(r, col.N));
       const sale3day    = toNumber(safeGet(r, col.O));
       const sale2day    = toNumber(safeGet(r, col.P));
       const sale1day    = toNumber(safeGet(r, col.Q));
@@ -344,18 +344,18 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
     });
   } catch (err) {
     console.error('❌ getSaleComparisonDataOnce error:', err?.message || err);
-    return null;
+    return [];
   }
 }
 
-async function getSaleComparisonData(token, prevCol, currentCol) {
+async function getSaleComparisonData(prevCol, currentCol) {
   const maxRetries = 3;
   const retryDelayMs = 20000;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     console.log(`📥 Lấy dữ liệu Sale (lần ${attempt}/${maxRetries})...`);
-    const data = await getSaleComparisonDataOnce(token, prevCol, currentCol);
-    if (data && data.length) {
+    const data = await getSaleComparisonDataOnce(prevCol, currentCol);
+    if (data.length) {
       console.log(`✅ Lấy dữ liệu Sale thành công ở lần ${attempt}`);
       return data;
     }
@@ -370,7 +370,7 @@ async function getSaleComparisonData(token, prevCol, currentCol) {
 }
 
 // ====================== ANALYZE SALES CHANGE ======================
-async function analyzeSalesChange(token) {
+async function analyzeSalesChange() {
   try {
     const nowVN = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Ho_Chi_Minh' }));
     const hourVN = nowVN.getHours();
@@ -379,8 +379,8 @@ async function analyzeSalesChange(token) {
     const currentCol = hourVN < 12 ? 'P' : 'Q'; // hôm qua / hôm nay
     const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
-    const allData = await getSaleComparisonData(token, prevCol, currentCol);
-    if (!allData || !allData.length) return null;
+    const allData = await getSaleComparisonData(prevCol, currentCol);
+    if (!allData.length) return null;
 
     const topData = allData.filter(r =>
       r.warehouse === 'Binh Tan Warehouse' && r.avr7days > 0
@@ -413,7 +413,7 @@ async function analyzeSalesChange(token) {
 
     // SKU hết hàng (OOS)
     const allOOS = totalData
-      .filter(r => r.avr7days > 0 && r.totalStock === 0)
+      .filter(r => r.totalStock === 0)
       .map(r => {
         let label = '';
         if (r.sale1day === 0 && r.sale2day === 0 && r.sale3day === 0) label = 'OOS > 3 ngày';
@@ -460,16 +460,17 @@ async function analyzeSalesChange(token) {
   }
 }
 
-async function safeAnalyzeSalesChange(token) {
+async function safeAnalyzeSalesChange() {
   let tries = 3;
   while (tries > 0) {
-    const msg = await analyzeSalesChange(token);
+    const msg = await analyzeSalesChange();
     if (msg && typeof msg === "string") return msg;
-    await new Promise((r) => setTimeout(r, 20000)); // giảm xuống 20s
+    await new Promise((r) => setTimeout(r, 20000));
     tries--;
   }
   return "⚠ Dữ liệu vẫn chưa đủ để phân tích sau 3 lần thử.";
 }
+
 
 // ====================== GET TOTAL STOCK ======================
 async function getTotalStockOnce(token) {
