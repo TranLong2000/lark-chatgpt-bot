@@ -347,16 +347,17 @@ async function analyzeSalesChange(token) {
     const allData = await getSaleComparisonData(token, prevCol, currentCol);
     if (!allData.length) return null;
 
+    // ⚡ Lọc: lấy tất cả warehouse trừ "Thu Duc Warehouse"
     const topData = allData.filter(r =>
-      r.warehouse === 'Binh Tan Warehouse' && String(r.avr7days).trim() !== ''
+      r.warehouse !== 'Thu Duc Warehouse' && String(r.avr7days).trim() !== ''
     );
     const totalData = allData.filter(r =>
       r.finalStatus === 'On sale' &&
-      r.warehouse === 'Binh Tan Warehouse' &&
+      r.warehouse !== 'Thu Duc Warehouse' &&
       String(r.avr7days).trim() !== ''
     );
 
-    if (!topData.length) return 'Không có dữ liệu cho Warehouse: Binh Tan Warehouse';
+    if (!topData.length) return 'Không có dữ liệu';
 
     const totalIncrease = totalData.filter(r => r.change > 0).length;
     const totalDecrease = totalData.filter(r => r.change < 0).length;
