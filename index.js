@@ -765,14 +765,23 @@ async function sendRebateReport() {
 }
 
 /* ==================================================
-   SECTION TEST — Cron gửi hình vùng A1:H6 trong Sheet mỗi 5 phút (có font tiếng Việt)
+   SECTION TEST — Cron gửi hình vùng A1:H6 trong Sheet mỗi 5 phút
    ================================================== */
 
-// Lấy đường dẫn tuyệt đối tới file font
+// Đăng ký font (file nằm cùng cấp index.js)
 const fontPath = path.join(__dirname, "NotoSans-Italic.ttf");
-// Đăng ký font
 registerFont(fontPath, { family: "NotoSans" });
 
+// ===== 1. Lấy dữ liệu từ Sheet =====
+async function getSheetRange(token, spreadsheetToken, range) {
+  const res = await axios.get(
+    `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${encodeURIComponent(range)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return res.data.data.valueRange.values;
+}
+
+// ===== 2. Render dữ liệu thành ảnh =====
 function renderTableToImage(values) {
   const cellWidth = 120;
   const cellHeight = 40;
@@ -782,7 +791,7 @@ function renderTableToImage(values) {
   const canvas = createCanvas(cols * cellWidth, rows * cellHeight);
   const ctx = canvas.getContext("2d");
 
-  ctx.font = "16px NotoSans";  // chắc chắn dùng font vừa đăng ký
+  ctx.font = "16px NotoSans";  // dùng font vừa đăng ký
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
@@ -846,8 +855,8 @@ async function sendSheetRangeAsImage(token, chatId, spreadsheetToken, range = "A
 // ===== 6. Cron Job mỗi 5 phút =====
 cron.schedule("*/5 * * * *", async () => {
   try {
-    const token = await getAppAccessToken(); // có sẵn ở Section 1
-    const chatId = process.env.LARK_GROUP_CHAT_IDS_TEST; // group test nhận tin
+    const token = await getAppAccessToken(); // đã có ở Section 1
+    const chatId = process.env.LARK_GROUP_CHAT_IDS_TEST; // group test
     const spreadsheetToken = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // token sheet
     const range = "EmjelX!A1:H6"; // sheetId!range
 
@@ -857,7 +866,6 @@ cron.schedule("*/5 * * * *", async () => {
     console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
   }
 });
-
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
