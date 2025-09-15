@@ -771,7 +771,7 @@ async function sendRebateReport() {
 // ===== 1. Lấy dữ liệu từ Sheet =====
 async function getSheetRange(token, spreadsheetToken, range) {
   const res = await axios.get(
-    `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${spreadsheetToken}/values/${range}`,
+    `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${encodeURIComponent(range)}`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   return res.data.data.valueRange.values;
@@ -854,7 +854,7 @@ async function sendSheetRangeAsImage(token, chatId, spreadsheetToken, range = "A
 // ===== 6. Cron Job mỗi 5 phút =====
 cron.schedule("*/5 * * * *", async () => {
   try {
-    const token = await getAppAccessToken(); // bạn đã có hàm này trong index.js
+    const token = await getAppAccessToken(); // có sẵn ở Section 1
     const chatId = process.env.LARK_GROUP_CHAT_IDS_TEST; // group test nhận tin
     const spreadsheetToken = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // token sheet
     const range = "EmjelX!A1:H6"; // sheetId!range
