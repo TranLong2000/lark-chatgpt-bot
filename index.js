@@ -696,61 +696,47 @@ const fontPath = path.join(__dirname, "NotoSans-Regular.ttf");
 registerFont(fontPath, { family: "NotoSans" });
 
 // ===== 1. Lấy dữ liệu + format từ Sheet =====
-async function getSheetRangeWithFormat(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values/${encodeURIComponent(
-    SHEET_ID_TEST
-  )}?valueRenderOption=ToString&dateTimeRenderOption=FormattedString&cellFormat=true`;
+async function getSheetRangeWithStyle(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
+  const [sheetId, range] = SHEET_ID_TEST.split("!");
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/worksheet/${sheetId}/range?range=${encodeURIComponent(range)}`;
 
   const res = await axios.get(url, {
     headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
   });
 
-  console.log("DEBUG Sheet API response:", JSON.stringify(res.data, null, 2));
-
-  if (!res.data?.data?.valueRange) {
-    throw new Error("Sheet API không trả về valueRange. Kiểm tra SHEET_ID_TEST và token!");
+  if (!res.data?.data?.range?.cellData) {
+    throw new Error("Không lấy được cellData từ Lark API");
   }
 
-  return res.data.data.valueRange;
+  return res.data.data.range.cellData;
 }
 
-
 // ===== 2. Render dữ liệu thành ảnh (có màu nền + chữ) =====
-function renderTableToImage(valueRange) {
-  const values = valueRange.values;
-  const formats = valueRange.cellFormat || [];
-
+function renderTableToImage(cellData) {
   const cellWidth = 120;
   const cellHeight = 40;
-  const rows = values.length;
-  const cols = values[0].length;
+  const rows = cellData.length;
+  const cols = cellData[0].length;
 
   const canvas = createCanvas(cols * cellWidth, rows * cellHeight);
   const ctx = canvas.getContext("2d");
-
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  values.forEach((row, i) => {
-    row.forEach((val, j) => {
+  cellData.forEach((row, i) => {
+    row.forEach((cell, j) => {
       const x = j * cellWidth;
       const y = i * cellHeight;
 
-      // Lấy style
-      const fmt = (formats[i] && formats[i][j]) || {};
+      const text = cell?.effectiveValue?.stringValue || "";
+      const fmt = cell?.effectiveFormat || {};
+
+      // Nền
       const bg = fmt.backgroundColor
         ? `rgba(${Math.round((fmt.backgroundColor.red || 1) * 255)},${Math.round(
             (fmt.backgroundColor.green || 1) * 255
           )},${Math.round((fmt.backgroundColor.blue || 1) * 255)},${fmt.backgroundColor.alpha ?? 1})`
         : "#ffffff";
-      const textColor = fmt.textFormat?.foregroundColor
-        ? `rgba(${Math.round((fmt.textFormat.foregroundColor.red || 0) * 255)},${Math.round(
-            (fmt.textFormat.foregroundColor.green || 0) * 255
-          )},${Math.round((fmt.textFormat.foregroundColor.blue || 0) * 255)},${fmt.textFormat.foregroundColor.alpha ?? 1})`
-        : "#000000";
-      const fontSize = fmt.textFormat?.fontSize || 16;
-
-      // Nền
       ctx.fillStyle = bg;
       ctx.fillRect(x, y, cellWidth, cellHeight);
 
@@ -758,15 +744,25 @@ function renderTableToImage(valueRange) {
       ctx.strokeStyle = "#cccccc";
       ctx.strokeRect(x, y, cellWidth, cellHeight);
 
-      // Text
+      // Chữ
+      const textColor = fmt.textFormat?.foregroundColor
+        ? `rgba(${Math.round((fmt.textFormat.foregroundColor.red || 0) * 255)},${Math.round(
+            (fmt.textFormat.foregroundColor.green || 0) * 255
+          )},${Math.round((fmt.textFormat.foregroundColor.blue || 0) * 255)},${fmt.textFormat.foregroundColor.alpha ?? 1})`
+        : "#000000";
+      const fontSize = fmt.textFormat?.fontSize || 16;
+      const fontWeight = fmt.textFormat?.bold ? "bold" : "normal";
+      const fontStyle = fmt.textFormat?.italic ? "italic" : "normal";
+
       ctx.fillStyle = textColor;
-      ctx.font = `${fontSize}px NotoSans`;
-      ctx.fillText(val || "", x + cellWidth / 2, y + cellHeight / 2);
+      ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px NotoSans`;
+      ctx.fillText(text, x + cellWidth / 2, y + cellHeight / 2);
     });
   });
 
   return canvas.toBuffer("image/png");
 }
+
 
 // ===== 3. Upload ảnh buffer lên Lark =====
 async function uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer) {
