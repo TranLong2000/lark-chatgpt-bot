@@ -769,7 +769,7 @@ async function sendRebateReport() {
    ================================================== */
 
 // File font nằm cùng cấp với index.js
-registerFont("./NotoSans-Regular.ttf", { family: "NotoSans" });
+registerFont(__dirname + "/NotoSans-Regular.ttf", { family: "NotoSans" });
 
 function renderTableToImage(values) {
   const cellWidth = 120;
