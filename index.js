@@ -768,9 +768,9 @@ async function uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer) {
 }
 
 // ===== 4. Gửi ảnh vào group =====
-async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey) {
+async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS, imageKey) {
   const payload = {
-    receive_id: LARK_GROUP_CHAT_IDS_TEST,
+    receive_id: LARK_GROUP_CHAT_IDS,
     msg_type: "image",
     content: JSON.stringify({ image_key: imageKey }),
   };
@@ -791,7 +791,7 @@ async function sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_I
 }
 
 // ===== 6. Cron Job mỗi 5 phút =====
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("0 18 * * *", async () => {
   try {
     const APP_ACCESS_TOKEN = await getAppAccessToken(); // Section 1 đã có
     const LARK_GROUP_CHAT_IDS_TEST = process.env.LARK_GROUP_CHAT_IDS_TEST;
