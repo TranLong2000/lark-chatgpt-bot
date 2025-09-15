@@ -16,6 +16,8 @@ const moment = require('moment-timezone');
 const QuickChart = require('quickchart-js');
 const cron = require('node-cron');
 require('dotenv').config();
+const { createCanvas } = require("canvas");
+const FormData = require("form-data");
 
 /* ===== App boot ===== */
 const app = express();
@@ -765,8 +767,6 @@ async function sendRebateReport() {
 /* ==================================================
    SECTION TEST — Gửi hình vùng A1:H6 trong Sheet
    ================================================== */
-import { createCanvas } from "canvas";
-import FormData from "form-data";
 
 // ===== 1. Lấy dữ liệu từ Sheet =====
 async function getSheetRange(token, spreadsheetToken, range) {
@@ -855,13 +855,13 @@ async function sendSheetRangeAsImage(token, chatId, spreadsheetToken, range = "A
 if (process.argv.includes("test-image")) {
   (async () => {
     try {
-      const token = await getAppAccessToken(); // dùng hàm có sẵn trong index.js
-      const chatId = process.env.LARK_CHAT_ID; // group nhận tin
-      const spreadsheetToken = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // từ link bạn gửi
+      const token = await getAppAccessToken(); // bạn đã có hàm này trong index.js
+      const chatId = process.env.LARK_GROUP_CHAT_IDS_TEST; // group test nhận tin
+      const spreadsheetToken = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // token sheet
       const range = "EmjelX!A1:H6"; // sheetId!range
 
       await sendSheetRangeAsImage(token, chatId, spreadsheetToken, range);
-      console.log("✅ Đã gửi hình ảnh A1:H6 từ Sheet vào group!");
+      console.log("✅ Đã gửi hình ảnh A1:H6 từ Sheet vào group test!");
     } catch (err) {
       console.error("❌ Test gửi ảnh thất bại:", err?.response?.data || err.message);
     }
