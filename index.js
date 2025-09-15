@@ -37,8 +37,7 @@ const SHEET_MAPPINGS = {
 /* ===============================
    SECTION 2 — Global constants
    =============================== */
-const SPREADSHEET_TOKEN_RAW = process.env.SPREADSHEET_TOKEN_RAW;
-const SHEET_ID_RAW = process.env.SHEET_ID_RAW;
+
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')   
   .split(',')
   .map(s => s.trim())
@@ -203,6 +202,8 @@ function toNumber(v) {
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 
+const SPREADSHEET_TOKEN_RAW = process.env.SPREADSHEET_TOKEN_RAW;
+const SHEET_ID_RAW = process.env.SHEET_ID_RAW;
 const SALE_COL_MAP = { 
   A: 0,    // không đổi
   F: 5,    // E -> F
