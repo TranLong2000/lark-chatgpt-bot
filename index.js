@@ -695,17 +695,24 @@ cron.schedule('0 9 * * 1', async () => {
 const fontPath = path.join(__dirname, "NotoSans-Regular.ttf");
 registerFont(fontPath, { family: "NotoSans" });
 
-// ===== 1. Lấy dữ liệu từ Sheet =====
-async function getSheetRange(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
-  const res = await axios.get(
-    `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values/${encodeURIComponent(SHEET_ID_TEST)}`,
-    { headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` } }
-  );
-  return res.data.data.valueRange.values;
+// ===== 1. Lấy dữ liệu + format từ Sheet =====
+async function getSheetRangeWithFormat(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values/${encodeURIComponent(
+    SHEET_ID_TEST
+  )}?valueRenderOption=ToString&dateTimeRenderOption=FormattedString&cellFormat=true`;
+
+  const res = await axios.get(url, {
+    headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
+  });
+
+  return res.data.data.valueRange;
 }
 
-// ===== 2. Render dữ liệu thành ảnh =====
-function renderTableToImage(values) {
+// ===== 2. Render dữ liệu thành ảnh (có màu nền + chữ) =====
+function renderTableToImage(valueRange) {
+  const values = valueRange.values;
+  const formats = valueRange.cellFormat || [];
+
   const cellWidth = 120;
   const cellHeight = 40;
   const rows = values.length;
@@ -714,7 +721,6 @@ function renderTableToImage(values) {
   const canvas = createCanvas(cols * cellWidth, rows * cellHeight);
   const ctx = canvas.getContext("2d");
 
-  ctx.font = "16px NotoSans";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
@@ -723,13 +729,31 @@ function renderTableToImage(values) {
       const x = j * cellWidth;
       const y = i * cellHeight;
 
-      ctx.fillStyle = "#ffffff";
+      // Lấy style
+      const fmt = (formats[i] && formats[i][j]) || {};
+      const bg = fmt.backgroundColor
+        ? `rgba(${Math.round((fmt.backgroundColor.red || 1) * 255)},${Math.round(
+            (fmt.backgroundColor.green || 1) * 255
+          )},${Math.round((fmt.backgroundColor.blue || 1) * 255)},${fmt.backgroundColor.alpha ?? 1})`
+        : "#ffffff";
+      const textColor = fmt.textFormat?.foregroundColor
+        ? `rgba(${Math.round((fmt.textFormat.foregroundColor.red || 0) * 255)},${Math.round(
+            (fmt.textFormat.foregroundColor.green || 0) * 255
+          )},${Math.round((fmt.textFormat.foregroundColor.blue || 0) * 255)},${fmt.textFormat.foregroundColor.alpha ?? 1})`
+        : "#000000";
+      const fontSize = fmt.textFormat?.fontSize || 16;
+
+      // Nền
+      ctx.fillStyle = bg;
       ctx.fillRect(x, y, cellWidth, cellHeight);
 
+      // Viền
       ctx.strokeStyle = "#cccccc";
       ctx.strokeRect(x, y, cellWidth, cellHeight);
 
-      ctx.fillStyle = "#000000";
+      // Text
+      ctx.fillStyle = textColor;
+      ctx.font = `${fontSize}px NotoSans`;
       ctx.fillText(val || "", x + cellWidth / 2, y + cellHeight / 2);
     });
   });
@@ -769,8 +793,8 @@ async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imag
 
 // ===== 5. Hàm tổng hợp =====
 async function sendSheetRangeAsImage(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
-  const values = await getSheetRange(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
-  const buffer = renderTableToImage(values);
+  const valueRange = await getSheetRangeWithFormat(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
+  const buffer = renderTableToImage(valueRange);
   const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
@@ -789,7 +813,6 @@ cron.schedule("*/5 * * * *", async () => {
     console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
   }
 });
-
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
