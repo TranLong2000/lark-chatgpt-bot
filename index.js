@@ -762,6 +762,112 @@ async function sendRebateReport() {
   }
 }
 
+/* ==================================================
+   SECTION TEST — Gửi hình vùng A1:H6 trong Sheet
+   ================================================== */
+import { createCanvas } from "canvas";
+import FormData from "form-data";
+
+// ===== 1. Lấy dữ liệu từ Sheet =====
+async function getSheetRange(token, spreadsheetToken, range) {
+  const res = await axios.get(
+    `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${spreadsheetToken}/values/${range}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return res.data.data.valueRange.values;
+}
+
+// ===== 2. Render dữ liệu thành ảnh =====
+function renderTableToImage(values) {
+  const cellWidth = 120;
+  const cellHeight = 40;
+  const rows = values.length;
+  const cols = values[0].length;
+
+  const canvas = createCanvas(cols * cellWidth, rows * cellHeight);
+  const ctx = canvas.getContext("2d");
+
+  ctx.font = "16px Arial";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  values.forEach((row, i) => {
+    row.forEach((val, j) => {
+      const x = j * cellWidth;
+      const y = i * cellHeight;
+
+      // Nền trắng
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(x, y, cellWidth, cellHeight);
+
+      // Viền ô
+      ctx.strokeStyle = "#cccccc";
+      ctx.strokeRect(x, y, cellWidth, cellHeight);
+
+      // Text
+      ctx.fillStyle = "#000000";
+      ctx.fillText(val || "", x + cellWidth / 2, y + cellHeight / 2);
+    });
+  });
+
+  return canvas.toBuffer("image/png");
+}
+
+// ===== 3. Upload ảnh buffer lên Lark =====
+async function uploadImageFromBuffer(token, buffer) {
+  const form = new FormData();
+  form.append("image_type", "message");
+  form.append("image", buffer, { filename: "sheet.png" });
+
+  const res = await axios.post(
+    `${process.env.LARK_DOMAIN}/open-apis/im/v1/images`,
+    form,
+    { headers: { ...form.getHeaders(), Authorization: `Bearer ${token}` } }
+  );
+
+  return res.data.data.image_key;
+}
+
+// ===== 4. Gửi ảnh vào group =====
+async function sendImageToGroup(token, chatId, imageKey) {
+  const payload = {
+    receive_id: chatId,
+    msg_type: "image",
+    content: JSON.stringify({ image_key: imageKey }),
+  };
+
+  await axios.post(
+    `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+    payload,
+    { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+  );
+}
+
+// ===== 5. Hàm tổng hợp =====
+async function sendSheetRangeAsImage(token, chatId, spreadsheetToken, range = "A1:H6") {
+  const values = await getSheetRange(token, spreadsheetToken, range);
+  const buffer = renderTableToImage(values);
+  const imageKey = await uploadImageFromBuffer(token, buffer);
+  await sendImageToGroup(token, chatId, imageKey);
+}
+
+// ===== 6. TEST RUN =====
+if (process.argv.includes("test-image")) {
+  (async () => {
+    try {
+      const token = await getAppAccessToken(); // dùng hàm có sẵn trong index.js
+      const chatId = process.env.LARK_CHAT_ID; // group nhận tin
+      const spreadsheetToken = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // từ link bạn gửi
+      const range = "EmjelX!A1:H6"; // sheetId!range
+
+      await sendSheetRangeAsImage(token, chatId, spreadsheetToken, range);
+      console.log("✅ Đã gửi hình ảnh A1:H6 từ Sheet vào group!");
+    } catch (err) {
+      console.error("❌ Test gửi ảnh thất bại:", err?.response?.data || err.message);
+    }
+  })();
+}
+
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
    ======================================================= */
