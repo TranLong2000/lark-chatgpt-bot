@@ -769,7 +769,7 @@ async function sendRebateReport() {
    ================================================== */
 
 // Lấy đường dẫn tuyệt đối tới file font
-const fontPath = path.join(__dirname, "font_NotoSan.ttf");
+const fontPath = path.join(__dirname, "NotoSans-Italic.ttf");
 // Đăng ký font
 registerFont(fontPath, { family: "NotoSans" });
 
