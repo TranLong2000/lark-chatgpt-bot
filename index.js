@@ -37,8 +37,8 @@ const SHEET_MAPPINGS = {
 /* ===============================
    SECTION 2 — Global constants
    =============================== */
-const SPREADSHEET_TOKEN = process.env.SPREADSHEET_TOKEN || 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
-const SHEET_ID = process.env.SHEET_ID || '48e2fd';
+const SPREADSHEET_TOKEN_RAW = process.env.SPREADSHEET_TOKEN_RAW;
+const SHEET_ID_RAW = process.env.SHEET_ID_RAW;
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')   
   .split(',')
   .map(s => s.trim())
@@ -182,58 +182,6 @@ async function extractFileContent(fileUrl, fileType) {
 /* =======================================
    SECTION 8 — Bitable & Sheets helpers
    ======================================= */
-async function getTableMeta(baseId, tableId, token) {
-  try {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/meta`;
-    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 });
-    return (resp.data.data.fields || []).map(f => ({ name: f.name, field_id: f.field_id }));
-  } catch (error) {
-    console.error('Error getting table meta:', error.message);
-    return [];
-  }
-}
-
-async function getAllRows(baseId, tableId, token, requiredFields = []) {
-  if (global.lastRows && global.lastRows.baseId === baseId && global.lastRows.tableId === tableId) {
-    return global.lastRows.rows;
-  }
-  const rows = [];
-  let pageToken = '';
-  do {
-    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
-    try {
-      const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${token}` },
-        params: requiredFields.length ? { field_names: requiredFields.join(',') } : {},
-        timeout: 30000
-      });
-      rows.push(...(resp.data?.data?.items || []));
-      pageToken = resp.data?.data?.page_token || '';
-    } catch (error) {
-      console.error('Error getting rows:', error.message);
-      break;
-    }
-  } while (pageToken && rows.length < 200);
-  global.lastRows = { baseId, tableId, rows };
-  return rows;
-}
-
-async function getSheetData(spreadsheetToken, token, range = 'A:AK') {
-  const base = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values`;
-  const url = `${base}/${range}${range.includes('?') ? '&' : '?'}valueRenderOption=FormattedValue`;
-  const timeout = 60000, maxRetries = 2;
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout });
-      return resp?.data?.data?.valueRange?.values || [];
-    } catch (err) {
-      console.error('Error getting sheet data:', err.message);
-      if (attempt === maxRetries) return [];
-      await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-    }
-  }
-  return [];
-}
 
 /* ==================================================
    SECTION 9 — Utility funcs (columns, numbers, etc.)
@@ -279,7 +227,7 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
     const currIdx = colToIndex(currentCol);
 
     const freshToken = await getAppAccessToken();
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AL`)}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_RAW}/values/${encodeURIComponent(`${SHEET_ID_RAW}!A:AL`)}`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${freshToken}` },
       timeout: 20000,
@@ -440,7 +388,7 @@ async function safeAnalyzeSalesChange(token) {
 async function getTotalStockOnce(token) {
   try {
     // dịch từ A:G -> A:H vì thêm 1 cột
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:H`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_RAW}/values/${SHEET_ID_RAW}!A:H`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
@@ -594,9 +542,9 @@ async function getRebateData(token) {
     BI: 28   // Remains Day
   };
 
-  const SPREADSHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
-  const SHEET_ID = '5cr5RK';
-  const RANGE = `${SHEET_ID}!AG:BL`;
+  const SPREADSHEET_TOKEN_PAYMENT = process.env.SPREADSHEET_TOKEN_PAYMENT;
+  const SHEET_ID_REBATE = SHEET_ID_REBATE;
+  const RANGE_REBATE = `${SHEET_ID_REBATE}!AG:BL`;
 
   console.log('[Rebate] RANGE', RANGE, '- columns count = 32 (AG..BL)');
 
@@ -604,8 +552,8 @@ async function getRebateData(token) {
     try {
       const authToken = token || await getAppAccessToken();
       const url =
-        `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values_batch_get` +
-        `?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=FormattedValue`;
+        `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_PAYMENT}/values_batch_get` +
+        `?ranges=${encodeURIComponent(RANGE_REBATE)}&valueRenderOption=FormattedValue`;
 
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${authToken}` },
@@ -773,10 +721,10 @@ const fontPath = path.join(__dirname, "NotoSans-Regular.ttf");
 registerFont(fontPath, { family: "NotoSans" });
 
 // ===== 1. Lấy dữ liệu từ Sheet =====
-async function getSheetRange(token, spreadsheetToken, range) {
+async function getSheetRange(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
   const res = await axios.get(
-    `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${encodeURIComponent(range)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
+    `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values/${encodeURIComponent(SHEET_ID_TEST)}`,
+    { headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` } }
   );
   return res.data.data.valueRange.values;
 }
@@ -791,7 +739,7 @@ function renderTableToImage(values) {
   const canvas = createCanvas(cols * cellWidth, rows * cellHeight);
   const ctx = canvas.getContext("2d");
 
-  ctx.font = "16px NotoSans";  // dùng font vừa đăng ký
+  ctx.font = "16px NotoSans";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
@@ -815,7 +763,7 @@ function renderTableToImage(values) {
 }
 
 // ===== 3. Upload ảnh buffer lên Lark =====
-async function uploadImageFromBuffer(token, buffer) {
+async function uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer) {
   const form = new FormData();
   form.append("image_type", "message");
   form.append("image", buffer, { filename: "sheet.png" });
@@ -823,16 +771,16 @@ async function uploadImageFromBuffer(token, buffer) {
   const res = await axios.post(
     `${process.env.LARK_DOMAIN}/open-apis/im/v1/images`,
     form,
-    { headers: { ...form.getHeaders(), Authorization: `Bearer ${token}` } }
+    { headers: { ...form.getHeaders(), Authorization: `Bearer ${APP_ACCESS_TOKEN}` } }
   );
 
   return res.data.data.image_key;
 }
 
 // ===== 4. Gửi ảnh vào group =====
-async function sendImageToGroup(token, chatId, imageKey) {
+async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey) {
   const payload = {
-    receive_id: chatId,
+    receive_id: LARK_GROUP_CHAT_IDS_TEST,
     msg_type: "image",
     content: JSON.stringify({ image_key: imageKey }),
   };
@@ -840,32 +788,33 @@ async function sendImageToGroup(token, chatId, imageKey) {
   await axios.post(
     `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
     payload,
-    { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+    { headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}`, "Content-Type": "application/json" } }
   );
 }
 
 // ===== 5. Hàm tổng hợp =====
-async function sendSheetRangeAsImage(token, chatId, spreadsheetToken, range = "A1:H6") {
-  const values = await getSheetRange(token, spreadsheetToken, range);
+async function sendSheetRangeAsImage(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
+  const values = await getSheetRange(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
   const buffer = renderTableToImage(values);
-  const imageKey = await uploadImageFromBuffer(token, buffer);
-  await sendImageToGroup(token, chatId, imageKey);
+  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
+  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
 
 // ===== 6. Cron Job mỗi 5 phút =====
 cron.schedule("*/5 * * * *", async () => {
   try {
-    const token = await getAppAccessToken(); // đã có ở Section 1
-    const chatId = process.env.LARK_GROUP_CHAT_IDS_TEST; // group test
-    const spreadsheetToken = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // token sheet
-    const range = "EmjelX!A1:H6"; // sheetId!range
+    const APP_ACCESS_TOKEN = await getAppAccessToken(); // có ở Section 1
+    const LARK_GROUP_CHAT_IDS_TEST = process.env.LARK_GROUP_CHAT_IDS_TEST;
+    const SPREADSHEET_TOKEN_TEST = process.env.SPREADSHEET_TOKEN_TEST;
+    const SHEET_ID_TEST = process.env.SHEET_ID_TEST;
 
-    await sendSheetRangeAsImage(token, chatId, spreadsheetToken, range);
-    console.log("✅ [Cron] Đã gửi hình A1:H6 từ Sheet vào group test!");
+    await sendSheetRangeAsImage(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
+    console.log("✅ [Cron] Đã gửi hình từ Sheet vào group test!");
   } catch (err) {
     console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
   }
 });
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
