@@ -768,8 +768,10 @@ async function sendRebateReport() {
    SECTION TEST — Cron gửi hình vùng A1:H6 trong Sheet mỗi 5 phút (có font tiếng Việt)
    ================================================== */
 
-// File font nằm cùng cấp với index.js
-registerFont(__dirname + "/NotoSans-Regular.ttf", { family: "NotoSans" });
+// Lấy đường dẫn tuyệt đối tới file font
+const fontPath = path.join(__dirname, "font_NotoSan.ttf");
+// Đăng ký font
+registerFont(fontPath, { family: "NotoSans" });
 
 function renderTableToImage(values) {
   const cellWidth = 120;
