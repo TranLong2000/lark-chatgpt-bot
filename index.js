@@ -705,8 +705,15 @@ async function getSheetRangeWithFormat(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST,
     headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
   });
 
+  console.log("DEBUG Sheet API response:", JSON.stringify(res.data, null, 2));
+
+  if (!res.data?.data?.valueRange) {
+    throw new Error("Sheet API không trả về valueRange. Kiểm tra SHEET_ID_TEST và token!");
+  }
+
   return res.data.data.valueRange;
 }
+
 
 // ===== 2. Render dữ liệu thành ảnh (có màu nền + chữ) =====
 function renderTableToImage(valueRange) {
