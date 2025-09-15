@@ -697,9 +697,7 @@ registerFont(fontPath, { family: "NotoSans" });
 
 // ===== 1. Lấy dữ liệu + style từ Sheet =====
 async function getSheetRangeWithStyle(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
-  // SHEET_ID_TEST dạng: EmjelX!A1:H6
-  const [sheetId, range] = SHEET_ID_TEST.split("!");
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/worksheet/${sheetId}/range?range=${encodeURIComponent(range)}`;
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/ranges/${encodeURIComponent(SHEET_ID_TEST)}`;
 
   const res = await axios.get(url, {
     headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
@@ -712,6 +710,7 @@ async function getSheetRangeWithStyle(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, 
 
   return res.data.data.range.cellData;
 }
+
 
 // ===== 2. Render dữ liệu thành ảnh =====
 function renderTableToImage(cellData) {
