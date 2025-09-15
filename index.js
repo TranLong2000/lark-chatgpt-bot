@@ -765,7 +765,7 @@ async function sendRebateReport() {
 }
 
 /* ==================================================
-   SECTION TEST — Gửi hình vùng A1:H6 trong Sheet
+   SECTION TEST — Cron gửi hình vùng A1:H6 trong Sheet mỗi 5 phút
    ================================================== */
 
 // ===== 1. Lấy dữ liệu từ Sheet =====
@@ -851,22 +851,20 @@ async function sendSheetRangeAsImage(token, chatId, spreadsheetToken, range = "A
   await sendImageToGroup(token, chatId, imageKey);
 }
 
-// ===== 6. TEST RUN =====
-if (process.argv.includes("test-image")) {
-  (async () => {
-    try {
-      const token = await getAppAccessToken(); // bạn đã có hàm này trong index.js
-      const chatId = process.env.LARK_GROUP_CHAT_IDS_TEST; // group test nhận tin
-      const spreadsheetToken = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // token sheet
-      const range = "EmjelX!A1:H6"; // sheetId!range
+// ===== 6. Cron Job mỗi 5 phút =====
+cron.schedule("*/5 * * * *", async () => {
+  try {
+    const token = await getAppAccessToken(); // bạn đã có hàm này trong index.js
+    const chatId = process.env.LARK_GROUP_CHAT_IDS_TEST; // group test nhận tin
+    const spreadsheetToken = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // token sheet
+    const range = "EmjelX!A1:H6"; // sheetId!range
 
-      await sendSheetRangeAsImage(token, chatId, spreadsheetToken, range);
-      console.log("✅ Đã gửi hình ảnh A1:H6 từ Sheet vào group test!");
-    } catch (err) {
-      console.error("❌ Test gửi ảnh thất bại:", err?.response?.data || err.message);
-    }
-  })();
-}
+    await sendSheetRangeAsImage(token, chatId, spreadsheetToken, range);
+    console.log("✅ [Cron] Đã gửi hình A1:H6 từ Sheet vào group test!");
+  } catch (err) {
+    console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
+  }
+});
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
