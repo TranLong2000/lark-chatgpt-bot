@@ -765,19 +765,14 @@ async function sendRebateReport() {
 }
 
 /* ==================================================
-   SECTION TEST — Cron gửi hình vùng A1:H6 trong Sheet mỗi 5 phút
+   SECTION TEST — Cron gửi hình vùng A1:H6 trong Sheet mỗi 5 phút (có font tiếng Việt)
    ================================================== */
 
-// ===== 1. Lấy dữ liệu từ Sheet =====
-async function getSheetRange(token, spreadsheetToken, range) {
-  const res = await axios.get(
-    `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${encodeURIComponent(range)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-  return res.data.data.valueRange.values;
-}
+const { createCanvas, registerFont } = require("canvas");
 
-// ===== 2. Render dữ liệu thành ảnh =====
+// File font nằm cùng cấp với index.js
+registerFont("./NotoSans-Regular.ttf", { family: "NotoSans" });
+
 function renderTableToImage(values) {
   const cellWidth = 120;
   const cellHeight = 40;
@@ -787,7 +782,7 @@ function renderTableToImage(values) {
   const canvas = createCanvas(cols * cellWidth, rows * cellHeight);
   const ctx = canvas.getContext("2d");
 
-  ctx.font = "16px Arial";
+  ctx.font = "16px NotoSans";  // chắc chắn dùng font vừa đăng ký
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
@@ -796,15 +791,12 @@ function renderTableToImage(values) {
       const x = j * cellWidth;
       const y = i * cellHeight;
 
-      // Nền trắng
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(x, y, cellWidth, cellHeight);
 
-      // Viền ô
       ctx.strokeStyle = "#cccccc";
       ctx.strokeRect(x, y, cellWidth, cellHeight);
 
-      // Text
       ctx.fillStyle = "#000000";
       ctx.fillText(val || "", x + cellWidth / 2, y + cellHeight / 2);
     });
@@ -865,6 +857,7 @@ cron.schedule("*/5 * * * *", async () => {
     console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
   }
 });
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
