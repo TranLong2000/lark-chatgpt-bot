@@ -26,16 +26,9 @@ const port = process.env.PORT || 8080;
 /* ===============================
    SECTION 1 — Config mappings
    =============================== */
-const BASE_MAPPINGS = {
-  PUR:  'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
-};
-
-const SHEET_MAPPINGS = {
-  PUR_SHEET: 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
-};
 
 /* ===============================
-   SECTION 2 — Global constants
+   SECTION 2 — General constants
    =============================== */
 
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')   
@@ -148,35 +141,6 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
 /* ===================================================
    SECTION 7 — File/Image extract (PDF/DOCX/XLSX/OCR)
    =================================================== */
-async function extractFileContent(fileUrl, fileType) {
-  try {
-    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 20000 });
-    const buffer = Buffer.from(response.data);
-
-    if (fileType === 'pdf') {
-      const data = await pdfParse(buffer);
-      return (data.text || '').trim();
-    }
-    if (fileType === 'docx') {
-      const result = await mammoth.extractRawText({ buffer });
-      return (result.value || '').trim();
-    }
-    if (fileType === 'xlsx') {
-      const workbook = xlsx.read(buffer, { type: 'buffer' });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
-      return sheet.map(row => (row || []).join(', ')).join('; ');
-    }
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileType)) {
-      const result = await Tesseract.recognize(buffer, 'eng+vie');
-      return (result.data.text || '').trim();
-    }
-    return 'Không hỗ trợ loại file này.';
-  } catch (error) {
-    console.error('Error extracting file content:', error.message);
-    return 'Lỗi khi trích xuất nội dung file';
-  }
-}
 
 /* =======================================
    SECTION 8 — Bitable & Sheets helpers
@@ -713,6 +677,16 @@ async function sendRebateReport() {
   }
 }
 
+// Cron job: chạy mỗi 5 phút (để test)
+cron.schedule('0 9 * * 1', async () => {
+  console.log('[Rebate] Cron job chạy: 9h sáng Thứ 2');
+  try {
+    await sendRebateReport();
+  } catch (err) {
+    console.error('[Rebate] Cron job error:', err);
+  }
+});
+
 /* ==================================================
    SECTION TEST — Cron gửi hình vùng A1:H6 trong Sheet mỗi 5 phút
    ================================================== */
@@ -1019,8 +993,8 @@ app.post('/webhook',
 
             const formattedHistory = memory.map(m => ({ role: m.role, content: m.content }));
             const systemPrompt = `Bạn là L-GPT, trợ lý AI thân thiện. 
-Luôn gọi người dùng là "${mentionUserName}", 
-không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự nhiên.`;
+            Luôn gọi người dùng là "${mentionUserName}", 
+            không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự nhiên.`;
 
             let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
             console.log('[AI] 🚀 Calling model for message:', messageId);
@@ -1107,12 +1081,3 @@ app.listen(port, () => {
   setInterval(checkTotalStockChange, 60 * 1000);
 });
 
-// Cron job: chạy mỗi 5 phút (để test)
-cron.schedule('0 9 * * 1', async () => {
-  console.log('[Rebate] Cron job chạy: 9h sáng Thứ 2');
-  try {
-    await sendRebateReport();
-  } catch (err) {
-    console.error('[Rebate] Cron job error:', err);
-  }
-});
