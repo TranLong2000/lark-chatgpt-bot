@@ -16,7 +16,7 @@ const moment = require('moment-timezone');
 const QuickChart = require('quickchart-js');
 const cron = require('node-cron');
 require('dotenv').config();
-const { createCanvas } = require("canvas");
+const { createCanvas, registerFont } = require("canvas");
 const FormData = require("form-data");
 
 /* ===== App boot ===== */
@@ -767,8 +767,6 @@ async function sendRebateReport() {
 /* ==================================================
    SECTION TEST — Cron gửi hình vùng A1:H6 trong Sheet mỗi 5 phút (có font tiếng Việt)
    ================================================== */
-
-const { createCanvas, registerFont } = require("canvas");
 
 // File font nằm cùng cấp với index.js
 registerFont("./NotoSans-Regular.ttf", { family: "NotoSans" });
