@@ -695,8 +695,9 @@ cron.schedule('0 9 * * 1', async () => {
 const fontPath = path.join(__dirname, "NotoSans-Regular.ttf");
 registerFont(fontPath, { family: "NotoSans" });
 
-// ===== 1. Lấy dữ liệu + format từ Sheet =====
+// ===== 1. Lấy dữ liệu + style từ Sheet =====
 async function getSheetRangeWithStyle(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
+  // SHEET_ID_TEST dạng: EmjelX!A1:H6
   const [sheetId, range] = SHEET_ID_TEST.split("!");
   const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/worksheet/${sheetId}/range?range=${encodeURIComponent(range)}`;
 
@@ -705,13 +706,14 @@ async function getSheetRangeWithStyle(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, 
   });
 
   if (!res.data?.data?.range?.cellData) {
+    console.error("DEBUG API Response:", JSON.stringify(res.data, null, 2));
     throw new Error("Không lấy được cellData từ Lark API");
   }
 
   return res.data.data.range.cellData;
 }
 
-// ===== 2. Render dữ liệu thành ảnh (có màu nền + chữ) =====
+// ===== 2. Render dữ liệu thành ảnh =====
 function renderTableToImage(cellData) {
   const cellWidth = 120;
   const cellHeight = 40;
@@ -728,7 +730,11 @@ function renderTableToImage(cellData) {
       const x = j * cellWidth;
       const y = i * cellHeight;
 
-      const text = cell?.effectiveValue?.stringValue || "";
+      const text =
+        cell?.effectiveValue?.stringValue ??
+        cell?.effectiveValue?.numberValue?.toString() ??
+        "";
+
       const fmt = cell?.effectiveFormat || {};
 
       // Nền
@@ -763,7 +769,6 @@ function renderTableToImage(cellData) {
   return canvas.toBuffer("image/png");
 }
 
-
 // ===== 3. Upload ảnh buffer lên Lark =====
 async function uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer) {
   const form = new FormData();
@@ -796,8 +801,8 @@ async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imag
 
 // ===== 5. Hàm tổng hợp =====
 async function sendSheetRangeAsImage(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
-  const valueRange = await getSheetRangeWithFormat(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
-  const buffer = renderTableToImage(valueRange);
+  const cellData = await getSheetRangeWithStyle(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
+  const buffer = renderTableToImage(cellData);
   const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
