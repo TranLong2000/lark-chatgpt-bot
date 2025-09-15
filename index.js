@@ -695,73 +695,57 @@ cron.schedule('0 9 * * 1', async () => {
 const fontPath = path.join(__dirname, "NotoSans-Regular.ttf");
 registerFont(fontPath, { family: "NotoSans" });
 
-// ===== 1. Lấy dữ liệu + style từ Sheet =====
-async function getSheetRangeWithStyle(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/ranges/${encodeURIComponent(SHEET_ID_TEST)}`;
-
+// ===== 1. Lấy values từ Sheet =====
+async function getSheetValues(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values/${encodeURIComponent(
+    SHEET_ID_TEST
+  )}?valueRenderOption=FormattedValue`;
   const res = await axios.get(url, {
     headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
   });
-
-  if (!res.data?.data?.range?.cellData) {
-    console.error("DEBUG API Response:", JSON.stringify(res.data, null, 2));
-    throw new Error("Không lấy được cellData từ Lark API");
+  if (!res.data?.data?.valueRange?.values) {
+    throw new Error("Không lấy được values từ Sheet API");
   }
-
-  return res.data.data.range.cellData;
+  return res.data.data.valueRange.values;
 }
 
-
-// ===== 2. Render dữ liệu thành ảnh =====
-function renderTableToImage(cellData) {
+// ===== 2. Render table thành ảnh (mock style + E2 màu xanh nhạt) =====
+function renderTableToImage(values) {
   const cellWidth = 120;
   const cellHeight = 40;
-  const rows = cellData.length;
-  const cols = cellData[0].length;
+  const rows = values.length;
+  const cols = values[0].length;
 
   const canvas = createCanvas(cols * cellWidth, rows * cellHeight);
   const ctx = canvas.getContext("2d");
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  cellData.forEach((row, i) => {
-    row.forEach((cell, j) => {
+  values.forEach((row, i) => {
+    row.forEach((val, j) => {
       const x = j * cellWidth;
       const y = i * cellHeight;
 
-      const text =
-        cell?.effectiveValue?.stringValue ??
-        cell?.effectiveValue?.numberValue?.toString() ??
-        "";
+      // mặc định nền trắng
+      let bgColor = "#ffffff";
 
-      const fmt = cell?.effectiveFormat || {};
+      // nếu là ô E2 (cột E = index 4, dòng 2 = index 1)
+      if (i === 1 && j === 4) {
+        bgColor = "#ccffcc"; // xanh lá nhạt
+      }
 
-      // Nền
-      const bg = fmt.backgroundColor
-        ? `rgba(${Math.round((fmt.backgroundColor.red || 1) * 255)},${Math.round(
-            (fmt.backgroundColor.green || 1) * 255
-          )},${Math.round((fmt.backgroundColor.blue || 1) * 255)},${fmt.backgroundColor.alpha ?? 1})`
-        : "#ffffff";
-      ctx.fillStyle = bg;
+      // vẽ nền
+      ctx.fillStyle = bgColor;
       ctx.fillRect(x, y, cellWidth, cellHeight);
 
-      // Viền
+      // viền
       ctx.strokeStyle = "#cccccc";
       ctx.strokeRect(x, y, cellWidth, cellHeight);
 
-      // Chữ
-      const textColor = fmt.textFormat?.foregroundColor
-        ? `rgba(${Math.round((fmt.textFormat.foregroundColor.red || 0) * 255)},${Math.round(
-            (fmt.textFormat.foregroundColor.green || 0) * 255
-          )},${Math.round((fmt.textFormat.foregroundColor.blue || 0) * 255)},${fmt.textFormat.foregroundColor.alpha ?? 1})`
-        : "#000000";
-      const fontSize = fmt.textFormat?.fontSize || 16;
-      const fontWeight = fmt.textFormat?.bold ? "bold" : "normal";
-      const fontStyle = fmt.textFormat?.italic ? "italic" : "normal";
-
-      ctx.fillStyle = textColor;
-      ctx.font = `${fontStyle} ${fontWeight} ${fontSize}px NotoSans`;
-      ctx.fillText(text, x + cellWidth / 2, y + cellHeight / 2);
+      // chữ
+      ctx.fillStyle = "#000000";
+      ctx.font = `16px NotoSans`;
+      ctx.fillText(val || "", x + cellWidth / 2, y + cellHeight / 2);
     });
   });
 
@@ -799,9 +783,9 @@ async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imag
 }
 
 // ===== 5. Hàm tổng hợp =====
-async function sendSheetRangeAsImage(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
-  const cellData = await getSheetRangeWithStyle(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
-  const buffer = renderTableToImage(cellData);
+async function sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
+  const values = await getSheetValues(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
+  const buffer = renderTableToImage(values);
   const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
@@ -809,17 +793,23 @@ async function sendSheetRangeAsImage(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST,
 // ===== 6. Cron Job mỗi 5 phút =====
 cron.schedule("*/5 * * * *", async () => {
   try {
-    const APP_ACCESS_TOKEN = await getAppAccessToken(); // có ở Section 1
+    const APP_ACCESS_TOKEN = await getAppAccessToken(); // Section 1 đã có
     const LARK_GROUP_CHAT_IDS_TEST = process.env.LARK_GROUP_CHAT_IDS_TEST;
     const SPREADSHEET_TOKEN_TEST = process.env.SPREADSHEET_TOKEN_TEST;
     const SHEET_ID_TEST = process.env.SHEET_ID_TEST;
 
-    await sendSheetRangeAsImage(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
-    console.log("✅ [Cron] Đã gửi hình từ Sheet vào group test!");
+    await sendSheetAsImageWithMockStyle(
+      APP_ACCESS_TOKEN,
+      LARK_GROUP_CHAT_IDS_TEST,
+      SPREADSHEET_TOKEN_TEST,
+      SHEET_ID_TEST
+    );
+    console.log("✅ [Cron] Đã gửi hình (mock style, E2 xanh nhạt) từ Sheet vào group test!");
   } catch (err) {
     console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
   }
 });
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
