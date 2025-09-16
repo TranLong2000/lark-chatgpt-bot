@@ -793,8 +793,8 @@ async function sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_I
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
 
-// ===== 6. Cron Job mỗi 5 phút =====
-cron.schedule("*/5 * * * *", async () => {
+// ===== 6. Cron Job mỗi 18:00 =====
+cron.schedule("0 18 * * *", async () => {
   try {
     const APP_ACCESS_TOKEN = await getAppAccessToken(); // Section 1 đã có
     const LARK_GROUP_CHAT_IDS_TEST = process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
