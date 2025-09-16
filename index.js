@@ -16,8 +16,6 @@ const moment = require('moment-timezone');
 const QuickChart = require('quickchart-js');
 const cron = require('node-cron');
 require('dotenv').config();
-const { createCanvas, registerFont } = require("canvas");
-const FormData = require("form-data");
 
 /* ===== App boot ===== */
 const app = express();
@@ -26,11 +24,19 @@ const port = process.env.PORT || 8080;
 /* ===============================
    SECTION 1 — Config mappings
    =============================== */
+const BASE_MAPPINGS = {
+  PUR:  'https://cgfscmkep8m.sg.larksuite.com/base/PjuWbiJLeaOzBMskS4ulh9Bwg9d?table=tbl61rgzOwS8viB2&view=vewi5cxZif',
+};
+
+const SHEET_MAPPINGS = {
+  PUR_SHEET: 'https://cgfscmkep8m.sg.larksuite.com/sheets/Qd5JsUX0ehhqO9thXcGlyAIYg9g?sheet=6eGZ0D'
+};
 
 /* ===============================
-   SECTION 2 — General constants
+   SECTION 2 — Global constants
    =============================== */
-
+const SPREADSHEET_TOKEN = process.env.SPREADSHEET_TOKEN || 'LYYqsXmnPhwwGHtKP00lZ1IWgDb';
+const SHEET_ID = process.env.SHEET_ID || '48e2fd';
 const GROUP_CHAT_IDS = (process.env.LARK_GROUP_CHAT_IDS || '')   
   .split(',')
   .map(s => s.trim())
@@ -141,10 +147,91 @@ async function replyToLark(messageId, content, mentionUserId = null, mentionUser
 /* ===================================================
    SECTION 7 — File/Image extract (PDF/DOCX/XLSX/OCR)
    =================================================== */
+async function extractFileContent(fileUrl, fileType) {
+  try {
+    const response = await axios.get(fileUrl, { responseType: 'arraybuffer', timeout: 20000 });
+    const buffer = Buffer.from(response.data);
+
+    if (fileType === 'pdf') {
+      const data = await pdfParse(buffer);
+      return (data.text || '').trim();
+    }
+    if (fileType === 'docx') {
+      const result = await mammoth.extractRawText({ buffer });
+      return (result.value || '').trim();
+    }
+    if (fileType === 'xlsx') {
+      const workbook = xlsx.read(buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = xlsx.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+      return sheet.map(row => (row || []).join(', ')).join('; ');
+    }
+    if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileType)) {
+      const result = await Tesseract.recognize(buffer, 'eng+vie');
+      return (result.data.text || '').trim();
+    }
+    return 'Không hỗ trợ loại file này.';
+  } catch (error) {
+    console.error('Error extracting file content:', error.message);
+    return 'Lỗi khi trích xuất nội dung file';
+  }
+}
 
 /* =======================================
    SECTION 8 — Bitable & Sheets helpers
    ======================================= */
+async function getTableMeta(baseId, tableId, token) {
+  try {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/meta`;
+    const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 });
+    return (resp.data.data.fields || []).map(f => ({ name: f.name, field_id: f.field_id }));
+  } catch (error) {
+    console.error('Error getting table meta:', error.message);
+    return [];
+  }
+}
+
+async function getAllRows(baseId, tableId, token, requiredFields = []) {
+  if (global.lastRows && global.lastRows.baseId === baseId && global.lastRows.tableId === tableId) {
+    return global.lastRows.rows;
+  }
+  const rows = [];
+  let pageToken = '';
+  do {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/bitable/v1/apps/${baseId}/tables/${tableId}/records?page_size=20&page_token=${pageToken}`;
+    try {
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: requiredFields.length ? { field_names: requiredFields.join(',') } : {},
+        timeout: 30000
+      });
+      rows.push(...(resp.data?.data?.items || []));
+      pageToken = resp.data?.data?.page_token || '';
+    } catch (error) {
+      console.error('Error getting rows:', error.message);
+      break;
+    }
+  } while (pageToken && rows.length < 200);
+  global.lastRows = { baseId, tableId, rows };
+  return rows;
+}
+
+async function getSheetData(spreadsheetToken, token, range = 'A:AK') {
+  const base = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values`;
+  const url = `${base}/${range}${range.includes('?') ? '&' : '?'}valueRenderOption=FormattedValue`;
+  const timeout = 60000, maxRetries = 2;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const resp = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, timeout });
+      return resp?.data?.data?.valueRange?.values || [];
+    } catch (err) {
+      console.error('Error getting sheet data:', err.message);
+      if (attempt === maxRetries) return [];
+      await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+    }
+  }
+  return [];
+}
 
 /* ==================================================
    SECTION 9 — Utility funcs (columns, numbers, etc.)
@@ -166,8 +253,6 @@ function toNumber(v) {
    SECTION 10 — Sales compare + message (scheduled analysis)
    ========================================================== */
 
-const SPREADSHEET_TOKEN_RAW = process.env.SPREADSHEET_TOKEN_RAW;
-const SHEET_ID_RAW = process.env.SHEET_ID_RAW;
 const SALE_COL_MAP = { 
   A: 0,    // không đổi
   F: 5,    // E -> F
@@ -192,7 +277,7 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
     const currIdx = colToIndex(currentCol);
 
     const freshToken = await getAppAccessToken();
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_RAW}/values/${encodeURIComponent(`${SHEET_ID_RAW}!A:AL`)}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(`${SHEET_ID}!A:AL`)}`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${freshToken}` },
       timeout: 20000,
@@ -353,7 +438,7 @@ async function safeAnalyzeSalesChange(token) {
 async function getTotalStockOnce(token) {
   try {
     // dịch từ A:G -> A:H vì thêm 1 cột
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_RAW}/values/${SHEET_ID_RAW}!A:H`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${SHEET_ID}!A:H`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}` },
       timeout: 20000,
@@ -507,9 +592,9 @@ async function getRebateData(token) {
     BI: 28   // Remains Day
   };
 
-  const SPREADSHEET_TOKEN_PAYMENT = process.env.SPREADSHEET_TOKEN_PAYMENT;
-  const SHEET_ID_REBATE = SHEET_ID_REBATE;
-  const RANGE_REBATE = `${SHEET_ID_REBATE}!AG:BL`;
+  const SPREADSHEET_TOKEN = 'TGR3sdhFshWVbDt8ATllw9TNgMe';
+  const SHEET_ID = '5cr5RK';
+  const RANGE = `${SHEET_ID}!AG:BL`;
 
   console.log('[Rebate] RANGE', RANGE, '- columns count = 32 (AG..BL)');
 
@@ -517,8 +602,8 @@ async function getRebateData(token) {
     try {
       const authToken = token || await getAppAccessToken();
       const url =
-        `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_PAYMENT}/values_batch_get` +
-        `?ranges=${encodeURIComponent(RANGE_REBATE)}&valueRenderOption=FormattedValue`;
+        `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values_batch_get` +
+        `?ranges=${encodeURIComponent(RANGE)}&valueRenderOption=FormattedValue`;
 
       const resp = await axios.get(url, {
         headers: { Authorization: `Bearer ${authToken}` },
@@ -676,16 +761,6 @@ async function sendRebateReport() {
     console.error('Lỗi gửi báo cáo Rebate:', err?.message || err);
   }
 }
-
-// Cron job: chạy mỗi 5 phút (để test)
-cron.schedule('0 9 * * 1', async () => {
-  console.log('[Rebate] Cron job chạy: 9h sáng Thứ 2');
-  try {
-    await sendRebateReport();
-  } catch (err) {
-    console.error('[Rebate] Cron job error:', err);
-  }
-});
 
 /* ==================================================
    SECTION TEST — Cron gửi hình vùng A1:H6 trong Sheet mỗi 5 phút
@@ -1013,8 +1088,8 @@ app.post('/webhook',
 
             const formattedHistory = memory.map(m => ({ role: m.role, content: m.content }));
             const systemPrompt = `Bạn là L-GPT, trợ lý AI thân thiện. 
-            Luôn gọi người dùng là "${mentionUserName}", 
-            không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự nhiên.`;
+Luôn gọi người dùng là "${mentionUserName}", 
+không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự nhiên.`;
 
             let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
             console.log('[AI] 🚀 Calling model for message:', messageId);
@@ -1101,3 +1176,12 @@ app.listen(port, () => {
   setInterval(checkTotalStockChange, 60 * 1000);
 });
 
+// Cron job: chạy mỗi 5 phút (để test)
+cron.schedule('0 9 * * 1', async () => {
+  console.log('[Rebate] Cron job chạy: 9h sáng Thứ 2');
+  try {
+    await sendRebateReport();
+  } catch (err) {
+    console.error('[Rebate] Cron job error:', err);
+  }
+});
