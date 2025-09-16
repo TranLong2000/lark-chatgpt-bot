@@ -682,6 +682,136 @@ async function sendRebateReport() {
   }
 }
 
+/* ==================================================
+   SECTION TEST — Cron gửi hình vùng A1:H7 trong Sheet mỗi 5 phút
+   ================================================== */
+
+// Đăng ký font (file nằm cùng cấp index.js)
+const fontPath = path.join(__dirname, "NotoSans-Regular.ttf");
+registerFont(fontPath, { family: "NotoSans" });
+
+// ===== 1. Lấy values từ Sheet =====
+async function getSheetValues(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
+  const RANGE = `${SHEET_ID_TEST}!A1:H7`;
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values/${encodeURIComponent(RANGE)}?valueRenderOption=FormattedValue`;
+  const res = await axios.get(url, {
+    headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
+  });
+  if (!res.data?.data?.valueRange?.values) {
+    throw new Error("Không lấy được values từ Sheet API");
+  }
+  return res.data.data.valueRange.values;
+}
+
+// ===== 2. Render table thành ảnh (mock style + E2 màu xanh nhạt) =====
+function renderTableToImage(values) {
+  const cellWidth = 120;
+  const cellHeight = 40;
+  const rows = values.length;
+  const cols = values[0].length;
+
+  const canvas = createCanvas(cols * cellWidth, rows * cellHeight);
+  const ctx = canvas.getContext("2d");
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  values.forEach((row, i) => {
+    row.forEach((val, j) => {
+      const x = j * cellWidth;
+      const y = i * cellHeight;
+
+      let bgColor = "#ffffff"; // nền mặc định trắng
+
+      // highlight E2 (cột E = index 4, dòng 2 = index 1)
+      if (i === 1 && j === 4) {
+        bgColor = "#ccffcc"; // xanh lá nhạt
+      }
+
+      // vẽ nền
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(x, y, cellWidth, cellHeight);
+
+      // viền
+      ctx.strokeStyle = "#cccccc";
+      ctx.strokeRect(x, y, cellWidth, cellHeight);
+
+      // chữ
+      ctx.fillStyle = "#000000";
+      ctx.font = `16px NotoSans`;
+      ctx.fillText(val || "", x + cellWidth / 2, y + cellHeight / 2);
+    });
+  });
+
+  return canvas.toBuffer("image/png");
+}
+
+// ===== 3. Upload ảnh buffer lên Lark =====
+async function uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer) {
+  const form = new FormData();
+  form.append("image_type", "message");
+  form.append("image", buffer, { filename: "sheet.png" });
+
+  const res = await axios.post(
+    `${process.env.LARK_DOMAIN}/open-apis/im/v1/images`,
+    form,
+    { headers: { ...form.getHeaders(), Authorization: `Bearer ${APP_ACCESS_TOKEN}` } }
+  );
+
+  return res.data.data.image_key;
+}
+
+// ===== 4. Gửi ảnh vào group (nhiều chatId) =====
+async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS, imageKey) {
+  if (!Array.isArray(LARK_GROUP_CHAT_IDS)) return;
+
+  for (const chatId of LARK_GROUP_CHAT_IDS.filter(Boolean)) {
+    try {
+      const payload = {
+        receive_id: chatId,
+        msg_type: "image",
+        content: JSON.stringify({ image_key: imageKey }),
+      };
+
+      await axios.post(
+        `${process.env.LARK_DOMAIN}/open-apis/im/v1/messages?receive_id_type=chat_id`,
+        payload,
+        { headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}`, "Content-Type": "application/json" } }
+      );
+    } catch (err) {
+      console.error(`[sendImageToGroup] Failed to send to ${chatId}:`, err?.response?.data || err?.message || err);
+    }
+  }
+}
+
+// ===== 5. Hàm tổng hợp =====
+async function sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
+  const values = await getSheetValues(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
+  const buffer = renderTableToImage(values);
+  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
+  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
+}
+
+// ===== 6. Cron Job mỗi 5 phút =====
+cron.schedule("*/5 * * * *", async () => {
+  try {
+    const APP_ACCESS_TOKEN = await getAppAccessToken(); // Section 1 đã có
+    const LARK_GROUP_CHAT_IDS_TEST = process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
+    const SPREADSHEET_TOKEN_TEST = process.env.SPREADSHEET_TOKEN_TEST;
+    const SHEET_ID_TEST = process.env.SHEET_ID_TEST;
+
+    await sendSheetAsImageWithMockStyle(
+      APP_ACCESS_TOKEN,
+      LARK_GROUP_CHAT_IDS_TEST,
+      SPREADSHEET_TOKEN_TEST,
+      SHEET_ID_TEST
+    );
+    console.log("✅ [Cron] Đã gửi hình (mock style, E2 xanh nhạt) từ Sheet vào group test!");
+  } catch (err) {
+    console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
+  }
+});
+
+       
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
    ======================================================= */
