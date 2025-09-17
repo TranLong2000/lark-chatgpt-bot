@@ -851,70 +851,134 @@ async function getTenantAccessToken() {
 }
 
 // ========= FETCH WOWBUY =========
+/* ==================================================
+   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
+   ================================================== */
+
+app.use(bodyParser.json());
+
+// ========= CONFIG =========
+const LARK_APP_ID = process.env.LARK_APP_ID;
+const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
+const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
+const LARK_TABLE_ID = "EmjelX"; // sheet id trong link bạn đưa
+
+const WOWBUY_LOGIN_URL = "https://report.wowbuy.ai/webroot/decision/login";
+const WOWBUY_REPORT_URL =
+  "https://report.wowbuy.ai/webroot/decision/view/report?_=1758086403690&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=1296&_paperHeight=516&__fit__=false";
+
+// ========= HELPER =========
+async function getTenantAccessToken() {
+  const resp = await axios.post(
+    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
+    {
+      app_id: LARK_APP_ID,
+      app_secret: LARK_APP_SECRET,
+    }
+  );
+  return resp.data.tenant_access_token;
+}
+
+// ========= PARSER =========
+function parseWOWBUY(html) {
+  console.log("📄 Report trả về HTML, parse với cheerio");
+  const $ = cheerio.load(html);
+  const table = $("table.x-table").first();
+  const rows = [];
+
+  table.find("tr").each((_, tr) => {
+    const row = [];
+    $(tr)
+      .find("td, th")
+      .each((_, cell) => {
+        const $cell = $(cell);
+        const style = $cell.attr("style") || "";
+        if (style.includes("display:none")) return; // bỏ hidden
+        row.push($cell.text().trim());
+      });
+    if (row.length > 0) rows.push(row);
+  });
+
+  return rows;
+}
+
+// ========= FETCH WOWBUY =========
 async function fetchWOWBUY() {
   console.log("⏳ Fetching WOWBUY data via axios login...");
 
   // 1️⃣ Login
-  const payload = {
-    username: process.env.WOWBUY_USERNAME,
-    password: process.env.WOWBUY_ENCRYPTED_PASSWORD || process.env.WOWBUY_PASSWORD,
-    validity: -2,
-    sliderToken: "",
-    origin: "",
-    encrypted: !!process.env.WOWBUY_ENCRYPTED_PASSWORD,
-  };
-
-  const loginResp = await axios.post(WOWBUY_LOGIN_URL, payload, {
-    headers: {
-      "accept": "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/json",
-      "origin": WOWBUY_BASE,
-      "referer": `${WOWBUY_BASE}/webroot/decision/login`,
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "x-requested-with": "XMLHttpRequest",
+  const loginResp = await axios.post(
+    WOWBUY_LOGIN_URL,
+    {
+      username: process.env.WOWBUY_USERNAME,
+      password: process.env.WOWBUY_PASSWORD,
+      validity: -2,
+      sliderToken: "",
+      origin: "",
+      encrypted: true,
     },
-    validateStatus: (s) => s < 500,
-  });
+    {
+      headers: { "Content-Type": "application/json" },
+      withCredentials: true,
+    }
+  );
 
   const cookies = loginResp.headers["set-cookie"];
-  if (!cookies || cookies.length === 0) {
-    throw new Error("Login failed, no cookies returned");
-  }
-  const cookieStr = cookies.map((c) => c.split(";")[0]).join("; ");
+  if (!cookies) throw new Error("Login failed: no cookies returned");
 
-  // 2️⃣ Lấy report với cookie
+  // 2️⃣ Gọi report
   const reportResp = await axios.get(WOWBUY_REPORT_URL, {
-    headers: {
-      cookie: cookieStr,
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "x-requested-with": "XMLHttpRequest",
-    },
-    responseType: "text",
-    validateStatus: (s) => s < 500,
+    headers: { Cookie: cookies.join("; ") },
   });
 
-  const ct = (reportResp.headers["content-type"] || "").toLowerCase();
-  let tableData = [];
-
-  if (ct.includes("application/json")) {
-    console.log("📦 Report trả về JSON");
-    const data = typeof reportResp.data === "string" ? JSON.parse(reportResp.data) : reportResp.data;
-    tableData = data.rows || [];
-  } else {
-    console.log("📄 Report trả về HTML, parse với cheerio");
-    const $ = cheerio.load(reportResp.data);
-    $("table tr").each((i, tr) => {
-      const row = [];
-      $(tr)
-        .find("td, th")
-        .each((j, td) => row.push($(td).text().trim()));
-      if (row.length > 0) tableData.push(row);
-    });
-  }
+  // 3️⃣ Parse HTML table
+  const tableData = parseWOWBUY(reportResp.data);
 
   console.log(`✅ Parsed WOWBUY rows: ${tableData.length}`);
   return tableData;
 }
+
+// ========= WRITE TO LARK =========
+async function writeToLark(tableData) {
+  if (!tableData || tableData.length === 0) {
+    console.warn("⚠️ Không có dữ liệu để ghi");
+    return;
+  }
+
+  const token = await getTenantAccessToken();
+  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
+
+  const body = {
+    valueRange: {
+      range: `${LARK_TABLE_ID}!J1`,
+      values: tableData,
+    },
+  };
+
+  await axios.put(url, body, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
+}
+
+// ========= CRON JOB =========
+cron.schedule("*/5 * * * *", async () => {
+  try {
+    const data = await fetchWOWBUY();
+    await writeToLark(data);
+  } catch (err) {
+    console.error("❌ Job failed:", err.message);
+  }
+});
+
+app.listen(3000, () => {
+  console.log("🚀 Bot running on port 3000");
+});
+
 
 // ========= WRITE TO LARK =========
 async function writeToLark(tableData) {
