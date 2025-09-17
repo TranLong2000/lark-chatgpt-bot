@@ -849,11 +849,15 @@ async function getTenantAccessToken() {
   return resp.data.tenant_access_token;
 }
 
-// Login Wowbuy + fetch report data
+// Lấy dữ liệu từ WOWBUY bằng Puppeteer
 async function fetchWOWBUY() {
   console.log("⏳ Fetching WOWBUY data via Puppeteer...");
 
-  const browser = await puppeteer.launch({ headless: true });
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"], // ✅ fix lỗi root
+  });
+
   const page = await browser.newPage();
 
   // Set user agent chuẩn
