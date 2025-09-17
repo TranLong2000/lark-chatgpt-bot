@@ -821,7 +821,7 @@ cron.schedule("0 18 * * *", async () => {
 });
 
 /* ==================================================
-   SECTION API TEST — Đổ số từ Reportinh
+   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
    ================================================== */
 
 app.use(bodyParser.json());
@@ -832,21 +832,9 @@ const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
 const LARK_TABLE_ID = "EmjelX"; // sheet id trong link bạn đưa
 
-// URL và headers lấy từ curl WOWBUY
-const WOWBUY_URL =
+const WOWBUY_LOGIN_URL = "https://report.wowbuy.ai/login";
+const WOWBUY_REPORT_URL =
   "https://report.wowbuy.ai/webroot/decision/view/report?_=1758086403690&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=1296&_paperHeight=516&__fit__=false";
-
-const WOWBUY_HEADERS = {
-  accept: "text/html, */*; q=0.01",
-  "accept-language": "vi-VN,vi;q=0.9,en;q=0.8",
-  authorization:
-    "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTI5MjIxOSwiaWF0IjoxNzU4MDg2MjUxLCJqdGkiOiJqdmMyeW03UWZPb2hDV0xPcWpYSVNVT1JzKzNrZmdBNFZYSEdTaFhJRVBJQzMrSS8ifQ.CVlEcySlW9SRMosl8eJoTq49zqddED8FVNkrlWyz9m8",
-  cookie:
-    "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; last_login_info=true; sessionid=6c175ec8-4cca-4e24-ba82-b574a0ce96e6",
-  "user-agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-  "x-requested-with": "XMLHttpRequest",
-};
 
 // ========= HELPER =========
 async function getTenantAccessToken() {
@@ -860,30 +848,43 @@ async function getTenantAccessToken() {
   return resp.data.tenant_access_token;
 }
 
-// Lấy dữ liệu từ WOWBUY
+// Login Wowbuy + fetch report data
 async function fetchWOWBUY() {
-  console.log("⏳ Fetching WOWBUY data...");
-  const resp = await axios.get(WOWBUY_URL, { headers: WOWBUY_HEADERS });
-  const html = resp.data;
+  console.log("⏳ Fetching WOWBUY data via Puppeteer...");
 
-  // 👉 Thay vì ghi file, log ra 1000 ký tự đầu
-  console.log("=== DEBUG HTML START ===");
-  console.log(html.slice(0, 1000));  // bạn có thể tăng lên nếu cần
-  console.log("=== DEBUG HTML END ===");
+  const browser = await puppeteer.launch({ headless: true });
+  const page = await browser.newPage();
 
-  // Parse thử table
-  const $ = cheerio.load(html);
-  const tableData = [];
-  $("table tr").each((i, row) => {
-    const rowData = [];
-    $(row)
-      .find("td,th")
-      .each((j, cell) => {
-        rowData.push($(cell).text().trim());
-      });
-    if (rowData.length > 0) tableData.push(rowData);
+  // Set user agent chuẩn
+  await page.setUserAgent(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+  );
+
+  // 1️⃣ Login
+  await page.goto(WOWBUY_LOGIN_URL, { waitUntil: "networkidle0" });
+
+  await page.type("#username", process.env.WOWBUY_USERNAME);
+  await page.type("#password", process.env.WOWBUY_PASSWORD);
+  await page.click("#login-button");
+
+  // Chờ login xong
+  await page.waitForNavigation({ waitUntil: "networkidle0" });
+
+  // 2️⃣ Vào report
+  await page.goto(WOWBUY_REPORT_URL, { waitUntil: "networkidle0" });
+
+  // 3️⃣ Lấy table data
+  const tableData = await page.evaluate(() => {
+    const rows = [];
+    document.querySelectorAll("table tr").forEach((tr) => {
+      const row = [];
+      tr.querySelectorAll("td, th").forEach((td) => row.push(td.innerText.trim()));
+      if (row.length > 0) rows.push(row);
+    });
+    return rows;
   });
 
+  await browser.close();
   console.log(`✅ Parsed WOWBUY rows: ${tableData.length}`);
   return tableData;
 }
@@ -915,7 +916,7 @@ async function writeToLark(tableData) {
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
 }
 
-// Job cron 5 phút
+// Cron job 5 phút
 cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
@@ -928,7 +929,6 @@ cron.schedule("*/5 * * * *", async () => {
 app.listen(3000, () => {
   console.log("🚀 Bot running on port 3000");
 });
-
 
        
 /* =======================================================
@@ -1133,8 +1133,8 @@ app.post('/webhook',
 
             const formattedHistory = memory.map(m => ({ role: m.role, content: m.content }));
             const systemPrompt = `Bạn là L-GPT, trợ lý AI thân thiện. 
-Luôn gọi người dùng là "${mentionUserName}", 
-không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự nhiên.`;
+            Luôn gọi người dùng là "${mentionUserName}", 
+            không bao giờ dùng user1, user2... Trả lời ngắn gọn, rõ ràng, tự nhiên.`;
 
             let assistantMessage = 'Xin lỗi, tôi gặp sự cố khi xử lý yêu cầu của bạn.';
             console.log('[AI] 🚀 Calling model for message:', messageId);
