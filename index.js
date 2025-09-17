@@ -869,12 +869,16 @@ async function fetchWOWBUY() {
   await page.waitForSelector('input[placeholder="Password"]', { timeout: 30000 });
   await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
 
-  // 3️⃣ Click Login
-  await page.waitForSelector('button, input[type="submit"]', { timeout: 30000 });
-  await page.click('button, input[type="submit"]');
+   // 3️⃣ Click Login
+   await page.waitForSelector('button, input[type="submit"]', { timeout: 30000 });
+   await page.click('button, input[type="submit"]');
+   
+   // 4️⃣ Chờ trang đổi trạng thái (form login biến mất hoặc table xuất hiện)
+   await page.waitForSelector('input[placeholder="Username"]', { hidden: true, timeout: 60000 })
+     .catch(() => console.log("⚠️ Username input vẫn còn, có thể login chưa thành công"));
+   
+   await page.waitForSelector('table, .report-container', { timeout: 60000 });
 
-  // 4️⃣ Chờ điều hướng
-  await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 });
 
   // 5️⃣ Truy cập report page
   await page.goto(WOWBUY_REPORT_URL, { waitUntil: "networkidle2" });
