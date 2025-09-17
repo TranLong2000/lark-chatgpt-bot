@@ -822,7 +822,7 @@ cron.schedule("0 18 * * *", async () => {
 });
 
 /* ==================================================
-   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
+   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet (axios login)
    ================================================== */
 
 app.use(bodyParser.json());
@@ -833,9 +833,10 @@ const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
 const LARK_TABLE_ID = "EmjelX"; // sheet id trong link bạn đưa
 
-const WOWBUY_LOGIN_URL = "https://report.wowbuy.ai/webroot/decision/login";
+const WOWBUY_BASE = "https://report.wowbuy.ai";
+const WOWBUY_LOGIN_URL = `${WOWBUY_BASE}/webroot/decision/login`;
 const WOWBUY_REPORT_URL =
-  "https://report.wowbuy.ai/webroot/decision/view/report?_=1758086403690&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=1296&_paperHeight=516&__fit__=false";
+  `${WOWBUY_BASE}/webroot/decision/view/report?_=1758086403690&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=1296&_paperHeight=516&__fit__=false`;
 
 // ========= HELPER =========
 async function getTenantAccessToken() {
@@ -851,57 +852,71 @@ async function getTenantAccessToken() {
 
 // ========= FETCH WOWBUY =========
 async function fetchWOWBUY() {
-  console.log("⏳ Fetching WOWBUY data via Puppeteer...");
+  console.log("⏳ Fetching WOWBUY data via axios login...");
 
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  // 1️⃣ Login
+  const payload = {
+    username: process.env.WOWBUY_USERNAME,
+    password: process.env.WOWBUY_ENCRYPTED_PASSWORD || process.env.WOWBUY_PASSWORD,
+    validity: -2,
+    sliderToken: "",
+    origin: "",
+    encrypted: !!process.env.WOWBUY_ENCRYPTED_PASSWORD,
+  };
+
+  const loginResp = await axios.post(WOWBUY_LOGIN_URL, payload, {
+    headers: {
+      "accept": "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/json",
+      "origin": WOWBUY_BASE,
+      "referer": `${WOWBUY_BASE}/webroot/decision/login`,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
+    },
+    validateStatus: (s) => s < 500,
   });
 
-  const page = await browser.newPage();
-  await page.goto(WOWBUY_LOGIN_URL, { waitUntil: "networkidle2" });
+  const cookies = loginResp.headers["set-cookie"];
+  if (!cookies || cookies.length === 0) {
+    throw new Error("Login failed, no cookies returned");
+  }
+  const cookieStr = cookies.map((c) => c.split(";")[0]).join("; ");
 
-  // 1️⃣ Điền Username
-  await page.waitForSelector('input[placeholder="Username"]', { timeout: 30000 });
-  await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
+  // 2️⃣ Lấy report với cookie
+  const reportResp = await axios.get(WOWBUY_REPORT_URL, {
+    headers: {
+      cookie: cookieStr,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
+    },
+    responseType: "text",
+    validateStatus: (s) => s < 500,
+  });
 
-  // 2️⃣ Điền Password
-  await page.waitForSelector('input[placeholder="Password"]', { timeout: 30000 });
-  await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
+  const ct = (reportResp.headers["content-type"] || "").toLowerCase();
+  let tableData = [];
 
-   // 3️⃣ Click Login
-   await page.waitForSelector('button, input[type="submit"]', { timeout: 30000 });
-   await page.click('button, input[type="submit"]');
-   
-   // 4️⃣ Chờ trang đổi trạng thái (form login biến mất hoặc table xuất hiện)
-   await page.waitForSelector('input[placeholder="Username"]', { hidden: true, timeout: 60000 })
-     .catch(() => console.log("⚠️ Username input vẫn còn, có thể login chưa thành công"));
-   
-   await page.waitForSelector('table, .report-container', { timeout: 60000 });
-
-
-  // 5️⃣ Truy cập report page
-  await page.goto(WOWBUY_REPORT_URL, { waitUntil: "networkidle2" });
-
-  // 6️⃣ Lấy dữ liệu table
-  const tableData = await page.evaluate(() => {
-    const rows = [];
-    document.querySelectorAll("table tr").forEach((tr) => {
+  if (ct.includes("application/json")) {
+    console.log("📦 Report trả về JSON");
+    const data = typeof reportResp.data === "string" ? JSON.parse(reportResp.data) : reportResp.data;
+    tableData = data.rows || [];
+  } else {
+    console.log("📄 Report trả về HTML, parse với cheerio");
+    const $ = cheerio.load(reportResp.data);
+    $("table tr").each((i, tr) => {
       const row = [];
-      tr.querySelectorAll("td, th").forEach((td) => {
-        row.push(td.innerText.trim());
-      });
-      if (row.length > 0) rows.push(row);
+      $(tr)
+        .find("td, th")
+        .each((j, td) => row.push($(td).text().trim()));
+      if (row.length > 0) tableData.push(row);
     });
-    return rows;
-  });
+  }
 
-  await browser.close();
   console.log(`✅ Parsed WOWBUY rows: ${tableData.length}`);
   return tableData;
 }
 
-// Ghi data vào Lark Sheet
+// ========= WRITE TO LARK =========
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) {
     console.warn("⚠️ Không có dữ liệu để ghi");
@@ -928,7 +943,7 @@ async function writeToLark(tableData) {
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
 }
 
-// Cron job 5 phút
+// ========= CRON JOB =========
 cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
