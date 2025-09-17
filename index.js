@@ -2,6 +2,12 @@
 // index.js — L-GPT (Lark)
 // =========================
 
+// Polyfill cho File / Blob / FormData trên Node <18
+const { File, FormData, Blob } = require("formdata-node");
+global.File = File;
+global.FormData = FormData;
+global.Blob = Blob;
+
 /* ===== Core deps ===== */
 const express = require('express');
 const crypto = require('crypto');
@@ -19,9 +25,6 @@ const { createCanvas, registerFont } = require("canvas");
 const FormData = require("form-data");
 const cheerio = require("cheerio");
 require('dotenv').config();
-// Polyfill File / FormData cho Node cũ
-require("formdata-polyfill");
-
 
 /* ===== App boot ===== */
 const app = express();
