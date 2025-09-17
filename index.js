@@ -824,7 +824,6 @@ cron.schedule("0 18 * * *", async () => {
    SECTION API TEST — Đổ số từ Reportinh
    ================================================== */
 
-const app = express();
 app.use(bodyParser.json());
 
 // ========= CONFIG =========
