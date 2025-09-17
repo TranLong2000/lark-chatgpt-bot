@@ -866,22 +866,27 @@ async function fetchWOWBUY() {
   );
 
   // 1️⃣ Login
-   // 1. Mở trang login
-   await page.goto(WOWBUY_LOGIN_URL, { waitUntil: "networkidle0" });
-   
-   // 2. Đợi các ô input render
-   await page.waitForSelector('input[placeholder="Username"]');
-   await page.waitForSelector('input[placeholder="Password"]');
-   
-   // 3. Điền username + password
-   await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
-   await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
-   
-   // 4. Click nút Login
-   await page.click('button');   // nếu có nhiều nút button thì refine thêm: ví dụ button:has-text("Login")
-   
-   // 5. Chờ login xong
-   await page.waitForNavigation({ waitUntil: "networkidle0" });
+// 1. Vào trang login
+await page.goto(WOWBUY_LOGIN_URL, { waitUntil: "networkidle2" });
+
+// 2. Đợi input
+await page.waitForSelector('input[placeholder="Username"]');
+await page.waitForSelector('input[placeholder="Password"]');
+
+// 3. Điền user/pass
+await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
+await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
+
+// 4. Click nút Login (theo text)
+const [loginBtn] = await page.$x("//div[contains(., 'Login')]");
+if (loginBtn) {
+  await loginBtn.click();
+} else {
+  throw new Error("Không tìm thấy nút Login");
+}
+
+// 5. Chờ điều hướng
+await page.waitForNavigation({ waitUntil: "networkidle2" });
 
   // 2️⃣ Vào report
   await page.goto(WOWBUY_REPORT_URL, { waitUntil: "networkidle0" });
