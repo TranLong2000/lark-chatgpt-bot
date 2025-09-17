@@ -866,9 +866,10 @@ async function fetchWOWBUY() {
   const resp = await axios.get(WOWBUY_URL, { headers: WOWBUY_HEADERS });
   const html = resp.data;
 
-  // Ghi ra file debug.html để check
-  fs.writeFileSync("debug.html", html);
-  console.log("✅ Saved debug.html (mở để kiểm tra nội dung)");
+  // 👉 Thay vì ghi file, log ra 1000 ký tự đầu
+  console.log("=== DEBUG HTML START ===");
+  console.log(html.slice(0, 1000));  // bạn có thể tăng lên nếu cần
+  console.log("=== DEBUG HTML END ===");
 
   // Parse thử table
   const $ = cheerio.load(html);
