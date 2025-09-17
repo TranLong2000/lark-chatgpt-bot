@@ -24,6 +24,7 @@
     "node-cron": "^3.0.3",
     "cheerio": "^1.0.0-rc.12",
     "formdata-node": "^6.0.0",
+    "crypto-js": "^4.2.0",
     "puppeteer": "^22.0.0"
   }
 }
