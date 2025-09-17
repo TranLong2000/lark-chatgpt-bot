@@ -22,7 +22,6 @@ const moment = require('moment-timezone');
 const QuickChart = require('quickchart-js');
 const cron = require('node-cron');
 const { createCanvas, registerFont } = require("canvas");
-const FormData = require("form-data");
 const cheerio = require("cheerio");
 require('dotenv').config();
 
