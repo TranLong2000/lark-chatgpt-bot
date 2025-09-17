@@ -852,7 +852,6 @@ async function getTenantAccessToken() {
 }
 
 function encryptPassword(password) {
-  // WOWBUY đang expect Base64 (theo curl bạn gửi)
   return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(password));
 }
 
@@ -864,26 +863,27 @@ async function fetchWOWBUY() {
     // 1️⃣ Login
     const loginResp = await axios.post(
       WOWBUY_LOGIN_URL,
-      {
-        username: process.env.WOWBUY_USERNAME,
-        password: encryptPassword(process.env.WOWBUY_PASSWORD),
-        validity: -2,
-        sliderToken: "",
-        origin: "",
-        encrypted: true,
-      },
+      new URLSearchParams({
+        fine_username: process.env.WOWBUY_USERNAME,
+        fine_password: process.env.WOWBUY_PASSWORD, // plain password
+        validPwd: "true",
+      }),
       {
         headers: {
-          "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "Mozilla/5.0",
         },
+        maxRedirects: 0,
+        validateStatus: (status) => status < 500,
       }
     );
 
-    if (!loginResp.data) throw new Error("Login thất bại (không có response)");
+    const rawCookies = loginResp.headers["set-cookie"];
+    if (!rawCookies) throw new Error("Login thất bại (không có cookie)");
 
-    const fine_auth_token = loginResp.data.token;
-    const cookie = loginResp.headers["set-cookie"]?.join("; ") || "";
+    const cookies = rawCookies.map((c) => c.split(";")[0]).join("; ");
+    const fineAuth = cookies.match(/fine_auth_token=([^;]+)/);
+    const fine_auth_token = fineAuth ? fineAuth[1] : null;
 
     if (!fine_auth_token) throw new Error("Login thất bại (không có token)");
 
@@ -906,7 +906,8 @@ async function fetchWOWBUY() {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
           Authorization: `Bearer ${fine_auth_token}`,
-          Cookie: cookie,
+          Cookie: cookies,
+          "User-Agent": "Mozilla/5.0",
           "X-Requested-With": "XMLHttpRequest",
         },
       }
@@ -976,11 +977,9 @@ cron.schedule("*/5 * * * *", async () => {
   }
 });
 
-// ========= Start server =========
 app.listen(3000, () => {
   console.log("🚀 Bot running on port 3000");
 });
-
 
        
 /* =======================================================
