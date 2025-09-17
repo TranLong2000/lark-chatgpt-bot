@@ -822,7 +822,7 @@ cron.schedule("0 18 * * *", async () => {
 });
 
 /* ==================================================
-   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet (axios login)
+   FULL BOT — WOWBUY → Lark Sheet
    ================================================== */
 
 app.use(bodyParser.json());
@@ -831,37 +831,7 @@ app.use(bodyParser.json());
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-const LARK_TABLE_ID = "EmjelX"; // sheet id trong link bạn đưa
-
-const WOWBUY_BASE = "https://report.wowbuy.ai";
-const WOWBUY_LOGIN_URL = `${WOWBUY_BASE}/webroot/decision/login`;
-const WOWBUY_REPORT_URL =
-  `${WOWBUY_BASE}/webroot/decision/view/report?_=1758086403690&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=1296&_paperHeight=516&__fit__=false`;
-
-// ========= HELPER =========
-async function getTenantAccessToken() {
-  const resp = await axios.post(
-    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
-    {
-      app_id: LARK_APP_ID,
-      app_secret: LARK_APP_SECRET,
-    }
-  );
-  return resp.data.tenant_access_token;
-}
-
-// ========= FETCH WOWBUY =========
-/* ==================================================
-   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
-   ================================================== */
-
-app.use(bodyParser.json());
-
-// ========= CONFIG =========
-const LARK_APP_ID = process.env.LARK_APP_ID;
-const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
-const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-const LARK_TABLE_ID = "EmjelX"; // sheet id trong link bạn đưa
+const LARK_TABLE_ID = "EmjelX";
 
 const WOWBUY_LOGIN_URL = "https://report.wowbuy.ai/webroot/decision/login";
 const WOWBUY_REPORT_URL =
@@ -879,27 +849,9 @@ async function getTenantAccessToken() {
   return resp.data.tenant_access_token;
 }
 
-// ========= PARSER =========
-function parseWOWBUY(html) {
-  console.log("📄 Report trả về HTML, parse với cheerio");
-  const $ = cheerio.load(html);
-  const table = $("table.x-table").first();
-  const rows = [];
-
-  table.find("tr").each((_, tr) => {
-    const row = [];
-    $(tr)
-      .find("td, th")
-      .each((_, cell) => {
-        const $cell = $(cell);
-        const style = $cell.attr("style") || "";
-        if (style.includes("display:none")) return; // bỏ hidden
-        row.push($cell.text().trim());
-      });
-    if (row.length > 0) rows.push(row);
-  });
-
-  return rows;
+// Hàm encode password giống browser (Base64)
+function encodePassword(rawPassword) {
+  return Buffer.from(rawPassword).toString("base64");
 }
 
 // ========= FETCH WOWBUY =========
@@ -907,78 +859,59 @@ async function fetchWOWBUY() {
   console.log("⏳ Fetching WOWBUY data via axios login...");
 
   // 1️⃣ Login
-  const loginResp = await axios.post(
-    WOWBUY_LOGIN_URL,
-    {
-      username: process.env.WOWBUY_USERNAME,
-      password: process.env.WOWBUY_PASSWORD,
-      validity: -2,
-      sliderToken: "",
-      origin: "",
-      encrypted: true,
+  const loginPayload = {
+    username: process.env.WOWBUY_USERNAME,
+    password: encodePassword(process.env.WOWBUY_PASSWORD),
+    validity: -2,
+    sliderToken: "",
+    origin: "",
+    encrypted: true,
+  };
+
+  const loginResp = await axios.post(WOWBUY_LOGIN_URL, loginPayload, {
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
     },
-    {
-      headers: { "Content-Type": "application/json" },
-      withCredentials: true,
-    }
-  );
-
-  const cookies = loginResp.headers["set-cookie"];
-  if (!cookies) throw new Error("Login failed: no cookies returned");
-
-  // 2️⃣ Gọi report
-  const reportResp = await axios.get(WOWBUY_REPORT_URL, {
-    headers: { Cookie: cookies.join("; ") },
+    withCredentials: true,
   });
 
+  // Lấy cookie từ response
+  const setCookie = loginResp.headers["set-cookie"];
+  if (!setCookie) throw new Error("Login failed: no cookie returned");
+  const cookieHeader = setCookie.map((c) => c.split(";")[0]).join("; ");
+
+  // 2️⃣ Lấy report
+  const reportResp = await axios.get(WOWBUY_REPORT_URL, {
+    headers: {
+      Cookie: cookieHeader,
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      Accept: "text/html, */*; q=0.01",
+    },
+  });
+
+  const html = reportResp.data;
+  console.log("📄 Report trả về HTML, parse với cheerio");
+
   // 3️⃣ Parse HTML table
-  const tableData = parseWOWBUY(reportResp.data);
+  const $ = cheerio.load(html);
+  const tableData = [];
+  $("table tr").each((i, row) => {
+    const rowData = [];
+    $(row)
+      .find("td,th")
+      .each((j, cell) => {
+        rowData.push($(cell).text().trim());
+      });
+    if (rowData.length > 0) tableData.push(rowData);
+  });
 
   console.log(`✅ Parsed WOWBUY rows: ${tableData.length}`);
   return tableData;
 }
-
-// ========= WRITE TO LARK =========
-async function writeToLark(tableData) {
-  if (!tableData || tableData.length === 0) {
-    console.warn("⚠️ Không có dữ liệu để ghi");
-    return;
-  }
-
-  const token = await getTenantAccessToken();
-  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
-
-  const body = {
-    valueRange: {
-      range: `${LARK_TABLE_ID}!J1`,
-      values: tableData,
-    },
-  };
-
-  await axios.put(url, body, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-  });
-
-  console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
-}
-
-// ========= CRON JOB =========
-cron.schedule("*/5 * * * *", async () => {
-  try {
-    const data = await fetchWOWBUY();
-    await writeToLark(data);
-  } catch (err) {
-    console.error("❌ Job failed:", err.message);
-  }
-});
-
-app.listen(3000, () => {
-  console.log("🚀 Bot running on port 3000");
-});
-
 
 // ========= WRITE TO LARK =========
 async function writeToLark(tableData) {
