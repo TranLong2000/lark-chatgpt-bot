@@ -833,7 +833,7 @@ const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
 const LARK_TABLE_ID = "EmjelX"; // sheet id trong link bạn đưa
 
-const WOWBUY_LOGIN_URL = "https://report.wowbuy.ai/login";
+const WOWBUY_LOGIN_URL = "https://report.wowbuy.ai/webroot/decision/login";
 const WOWBUY_REPORT_URL =
   "https://report.wowbuy.ai/webroot/decision/view/report?_=1758086403690&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=1296&_paperHeight=516&__fit__=false";
 
