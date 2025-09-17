@@ -19,6 +19,9 @@ const { createCanvas, registerFont } = require("canvas");
 const FormData = require("form-data");
 const cheerio = require("cheerio");
 require('dotenv').config();
+// Polyfill File / FormData cho Node cũ
+require("formdata-polyfill");
+
 
 /* ===== App boot ===== */
 const app = express();
