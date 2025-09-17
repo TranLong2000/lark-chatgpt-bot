@@ -25,6 +25,8 @@ const { createCanvas, registerFont } = require("canvas");
 const cheerio = require("cheerio");
 const bodyParser = require("body-parser");
 const puppeteer = require('puppeteer');
+const qs = require("qs");
+const CryptoJS = require("crypto-js");
 require('dotenv').config();
 
 /* ===== App boot ===== */
@@ -822,7 +824,7 @@ cron.schedule("0 18 * * *", async () => {
 });
 
 /* ==================================================
-   FULL BOT — WOWBUY → Lark Sheet
+   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
    ================================================== */
 
 app.use(bodyParser.json());
@@ -831,11 +833,11 @@ app.use(bodyParser.json());
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-const LARK_TABLE_ID = "EmjelX";
+const LARK_TABLE_ID = "EmjelX"; // sheet id
 
 const WOWBUY_LOGIN_URL = "https://report.wowbuy.ai/webroot/decision/login";
 const WOWBUY_REPORT_URL =
-  "https://report.wowbuy.ai/webroot/decision/view/report?_=1758086403690&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=1296&_paperHeight=516&__fit__=false";
+  "https://report.wowbuy.ai/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d";
 
 // ========= HELPER =========
 async function getTenantAccessToken() {
@@ -849,71 +851,95 @@ async function getTenantAccessToken() {
   return resp.data.tenant_access_token;
 }
 
-// Hàm encode password giống browser (Base64)
-function encodePassword(rawPassword) {
-  return Buffer.from(rawPassword).toString("base64");
+function encryptPassword(password) {
+  // WOWBUY đang expect Base64 (theo curl bạn gửi)
+  return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(password));
 }
 
 // ========= FETCH WOWBUY =========
 async function fetchWOWBUY() {
-  console.log("⏳ Fetching WOWBUY data via axios login...");
+  try {
+    console.log("⏳ Fetching WOWBUY data via axios login...");
 
-  // 1️⃣ Login
-  const loginPayload = {
-    username: process.env.WOWBUY_USERNAME,
-    password: encodePassword(process.env.WOWBUY_PASSWORD),
-    validity: -2,
-    sliderToken: "",
-    origin: "",
-    encrypted: true,
-  };
+    // 1️⃣ Login
+    const loginResp = await axios.post(
+      WOWBUY_LOGIN_URL,
+      {
+        username: process.env.WOWBUY_USERNAME,
+        password: encryptPassword(process.env.WOWBUY_PASSWORD),
+        validity: -2,
+        sliderToken: "",
+        origin: "",
+        encrypted: true,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      }
+    );
 
-  const loginResp = await axios.post(WOWBUY_LOGIN_URL, loginPayload, {
-    headers: {
-      "Content-Type": "application/json",
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "x-requested-with": "XMLHttpRequest",
-    },
-    withCredentials: true,
-  });
+    if (!loginResp.data) throw new Error("Login thất bại (không có response)");
 
-  // Lấy cookie từ response
-  const setCookie = loginResp.headers["set-cookie"];
-  if (!setCookie) throw new Error("Login failed: no cookie returned");
-  const cookieHeader = setCookie.map((c) => c.split(";")[0]).join("; ");
+    const fine_auth_token = loginResp.data.token;
+    const cookie = loginResp.headers["set-cookie"]?.join("; ") || "";
 
-  // 2️⃣ Lấy report
-  const reportResp = await axios.get(WOWBUY_REPORT_URL, {
-    headers: {
-      Cookie: cookieHeader,
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      Accept: "text/html, */*; q=0.01",
-    },
-  });
+    if (!fine_auth_token) throw new Error("Login thất bại (không có token)");
 
-  const html = reportResp.data;
-  console.log("📄 Report trả về HTML, parse với cheerio");
+    console.log("✅ Login OK, có token");
 
-  // 3️⃣ Parse HTML table
-  const $ = cheerio.load(html);
-  const tableData = [];
-  $("table tr").each((i, row) => {
-    const rowData = [];
-    $(row)
-      .find("td,th")
-      .each((j, cell) => {
-        rowData.push($(cell).text().trim());
-      });
-    if (rowData.length > 0) tableData.push(rowData);
-  });
+    // 2️⃣ Lấy report
+    const params = {
+      SALE_STATUS: ["1"],
+      WH: [],
+      SKUSN: [],
+      SD: "2025-08-18",
+      ED: "2025-09-17",
+      SN: "",
+    };
 
-  console.log(`✅ Parsed WOWBUY rows: ${tableData.length}`);
-  return tableData;
+    const reportResp = await axios.post(
+      WOWBUY_REPORT_URL,
+      `__parameters__=${encodeURIComponent(JSON.stringify(params))}`,
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+          Authorization: `Bearer ${fine_auth_token}`,
+          Cookie: cookie,
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      }
+    );
+
+    if (!reportResp.data) {
+      console.log("⚠️ Không có dữ liệu report");
+      return [];
+    }
+
+    console.log("📄 Report trả về HTML, parse với cheerio");
+
+    const $ = cheerio.load(reportResp.data);
+    const rows = [];
+    $("table tr").each((_, tr) => {
+      const row = [];
+      $(tr)
+        .find("td, th")
+        .each((_, td) => {
+          row.push($(td).text().trim());
+        });
+      if (row.length > 0) rows.push(row);
+    });
+
+    console.log(`✅ Parsed WOWBUY rows: ${rows.length}`);
+    return rows;
+  } catch (err) {
+    console.error("❌ fetchWOWBUY error:", err.message);
+    return [];
+  }
 }
 
-// ========= WRITE TO LARK =========
+// ========= Ghi data vào Lark Sheet =========
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) {
     console.warn("⚠️ Không có dữ liệu để ghi");
@@ -940,7 +966,7 @@ async function writeToLark(tableData) {
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
 }
 
-// ========= CRON JOB =========
+// ========= Cron job 5 phút =========
 cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
@@ -950,9 +976,11 @@ cron.schedule("*/5 * * * *", async () => {
   }
 });
 
+// ========= Start server =========
 app.listen(3000, () => {
   console.log("🚀 Bot running on port 3000");
 });
+
 
        
 /* =======================================================
