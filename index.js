@@ -24,6 +24,7 @@ const cron = require('node-cron');
 const { createCanvas, registerFont } = require("canvas");
 const cheerio = require("cheerio");
 const bodyParser = require("body-parser");
+const puppeteer = require('puppeteer');
 require('dotenv').config();
 
 /* ===== App boot ===== */
