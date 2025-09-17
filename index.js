@@ -861,20 +861,25 @@ async function fetchWOWBUY() {
   const page = await browser.newPage();
   await page.goto(WOWBUY_LOGIN_URL, { waitUntil: "networkidle2" });
 
-  // 1️⃣ Điền username/password
-  await page.getByPlaceholder("Username").fill(process.env.WOWBUY_USERNAME);
-  await page.getByPlaceholder("Password").fill(process.env.WOWBUY_PASSWORD);
+  // 1️⃣ Điền Username
+  await page.waitForSelector('input[placeholder="Username"]', { timeout: 30000 });
+  await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
 
-  // 2️⃣ Click nút Login
-  await page.getByText("Login").click();
+  // 2️⃣ Điền Password
+  await page.waitForSelector('input[placeholder="Password"]', { timeout: 30000 });
+  await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
 
-  // 3️⃣ Chờ điều hướng xong
-  await page.waitForNavigation({ waitUntil: "networkidle2" });
+  // 3️⃣ Click Login
+  await page.waitForSelector('button, input[type="submit"]', { timeout: 30000 });
+  await page.click('button, input[type="submit"]');
 
-  // 4️⃣ Vào trang report
+  // 4️⃣ Chờ điều hướng
+  await page.waitForNavigation({ waitUntil: "networkidle2", timeout: 60000 });
+
+  // 5️⃣ Truy cập report page
   await page.goto(WOWBUY_REPORT_URL, { waitUntil: "networkidle2" });
 
-  // 5️⃣ Parse table
+  // 6️⃣ Lấy dữ liệu table
   const tableData = await page.evaluate(() => {
     const rows = [];
     document.querySelectorAll("table tr").forEach((tr) => {
