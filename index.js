@@ -849,54 +849,39 @@ async function getTenantAccessToken() {
   return resp.data.tenant_access_token;
 }
 
-// Lấy dữ liệu từ WOWBUY bằng Puppeteer
+// ========= FETCH WOWBUY =========
 async function fetchWOWBUY() {
   console.log("⏳ Fetching WOWBUY data via Puppeteer...");
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"], // ✅ fix lỗi root
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
   });
 
   const page = await browser.newPage();
+  await page.goto(WOWBUY_LOGIN_URL, { waitUntil: "networkidle2" });
 
-  // Set user agent chuẩn
-  await page.setUserAgent(
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-  );
+  // 1️⃣ Điền username/password
+  await page.getByPlaceholder("Username").fill(process.env.WOWBUY_USERNAME);
+  await page.getByPlaceholder("Password").fill(process.env.WOWBUY_PASSWORD);
 
-  // 1️⃣ Login
-// 1. Vào trang login
-await page.goto(WOWBUY_LOGIN_URL, { waitUntil: "networkidle2" });
+  // 2️⃣ Click nút Login
+  await page.getByText("Login").click();
 
-// 2. Đợi input
-await page.waitForSelector('input[placeholder="Username"]');
-await page.waitForSelector('input[placeholder="Password"]');
+  // 3️⃣ Chờ điều hướng xong
+  await page.waitForNavigation({ waitUntil: "networkidle2" });
 
-// 3. Điền user/pass
-await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
-await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
+  // 4️⃣ Vào trang report
+  await page.goto(WOWBUY_REPORT_URL, { waitUntil: "networkidle2" });
 
-// 4. Click nút Login (theo text)
-const [loginBtn] = await page.$x("//div[contains(., 'Login')]");
-if (loginBtn) {
-  await loginBtn.click();
-} else {
-  throw new Error("Không tìm thấy nút Login");
-}
-
-// 5. Chờ điều hướng
-await page.waitForNavigation({ waitUntil: "networkidle2" });
-
-  // 2️⃣ Vào report
-  await page.goto(WOWBUY_REPORT_URL, { waitUntil: "networkidle0" });
-
-  // 3️⃣ Lấy table data
+  // 5️⃣ Parse table
   const tableData = await page.evaluate(() => {
     const rows = [];
     document.querySelectorAll("table tr").forEach((tr) => {
       const row = [];
-      tr.querySelectorAll("td, th").forEach((td) => row.push(td.innerText.trim()));
+      tr.querySelectorAll("td, th").forEach((td) => {
+        row.push(td.innerText.trim());
+      });
       if (row.length > 0) rows.push(row);
     });
     return rows;
