@@ -875,20 +875,16 @@ async function fetchWOWBUY() {
         headers: {
           "Content-Type": "application/json",
           "X-Requested-With": "XMLHttpRequest",
-          "User-Agent": "Mozilla/5.0",
         },
       }
     );
 
-    const rawCookies = loginResp.headers["set-cookie"];
-    if (!rawCookies || rawCookies.length === 0) {
-      throw new Error("Login thất bại (không có cookie)");
-    }
+    const cookie = loginResp.headers["set-cookie"]?.join("; ") || "";
+    if (!cookie) throw new Error("Login thất bại (không có cookie)");
 
-    const cookies = rawCookies.map((c) => c.split(";")[0]).join("; ");
     console.log("✅ Login OK, có cookie session");
 
-    // 2️⃣ Lấy report (dùng cookie, KHÔNG cần token)
+    // 2️⃣ Gửi param request (như curl 3)
     const params = {
       SALE_STATUS: ["1"],
       WH: [],
@@ -898,14 +894,25 @@ async function fetchWOWBUY() {
       SN: "",
     };
 
-    const reportResp = await axios.post(
-      WOWBUY_REPORT_URL,
+    await axios.post(
+      "https://report.wowbuy.ai/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d",
       `__parameters__=${encodeURIComponent(JSON.stringify(params))}`,
       {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-          Cookie: cookies,
-          "User-Agent": "Mozilla/5.0",
+          Cookie: cookie,
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      }
+    );
+
+    // 3️⃣ Gọi page_content (curl 5)
+    const reportResp = await axios.get(
+      "https://report.wowbuy.ai/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&_paperWidth=230&_paperHeight=510&__fit__=false",
+      {
+        headers: {
+          Accept: "text/html, */*; q=0.01",
+          Cookie: cookie,
           "X-Requested-With": "XMLHttpRequest",
         },
       }
@@ -937,7 +944,6 @@ async function fetchWOWBUY() {
     return [];
   }
 }
-
 
 // ========= Ghi data vào Lark Sheet =========
 async function writeToLark(tableData) {
