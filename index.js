@@ -17,7 +17,7 @@ const QuickChart = require('quickchart-js');
 const cron = require('node-cron');
 const { createCanvas, registerFont } = require("canvas");
 const FormData = require("form-data");
-import * as cheerio from "cheerio";
+const cheerio = require("cheerio");
 require('dotenv').config();
 
 /* ===== App boot ===== */
