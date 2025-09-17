@@ -17,6 +17,7 @@ const QuickChart = require('quickchart-js');
 const cron = require('node-cron');
 const { createCanvas, registerFont } = require("canvas");
 const FormData = require("form-data");
+import * as cheerio from "cheerio";
 require('dotenv').config();
 
 /* ===== App boot ===== */
@@ -812,6 +813,86 @@ cron.schedule("0 18 * * *", async () => {
     console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
   }
 });
+
+/* ==================================================
+   SECTION API TEST — Đổ số từ Reportinh
+   ================================================== */
+
+// === CONFIG ===
+const WOWBUY_URL = "https://report.wowbuy.ai/webroot/decision/view/report?_=1758082619052&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=172&_paperHeight=510&__fit__=false";
+
+// ⚠️ Điền cookie + token thật từ DevTools của bạn
+const WOWBUY_HEADERS = {
+  "authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTI5MTM5NCwiaWF0IjoxNzU4MDgyMjc5LCJqdGkiOiI1VlRlRytQaWpQQ1paZkpOeThuanlQS1kxczcvNzhhYWRkVU1nMXd1Y29wSDNqd2sifQ.eNT7eWLoO-W6RvBN7cqOAEDmNGsfJuErglIbpBpS9Uo",
+  "cookie": "fineMarkId=33ecda979be5d7e00de1c37454b06101; SECKEY_ABVK=Nwx3lWSQiMnYgLUPzbqxTEpxTfCcIXaIz8VYtBDjM40%3D; BMAP_SECKEY=QhuSCbRnGHqBJGZdl_2DzsYoo980JYtVs8W1paatkWeIHaHeOYEsY9LTKlW_VwbjkCFzb4efvnRmMuzRyk_7q38kMGveRhBB4Eumi7-CsdjC-39-eQMI6vemaL0lMy-9kBBMWcHohFGygGCqYfti02xG-qDFf1MkZmcVsU0btmVFtIj5Q2q2u7jYnNYPCyT3; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTI5MTM5NCwiaWF0IjoxNzU4MDgyMjc5LCJqdGkiOiI1VlRlRytQaWpQQ1paZkpOeThuanlQS1kxczcvNzhhYWRkVU1nMXd1Y29wSDNqd2sifQ.eNT7eWLoO-W6RvBN7cqOAEDmNGsfJuErglIbpBpS9Uo", // copy toàn bộ từ DevTools
+  "x-requested-with": "XMLHttpRequest",
+  "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+};
+
+// Lark config
+const LARK_DOMAIN = "https://open.larksuite.com";
+const SPREADSHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
+const SHEET_ID = "EmjelX";
+const START_RANGE = "J1";
+
+// === LẤY ACCESS TOKEN CỦA APP ===
+async function getAppAccessToken() {
+  const res = await axios.post(`${LARK_DOMAIN}/open-apis/auth/v3/app_access_token/internal`, {
+    app_id: process.env.LARK_APP_ID,
+    app_secret: process.env.LARK_APP_SECRET
+  });
+  return res.data.app_access_token;
+}
+
+// === LẤY DỮ LIỆU WOWBUY ===
+async function fetchWowbuyData() {
+  const res = await axios.get(WOWBUY_URL, { headers: WOWBUY_HEADERS });
+
+  // response có field "html"
+  const $ = cheerio.load(res.data.html);
+  const rows = [];
+
+  $("table.x-table tbody tr").each((i, tr) => {
+    const cols = [];
+    $(tr).find("td").each((j, td) => {
+      cols.push($(td).text().trim());
+    });
+    if (cols.length) rows.push(cols);
+  });
+
+  return rows;
+}
+
+// === GHI VÀO LARK SHEET ===
+async function writeToLarkSheet(rows) {
+  const token = await getAppAccessToken();
+
+  const url = `${LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values`;
+  const body = {
+    valueRange: {
+      range: `${SHEET_ID}!${START_RANGE}`,
+      values: rows
+    }
+  };
+
+  const res = await axios.put(url, body, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    }
+  });
+
+  console.log("✅ Write to Lark Sheet success:", res.data);
+}
+
+// === MAIN ===
+async function main() {
+  const rows = await fetchWowbuyData();
+  console.log(`Fetched ${rows.length} rows from WOWBUY`);
+  await writeToLarkSheet(rows);
+}
+
+main().catch(console.error);
 
        
 /* =======================================================
