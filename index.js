@@ -866,14 +866,22 @@ async function fetchWOWBUY() {
   );
 
   // 1️⃣ Login
-  await page.goto(WOWBUY_LOGIN_URL, { waitUntil: "networkidle0" });
-
-  await page.type("#username", process.env.WOWBUY_USERNAME);
-  await page.type("#password", process.env.WOWBUY_PASSWORD);
-  await page.click("#login-button");
-
-  // Chờ login xong
-  await page.waitForNavigation({ waitUntil: "networkidle0" });
+   // 1. Mở trang login
+   await page.goto(WOWBUY_LOGIN_URL, { waitUntil: "networkidle0" });
+   
+   // 2. Đợi các ô input render
+   await page.waitForSelector('input[placeholder="Username"]');
+   await page.waitForSelector('input[placeholder="Password"]');
+   
+   // 3. Điền username + password
+   await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
+   await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
+   
+   // 4. Click nút Login
+   await page.click('button');   // nếu có nhiều nút button thì refine thêm: ví dụ button:has-text("Login")
+   
+   // 5. Chờ login xong
+   await page.waitForNavigation({ waitUntil: "networkidle0" });
 
   // 2️⃣ Vào report
   await page.goto(WOWBUY_REPORT_URL, { waitUntil: "networkidle0" });
