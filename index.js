@@ -23,6 +23,7 @@ const QuickChart = require('quickchart-js');
 const cron = require('node-cron');
 const { createCanvas, registerFont } = require("canvas");
 const cheerio = require("cheerio");
+const bodyParser = require("body-parser");
 require('dotenv').config();
 
 /* ===== App boot ===== */
@@ -823,122 +824,111 @@ cron.schedule("0 18 * * *", async () => {
    SECTION API TEST — Đổ số từ Reportinh
    ================================================== */
 
-// =======================
-// Lark API Helper
-// =======================
-let tenantAccessToken = null;
-let tokenExpireAt = 0;
+const app = express();
+app.use(bodyParser.json());
 
+// ========= CONFIG =========
+const LARK_APP_ID = process.env.LARK_APP_ID;
+const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
+const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
+const LARK_TABLE_ID = "EmjelX"; // sheet id trong link bạn đưa
+
+// URL và headers lấy từ curl WOWBUY
+const WOWBUY_URL =
+  "https://report.wowbuy.ai/webroot/decision/view/report?_=1758086403690&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=1296&_paperHeight=516&__fit__=false";
+
+const WOWBUY_HEADERS = {
+  accept: "text/html, */*; q=0.01",
+  "accept-language": "vi-VN,vi;q=0.9,en;q=0.8",
+  authorization:
+    "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTI5MjIxOSwiaWF0IjoxNzU4MDg2MjUxLCJqdGkiOiJqdmMyeW03UWZPb2hDV0xPcWpYSVNVT1JzKzNrZmdBNFZYSEdTaFhJRVBJQzMrSS8ifQ.CVlEcySlW9SRMosl8eJoTq49zqddED8FVNkrlWyz9m8",
+  cookie:
+    "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; last_login_info=true; sessionid=6c175ec8-4cca-4e24-ba82-b574a0ce96e6",
+  "user-agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+  "x-requested-with": "XMLHttpRequest",
+};
+
+// ========= HELPER =========
 async function getTenantAccessToken() {
-  const now = Math.floor(Date.now() / 1000);
-  if (tenantAccessToken && now < tokenExpireAt - 60) {
-    return tenantAccessToken;
-  }
-
-  const res = await axios.post(
+  const resp = await axios.post(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
     {
-      app_id: process.env.LARK_APP_ID,
-      app_secret: process.env.LARK_APP_SECRET,
-    },
-    { headers: { "Content-Type": "application/json" } }
+      app_id: LARK_APP_ID,
+      app_secret: LARK_APP_SECRET,
+    }
   );
-
-  if (res.data.code !== 0) {
-    throw new Error("Lark auth failed: " + res.data.msg);
-  }
-
-  tenantAccessToken = res.data.tenant_access_token;
-  tokenExpireAt = Math.floor(Date.now() / 1000) + res.data.expire;
-  console.log("✅ Got Lark token");
-  return tenantAccessToken;
+  return resp.data.tenant_access_token;
 }
 
-async function writeToSheet(sheetToken, range, values) {
-  const token = await getTenantAccessToken();
-  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${sheetToken}/values`;
-  await axios.put(
-    url,
-    {
-      valueRange: {
-        range, // ví dụ: "EmjelX!J1"
-        values,
-      },
-    },
-    { headers: { Authorization: `Bearer ${token}` } }
-  );
-}
-
-// =======================
-// WOWBUY Fetch + Parse
-// =======================
-async function fetchWowbuyData() {
+// Lấy dữ liệu từ WOWBUY
+async function fetchWOWBUY() {
   console.log("⏳ Fetching WOWBUY data...");
-  const url =
-    "https://report.wowbuy.ai/webroot/decision/view/report?_=1758086403690&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=1296&_paperHeight=516&__fit__=false";
+  const resp = await axios.get(WOWBUY_URL, { headers: WOWBUY_HEADERS });
+  const html = resp.data;
 
-  const headers = {
-    accept: "text/html, */*; q=0.01",
-    "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
-    authorization:
-      "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTI5MjIxOSwiaWF0IjoxNzU4MDg2MjUxLCJqdGkiOiJqdmMyeW03UWZPb2hDV0xPcWpYSVNVT1JzKzNrZmdBNFZYSEdTaFhJRVBJQzMrSS8ifQ.CVlEcySlW9SRMosl8eJoTq49zqddED8FVNkrlWyz9m8",
-    cookie:
-      "fineMarkId=33ecda979be5d7e00de1c37454b06101; SECKEY_ABVK=Nwx3lWSQiMnYgLUPzbqxTEpxTfCcIXaIz8VYtBDjM40%3D; BMAP_SECKEY=QhuSCbRnGHqBJGZdl_2DzsYoo980JYtVs8W1paatkWeIHaHeOYEsY9LTKlW_VwbjkCFzb4efvnRmMuzRyk_7q38kMGveRhBB4Eumi7-CsdjC-39-eQMI6vemaL0lMy-9kBBMWcHohFGygGCqYfti02xG-qDFf1MkZmcVsU0btmVFtIj5Q2q2u7jYnNYPCyT3; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTI5MjIxOSwiaWF0IjoxNzU4MDg2MjUxLCJqdGkiOiJqdmMyeW03UWZPb2hDV0xPcWpYSVNVT1JzKzNrZmdBNFZYSEdTaFhJRVBJQzMrSS8ifQ.CVlEcySlW9SRMosl8eJoTq49zqddED8FVNkrlWyz9m8", // ⚠️ copy full cookie của bạn
-    "user-agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-    "x-requested-with": "XMLHttpRequest",
-  };
+  // Ghi ra file debug.html để check
+  fs.writeFileSync("debug.html", html);
+  console.log("✅ Saved debug.html (mở để kiểm tra nội dung)");
 
-  const res = await axios.get(url, { headers });
-  const html = res.data;
-
-  if (typeof html !== "string") {
-    throw new Error("WOWBUY không trả về HTML string");
-  }
-
+  // Parse thử table
   const $ = cheerio.load(html);
   const tableData = [];
-
   $("table tr").each((i, row) => {
     const rowData = [];
     $(row)
-      .find("td")
+      .find("td,th")
       .each((j, cell) => {
         rowData.push($(cell).text().trim());
       });
-    if (rowData.length > 0) {
-      tableData.push(rowData);
-    }
+    if (rowData.length > 0) tableData.push(rowData);
   });
 
-  console.log("✅ Parsed WOWBUY rows:", tableData.length);
+  console.log(`✅ Parsed WOWBUY rows: ${tableData.length}`);
   return tableData;
 }
 
-// =======================
-// Cron job
-// =======================
+// Ghi data vào Lark Sheet
+async function writeToLark(tableData) {
+  if (!tableData || tableData.length === 0) {
+    console.warn("⚠️ Không có dữ liệu để ghi");
+    return;
+  }
+
+  const token = await getTenantAccessToken();
+  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
+
+  const body = {
+    valueRange: {
+      range: `${LARK_TABLE_ID}!J1`,
+      values: tableData,
+    },
+  };
+
+  await axios.put(url, body, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
+}
+
+// Job cron 5 phút
 cron.schedule("*/5 * * * *", async () => {
   try {
-    const rows = await fetchWowbuyData();
-
-    if (rows.length === 0) {
-      console.warn("⚠️ Không có dữ liệu để ghi");
-      return;
-    }
-
-    await writeToSheet(
-      "TGR3sdhFshWVbDt8ATllw9TNgMe", // spreadsheetToken
-      "EmjelX!J1", // bắt đầu từ ô J1
-      rows
-    );
-    console.log("✅ Đã ghi dữ liệu vào Lark Sheet");
+    const data = await fetchWOWBUY();
+    await writeToLark(data);
   } catch (err) {
     console.error("❌ Job failed:", err.message);
   }
 });
 
-console.log("🚀 BOT started, sẽ chạy mỗi 5 phút");
+app.listen(3000, () => {
+  console.log("🚀 Bot running on port 3000");
+});
+
 
        
 /* =======================================================
