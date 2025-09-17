@@ -860,21 +860,23 @@ async function fetchWOWBUY() {
   try {
     console.log("⏳ Fetching WOWBUY data via axios login...");
 
-    // 1️⃣ Login
+    // 1️⃣ Login (JSON body, encrypted password)
     const loginResp = await axios.post(
       WOWBUY_LOGIN_URL,
-      new URLSearchParams({
-        fine_username: process.env.WOWBUY_USERNAME,
-        fine_password: process.env.WOWBUY_PASSWORD, // plain password
-        validPwd: "true",
-      }),
+      {
+        username: process.env.WOWBUY_USERNAME,
+        password: encryptPassword(process.env.WOWBUY_PASSWORD),
+        validity: -2,
+        sliderToken: "",
+        origin: "",
+        encrypted: true,
+      },
       {
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
+          "Content-Type": "application/json",
+          "X-Requested-With": "XMLHttpRequest",
           "User-Agent": "Mozilla/5.0",
         },
-        maxRedirects: 0,
-        validateStatus: (status) => status < 500,
       }
     );
 
@@ -882,8 +884,7 @@ async function fetchWOWBUY() {
     if (!rawCookies) throw new Error("Login thất bại (không có cookie)");
 
     const cookies = rawCookies.map((c) => c.split(";")[0]).join("; ");
-    const fineAuth = cookies.match(/fine_auth_token=([^;]+)/);
-    const fine_auth_token = fineAuth ? fineAuth[1] : null;
+    const fine_auth_token = loginResp.data?.token;
 
     if (!fine_auth_token) throw new Error("Login thất bại (không có token)");
 
