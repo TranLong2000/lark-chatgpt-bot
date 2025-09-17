@@ -860,7 +860,7 @@ async function fetchWOWBUY() {
   try {
     console.log("⏳ Fetching WOWBUY data via axios login...");
 
-    // 1️⃣ Login (JSON body, encrypted password)
+    // 1️⃣ Login
     const loginResp = await axios.post(
       WOWBUY_LOGIN_URL,
       {
@@ -881,16 +881,14 @@ async function fetchWOWBUY() {
     );
 
     const rawCookies = loginResp.headers["set-cookie"];
-    if (!rawCookies) throw new Error("Login thất bại (không có cookie)");
+    if (!rawCookies || rawCookies.length === 0) {
+      throw new Error("Login thất bại (không có cookie)");
+    }
 
     const cookies = rawCookies.map((c) => c.split(";")[0]).join("; ");
-    const fine_auth_token = loginResp.data?.token;
+    console.log("✅ Login OK, có cookie session");
 
-    if (!fine_auth_token) throw new Error("Login thất bại (không có token)");
-
-    console.log("✅ Login OK, có token");
-
-    // 2️⃣ Lấy report
+    // 2️⃣ Lấy report (dùng cookie, KHÔNG cần token)
     const params = {
       SALE_STATUS: ["1"],
       WH: [],
@@ -906,7 +904,6 @@ async function fetchWOWBUY() {
       {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-          Authorization: `Bearer ${fine_auth_token}`,
           Cookie: cookies,
           "User-Agent": "Mozilla/5.0",
           "X-Requested-With": "XMLHttpRequest",
@@ -940,6 +937,7 @@ async function fetchWOWBUY() {
     return [];
   }
 }
+
 
 // ========= Ghi data vào Lark Sheet =========
 async function writeToLark(tableData) {
