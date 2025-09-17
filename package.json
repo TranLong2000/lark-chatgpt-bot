@@ -23,7 +23,6 @@
     "quickchart-js": "^2.0.0",
     "node-cron": "^3.0.3",
     "cheerio": "^1.0.0-rc.12",
-    "fetch-blob": "^3.2.0",
-    "formdata-polyfill": "^4.0.10"
+    "formdata-node": "^6.0.0"
   }
 }
