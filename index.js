@@ -881,40 +881,44 @@ async function fetchWOWBUY() {
 
     // 1️⃣ Khởi tạo Puppeteer
     browser = await puppeteer.launch({
-      headless: 'new', // Headless mode
+      headless: 'new',
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu']
     });
     const page = await browser.newPage();
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36');
 
     // 2️⃣ Điều hướng đến trang login
-    await page.goto('https://report.wowbuy.ai/webroot/decision/login');
+    await page.goto('https://report.wowbuy.ai/webroot/decision/login', { waitUntil: 'networkidle2' });
 
-    // 3️⃣ Điền thông tin đăng nhập
-    await page.type('input[name="username"]', process.env.WOWBUY_USERNAME);
-    await page.type('input[name="password"]', process.env.WOWBUY_PASSWORD);
+    // 3️⃣ Debug: Lưu screenshot
+    await page.screenshot({ path: 'login_page.png' });
 
-    // 4️⃣ Xử lý slider CAPTCHA (nếu xuất hiện)
+    // 4️⃣ Chờ và điền thông tin đăng nhập
+    await page.waitForSelector('input[placeholder="Username"]', { timeout: 10000 });
+    await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME);
+    await page.waitForSelector('input[placeholder="Password"]', { timeout: 10000 });
+    await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD);
+
+    // 5️⃣ Xử lý slider CAPTCHA (nếu có)
     try {
-      await page.waitForSelector('.slider', { timeout: 5000 });
+      await page.waitForSelector('.slider, [class*="slider"]', { timeout: 5000 });
       console.log("📌 Tìm thấy slider CAPTCHA, thử kéo...");
-      await page.mouse.move(100, 100); // Di chuyển chuột ngẫu nhiên
-      const slider = await page.$('.slider');
+      const slider = await page.$('.slider, [class*="slider"]');
       const box = await slider.boundingBox();
       await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();
-      await page.mouse.move(box.x + 300, box.y + box.height / 2, { steps: 50 }); // Kéo slider
+      await page.mouse.move(box.x + 300, box.y + box.height / 2, { steps: 50 });
       await page.mouse.up();
       await page.waitForTimeout(2000);
     } catch (err) {
       console.log("ℹ️ Không thấy slider CAPTCHA");
     }
 
-    // 5️⃣ Gửi form đăng nhập
-    await page.click('button[type="submit"]');
-    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 10000 });
+    // 6️⃣ Gửi form đăng nhập
+    await page.click('button[type="submit"], [class*="login-button"], [id*="login"]');
+    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 });
 
-    // 6️⃣ Lấy cookie và token
+    // 7️⃣ Lấy cookie và token
     const cookies = await page.cookies();
     const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
     const authToken = cookies.find(c => c.name === 'fine_auth_token')?.value;
@@ -924,7 +928,7 @@ async function fetchWOWBUY() {
 
     await browser.close();
 
-    // 7️⃣ Tiếp tục với Axios (giống code trước)
+    // 8️⃣ Tiếp tục với Axios
     const commonHeaders = {
       'accept': 'application/json, text/javascript, */*; q=0.01',
       'accept-language': 'vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5',
@@ -943,7 +947,6 @@ async function fetchWOWBUY() {
 
     const sessionId = '7ebafdd4-208c-4be0-9dbf-b366d3003d46';
 
-    // Các yêu cầu khởi tạo và lấy dữ liệu (copy từ code Selenium trước, bỏ phần Selenium)
     await axios.post('https://report.wowbuy.ai/webroot/decision/login/info', {
       time: new Date().toISOString().replace('T', ' ').split('.')[0],
       ip: '115.79.32.207',
@@ -1034,7 +1037,7 @@ async function writeToLark(tableData) {
 }
 
 // ========= Cron job 5 phút =========
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("*/1 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
