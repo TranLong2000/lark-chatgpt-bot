@@ -221,21 +221,36 @@ async function getSaleComparisonDataOnce(token, prevCol, currentCol) {
     const rows = resp.data?.data?.valueRange?.values || [];
     if (rows && rows.length > 1) {
       return rows.slice(1).map((r, i) => {
-        const productName = r[col.F] ?? `Dòng ${i + 2}`;  // trước là col.E
-        const warehouse   = r[col.G] ?? '';                // trước là col.F
-        const totalStock  = toNumber(r[col.H]);            // trước là col.G
-        const avr7daysRaw = r[col.N] ?? '';                // trước là col.M
-        const sale3day    = toNumber(r[col.O]);            // trước là col.N
-        const sale2day    = toNumber(r[col.P]);            // trước là col.O
-        const sale1day    = toNumber(r[col.Q]);            // trước là col.P
-        const finalStatus = (r[col.AL] ?? '').toString().trim(); // trước là col.AK
-        const prev    = toNumber(r[prevIdx]);
-        const current = toNumber(r[currIdx]);
+        const warehouseShort = r[col.A] ?? '';              // cột A (tên kho viết tắt)
+        const productName    = r[col.F] ?? `Dòng ${i + 2}`; // cột F (tên sản phẩm)
+        const warehouse   = r[col.G] ?? '';
+        const totalStock  = toNumber(r[col.H]);
+        const avr7daysRaw = r[col.N] ?? '';
+        const sale3day    = toNumber(r[col.O]);
+        const sale2day    = toNumber(r[col.P]);
+        const sale1day    = toNumber(r[col.Q]);
+        const finalStatus = (r[col.AL] ?? '').toString().trim();
+        const prev        = toNumber(r[prevIdx]);
+        const current     = toNumber(r[currIdx]);
+
         let change = 0;
         if (prev === 0 && current > 0) change = Infinity;
         else if (prev > 0) change = ((current - prev) / prev) * 100;
 
-        return { productName, warehouse, finalStatus, totalStock, avr7days: avr7daysRaw, sale3day, sale2day, sale1day, prev, current, change };
+        return { 
+          productName, 
+          warehouseShort,   // 👈 thêm trường này
+          warehouse, 
+          finalStatus, 
+          totalStock, 
+          avr7days: avr7daysRaw, 
+          sale3day, 
+          sale2day, 
+          sale1day, 
+          prev, 
+          current, 
+          change 
+        };
       });
     }
     return null;
@@ -271,14 +286,13 @@ async function analyzeSalesChange(token) {
     const hourVN = nowVN.getHours();
 
     // Cột đã dịch +1 so với phiên bản cũ
-    const prevCol = 'N';              // trước là 'M'
-    const currentCol = hourVN < 12 ? 'Q' : 'R'; // trước là 'P' / 'Q'
+    const prevCol = 'N';              
+    const currentCol = hourVN < 12 ? 'Q' : 'R'; 
     const currentLabel = hourVN < 12 ? 'hôm qua' : 'hôm nay';
 
     const allData = await getSaleComparisonData(token, prevCol, currentCol);
     if (!allData.length) return null;
 
-    // ⚡ Lọc: lấy tất cả warehouse trừ "Thu Duc Warehouse"
     const topData = allData.filter(r =>
       r.warehouse !== 'Thu Duc Warehouse' && String(r.avr7days).trim() !== ''
     );
@@ -303,7 +317,7 @@ async function analyzeSalesChange(token) {
       .sort((a,b) => a.change - b.change)
       .slice(0,5);
 
-    // ===== OOS logic (đếm đúng, show top 5 có label) =====
+    // ===== OOS logic =====
     const oosCandidates = totalData.filter(
       r => Number(r.totalStock) === 0 && String(r.avr7days).trim() !== ''
     );
@@ -318,33 +332,37 @@ async function analyzeSalesChange(token) {
 
     const outOfStock = oosCandidates
       .map(r => ({ ...r, oosLabel: getOosLabel(r) }))
-
       .filter(r => r.oosLabel)
       .sort((a,b) => {
         const w = lbl => lbl.includes('> 3') ? 3 : lbl.includes('2') ? 2 : 1;
         return w(b.oosLabel) - w(a.oosLabel);
       })
       .slice(0,5);
-    // ======================================================
+    // ======================
+
+    // format tên hiển thị có [warehouseShort]
+    const formatName = (r) => r.warehouseShort 
+      ? `[${r.warehouseShort}] ${r.productName}` 
+      : r.productName;
 
     let msg = `📊 Biến động Sale: AVG D-7 → ${currentLabel}:\n`;
     if (increases.length) {
       msg += `\n🔥 Top 5 tăng mạnh / Tổng ${totalIncrease} SKU tăng:\n`;
       increases.forEach(r => {
         const pct = r.change === Infinity ? '+∞%' : `+${r.change.toFixed(1)}%`;
-        msg += `- ${r.productName}: ${r.prev} → ${r.current} (${pct})\n`;
+        msg += `- ${formatName(r)}: ${r.prev} → ${r.current} (${pct})\n`;
       });
     }
     if (decreases.length) {
       msg += `\n📉 Top 5 giảm mạnh / Tổng ${totalDecrease} SKU giảm:\n`;
       decreases.forEach(r => {
-        msg += `- ${r.productName}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
+        msg += `- ${formatName(r)}: ${r.prev} → ${r.current} (${r.change.toFixed(1)}%)\n`;
       });
     }
     if (totalOosCount > 0) {
       msg += `\n🚨 SKU hết hàng / Tổng ${totalOosCount} SKU OOS:\n`;
       outOfStock.forEach(r => {
-        msg += `- ${r.productName} (${r.oosLabel})\n`;
+        msg += `- ${formatName(r)} (${r.oosLabel})\n`;
       });
     }
 
