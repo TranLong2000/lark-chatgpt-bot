@@ -889,48 +889,131 @@ async function fetchWOWBUY() {
     const authToken = process.env.AUTH_TOKEN;
     if (!authToken) throw new Error("AUTH_TOKEN không được cung cấp trong .env");
     commonHeaders['authorization'] = `Bearer ${authToken}`;
-    commonHeaders['Cookie'] = `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}; last_login_info=true; fineMarkId=33ecda979be5d7e00de1c37454b06101`;
+    commonHeaders['Cookie'] = `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}; last_login_info=true; fineMarkId=33ecda979be5d7e00de1c37454b06101; SECKEY_ABVK=Nwx3lWSQiMnYgLUPzbqxTEpxTfCcIXaIz8VYtBDjM40%3D; BMAP_SECKEY=QhuSCbRnGHqBJGZdl_2DzsYoo980JYtVs8W1paatkWeIHaHeOYEsY9LTKlW_VwbjkCFzb4efvnRmMuzRyk_7q38kMGveRhBB4Eumi7-CsdjC-39-eQMI6vemaL0lMy-9kBBMWcHohFGygGCqYfti02xG-qDFf1MkZmcVsU0btmVFtIj5Q2q2u7jYnNYPCyT3`;
 
     const axiosInstance = axios.create({
-      baseURL: 'https://report.wowbuy.ai/webroot/decision', // Thử thay đổi nếu cần
+      baseURL: 'https://report.wowbuy.ai/webroot/decision',
       headers: commonHeaders,
       withCredentials: true,
       timeout: 5000,
     });
 
-    // Debug URL
+    // 1️⃣ Kiểm tra token
     const testUrl = '/login/info';
-    const fullUrl = axiosInstance.defaults.baseURL + testUrl;
-    console.log("📡 Testing URL:", fullUrl);
-
-    // Thử gửi request
+    console.log("📡 Testing URL:", axiosInstance.defaults.baseURL + testUrl);
     const infoResponse = await axiosInstance.post(testUrl, {
       time: new Date().toISOString().replace('T', ' ').split('.')[0],
       ip: '115.79.32.207',
       city: '',
     });
     if (infoResponse.data?.errorCode) throw new Error("Token không hợp lệ");
-
     console.log("📡 Login info response:", JSON.stringify(infoResponse.data));
 
-    // Lấy báo cáo
-    const reportUrl = '/view/report';
-    console.log("📡 Fetching report from:", axiosInstance.defaults.baseURL + reportUrl);
-    const reportResponse = await axios.get(reportUrl, {
-      params: {
-        _: Date.now(),
-        __boxModel__: true,
-        op: 'page_content',
-        pn: 1,
-        __webpage__: true,
-        _paperWidth: 257,
-        _paperHeight: 510,
-        __fit__: false,
+    // 2️⃣ Tải tài nguyên JavaScript (cURL 15)
+    const resourceUrl = '/view/report';
+    const resourceParams = {
+      op: 'resource',
+      resource: '/com/fr/web/core/js/paramtemplate.js',
+      _: Date.now(),
+    };
+    console.log("📡 Resource URL:", axiosInstance.getUri({
+      url: resourceUrl,
+      params: resourceParams,
+    }));
+    await axios.get(resourceUrl, {
+      params: resourceParams,
+      headers: {
+        ...commonHeaders,
+        'accept': 'text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01',
+        'if-modified-since': 'Mon, 26 May 2025 13:06:53 GMT',
+        'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=243&height=667',
       },
+    });
+
+    // 3️⃣ Lấy tham số yêu thích (cURL 16)
+    const paramUrl = '/view/report';
+    const paramParams = {
+      op: 'fr_paramstpl',
+      cmd: 'query_favorite_params',
+      _: Date.now(),
+    };
+    console.log("📡 Param URL:", axiosInstance.getUri({
+      url: paramUrl,
+      params: paramParams,
+    }));
+    await axios.post(paramUrl, '', {
+      params: paramParams,
+      headers: {
+        ...commonHeaders,
+        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'sessionid': 'a031a7e6-d61a-4157-805b-e6074cffbef9',
+        'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=243&height=667',
+      },
+    });
+
+    // 4️⃣ Gửi tham số dialog (cURL 17)
+    const dialogUrl = '/view/report';
+    const dialogParams = {
+      op: 'fr_dialog',
+      cmd: 'parameters_d',
+      _: Date.now(),
+    };
+    console.log("📡 Dialog URL:", axiosInstance.getUri({
+      url: dialogUrl,
+      params: dialogParams,
+    }));
+    await axios.post(dialogUrl, {
+      __parameters__: {
+        SALE_STATUS: ['1'],
+        LABELSKUSN_C_C: '商品种类',
+        LABELSTOREID_C: '直生',
+        WH: [],
+        LABELSKUSN_C: 'SKU',
+        SKUSN: [],
+        LABELSTOREID_C_C: '订单发货单',
+        SD: '2025-08-19',
+        ED: '2025-09-18',
+        LABELSKUSN_C_C_C: '双电站',
+        KS: [],
+        LABELSKUSN_C_C_C_C: '售千发券',
+        SN: '',
+      },
+      _: 1758190710650,
+    }, {
+      params: dialogParams,
+      headers: {
+        ...commonHeaders,
+        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'sessionid': 'a031a7e6-d61a-4157-805b-e6074cffbef9',
+        'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=243&height=667',
+      },
+    });
+
+    // 5️⃣ Lấy báo cáo (cURL 19)
+    const reportUrl = '/view/report';
+    const reportParams = {
+      _: Date.now(),
+      __boxModel__: true,
+      op: 'page_content',
+      pn: 1,
+      __webpage__: true,
+      _paperWidth: 242,
+      _paperHeight: 510,
+      __fit__: false,
+    };
+    const fullReportUrl = axiosInstance.getUri({
+      url: reportUrl,
+      params: reportParams,
+    });
+    console.log("📡 Full report URL:", fullReportUrl);
+
+    const reportResponse = await axios.get(reportUrl, {
+      params: reportParams,
       headers: {
         ...commonHeaders,
         'accept': 'text/html, */*; q=0.01',
-        'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667',
+        'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=243&height=667',
+        'sessionid': 'a031a7e6-d61a-4157-805b-e6074cffbef9',
       },
     });
 
