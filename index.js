@@ -898,15 +898,15 @@ async function fetchWOWBUY() {
     const axiosInstance = axios.create({
       baseURL: 'https://report.wowbuy.ai/webroot/decision',
       headers: commonHeaders,
-      withCredentials: true, // Để xử lý cookie
+      withCredentials: true,
     });
 
-    // 2️⃣ Đăng nhập
+    // 2️⃣ Đăng nhập (giả sử sliderToken đã được xử lý thủ công trước)
     const loginPayload = {
       username: process.env.WOWBUY_USERNAME || 'long.tran',
-      password: encryptPassword(process.env.WOWBUY_PASSWORD) || 'c7aJ7Z03ClxqPy9ds/RjOw==',
+      password: process.env.WOWBUY_PASSWORD || 'c7aJ7Z03ClxqPy9ds/RjOw==',
       validity: -2,
-      sliderToken: '',
+      sliderToken: '', // Để trống, giả định đã xác minh trước
       origin: '',
       encrypted: true,
     };
@@ -934,7 +934,25 @@ async function fetchWOWBUY() {
     commonHeaders['authorization'] = `Bearer ${authToken}`;
     commonHeaders['Cookie'] += `; tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}`;
 
-    // 3️⃣ Gửi login/info
+    // 3️⃣ Làm mới token để kéo dài phiên
+    console.log("⏳ Refreshing token...");
+    const refreshResponse = await axiosInstance.post('/token/refresh', {
+      oldToken: authToken,
+      tokenTimeOut: 1209600000, // 2 tuần (1209600000 ms)
+    }, {
+      headers: {
+        ...commonHeaders,
+        'authorization': `Bearer ${authToken}`,
+        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}`,
+      },
+    });
+    console.log("📡 Refresh response:", JSON.stringify(refreshResponse.data));
+
+    const newAuthToken = refreshResponse.data?.fine_auth_token || authToken;
+    commonHeaders['authorization'] = `Bearer ${newAuthToken}`;
+    commonHeaders['Cookie'] = commonHeaders['Cookie'].replace(authToken, newAuthToken);
+
+    // 4️⃣ Gửi login/info
     await axiosInstance.post('/login/info', {
       time: new Date().toISOString().replace('T', ' ').split('.')[0],
       ip: '115.79.32.207',
@@ -942,109 +960,51 @@ async function fetchWOWBUY() {
     }, {
       headers: {
         ...commonHeaders,
-        'authorization': `Bearer ${authToken}`,
-        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}`,
+        'authorization': `Bearer ${newAuthToken}`,
+        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${newAuthToken}`,
       },
     });
 
-    // 4️⃣ Lấy danh sách yêu thích
+    // 5️⃣ Lấy danh sách yêu thích
     await axiosInstance.get('/v10/favorite/entry/list', {
       params: { _: Date.now() },
       headers: {
         ...commonHeaders,
-        'authorization': `Bearer ${authToken}`,
-        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}`,
+        'authorization': `Bearer ${newAuthToken}`,
+        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${newAuthToken}`,
       },
     });
 
-    // 5️⃣ Lấy cây entry
+    // 6️⃣ Lấy cây entry
     await axiosInstance.get('/v10/view/entry/tree', {
       params: { _: Date.now() },
       headers: {
         ...commonHeaders,
-        'authorization': `Bearer ${authToken}`,
-        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}`,
+        'authorization': `Bearer ${newAuthToken}`,
+        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${newAuthToken}`,
       },
     });
 
-    // 6️⃣ Làm mới token
-    await axiosInstance.post('/token/refresh', {
-      oldToken: authToken,
-      tokenTimeOut: 1209600000,
-    }, {
+    // 7️⃣ Lấy info bổ sung
+    await axiosInstance.get('/login/info', {
+      params: { _: Date.now() },
       headers: {
         ...commonHeaders,
-        'authorization': `Bearer ${authToken}`,
-        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}`,
+        'authorization': `Bearer ${newAuthToken}`,
+        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${newAuthToken}`,
       },
     });
 
-    // 7️⃣ Thu thập thông tin preview
-    await axiosInstance.post('/preview/info/collect', 'webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D', {
-      headers: {
-        ...commonHeaders,
-        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'authorization': `Bearer ${authToken}`,
-        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}; last_login_info=true`,
-        'sessionid': 'c6b6d4b5-811a-476b-bacf-ab325243d979',
-        'referer': 'https://report.wowbuy.ai/webroot/decision/view/form?viewlet=show.frm&width=257&height=667',
-      },
-    });
-
-    // 8️⃣ Thu thập thông tin adaptive
-    await axiosInstance.post('/adaptive/info/collect', 'recordInfo=%7B%22frmInfo%22%3A%7B%22sessionID%22%3A%22c6b6d4b5-811a-476b-bacf-ab325243d979%22%2C%22browserSize%22%3A%22%7B257%2C666%7D%22%2C%22browserScrollBar%22%3A%22%7B1%2C1%7D%22%2C%22fontZoom%22%3A1%2C%22componentInformation%22%3A%22%5B%5D%7BBODY%2C257%2C666%2C(0%2C0)%2C0%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%2C%7BLABEL0%2C224%2C126%2C(62%2C130)%2Cundefined%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%5D%22%7D%2C%22elementCases%22%3A%5B%5D%7D', {
-      headers: {
-        ...commonHeaders,
-        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'authorization': `Bearer ${authToken}`,
-        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}; last_login_info=true`,
-        'sessionid': 'c6b6d4b5-811a-476b-bacf-ab325243d979',
-        'referer': 'https://report.wowbuy.ai/webroot/decision/view/form?viewlet=show.frm&width=257&height=667',
-      },
-    });
-
-    // 9️⃣ Lấy báo cáo
-    const reportResp = await axiosInstance.get('/view/report', {
-      params: {
-        _: Date.now(),
-        __boxModel__: true,
-        op: 'page_content',
-        pn: 1,
-        __webpage__: true,
-        _paperWidth: 257,
-        _paperHeight: 510,
-        __fit__: false,
-      },
-      headers: {
-        ...commonHeaders,
-        'accept': 'text/html, */*; q=0.01',
-        'authorization': `Bearer ${authToken}`,
-        'Cookie': `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}; last_login_info=true; fineMarkId=33ecda979be5d7e00de1c37454b06101`,
-        'sessionid': '7ebafdd4-208c-4be0-9dbf-b366d3003d46',
-        'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667',
-      },
-    });
-
-    if (!reportResp.data) {
-      console.log("⚠️ Không có dữ liệu report");
-      return [];
-    }
-
-    const $ = cheerio.load(reportResp.data);
-    const rows = [];
-    $("table tr").each((_, tr) => {
-      const row = [];
-      $(tr).find("td, th").each((_, td) => row.push($(td).text().trim()));
-      if (row.length > 0) rows.push(row);
-    });
-
-    console.log(`✅ Parsed WOWBUY rows: ${rows.length}`);
-    return rows;
+    console.log("✅ Login and initial requests successful");
+    return true;
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
-    return [];
+    return false;
   }
 }
+
+// Chạy hàm
+fetchWOWBUY().then(() => console.log("Done"));
 
 // ========= Ghi data vào Lark Sheet =========
 async function writeToLark(tableData) {
