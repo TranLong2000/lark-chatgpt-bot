@@ -895,23 +895,31 @@ async function fetchWOWBUY() {
       'priority': 'u=1, i',
     };
 
-    const authToken = process.env.AUTH_TOKEN || 'YOUR_AUTH_TOKEN_HERE'; // Thay bằng token mới từ DevTools
+    const authToken = process.env.AUTH_TOKEN;
+    if (!authToken) {
+      throw new Error("AUTH_TOKEN không được cung cấp trong .env");
+    }
     commonHeaders['authorization'] = `Bearer ${authToken}`;
     commonHeaders['Cookie'] = `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}; last_login_info=true; fineMarkId=33ecda979be5d7e00de1c37454b06101`;
 
     const axiosInstance = axios.create({
-      baseURL: 'https://report.wowbuy.ai/webroot/decision',
+      baseURL: 'https://report.wowbuy.ai/webroot/decision', // Đảm bảo khớp với domain thực tế
       headers: commonHeaders,
       withCredentials: true,
-      timeout: 10000, // Timeout 10s để tránh ETIMEDOUT
+      timeout: 10000, // Timeout 10s
     });
 
-    // 2️⃣ Gửi login/info (cURL 5)
-    await axiosInstance.post('/login/info', {
+    // 2️⃣ Kiểm tra token bằng cách gửi login/info (cURL 5)
+    const infoResponse = await axiosInstance.post('/login/info', {
       time: new Date().toISOString().replace('T', ' ').split('.')[0],
       ip: '115.79.32.207',
       city: '',
     });
+    if (infoResponse.data?.errorCode) {
+      console.log("⚠️ Token không hợp lệ:", JSON.stringify(infoResponse.data));
+      throw new Error("Token không hợp lệ, cần cập nhật từ DevTools");
+    }
+    console.log("📡 Login info response:", JSON.stringify(infoResponse.data));
 
     // 3️⃣ Lấy danh sách yêu thích (cURL 6)
     const favoriteResponse = await axiosInstance.get('/v10/favorite/entry/list', {
@@ -926,10 +934,10 @@ async function fetchWOWBUY() {
     console.log("📡 Entry tree:", JSON.stringify(treeResponse.data));
 
     // 5️⃣ Lấy info bổ sung (cURL 8)
-    const infoResponse = await axiosInstance.get('/login/info', {
+    const additionalInfoResponse = await axiosInstance.get('/login/info', {
       params: { _: Date.now() },
     });
-    console.log("📡 Additional info:", JSON.stringify(infoResponse.data));
+    console.log("📡 Additional info:", JSON.stringify(additionalInfoResponse.data));
 
     // 6️⃣ Thu thập thông tin preview (cURL 10)
     await axiosInstance.post('/preview/info/collect', 'webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D', {
