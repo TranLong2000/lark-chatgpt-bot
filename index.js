@@ -862,8 +862,8 @@ async function getTenantAccessToken() {
   const resp = await axios.post(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
     {
-      app_id: LARK_APP_ID,
-      app_secret: LARK_APP_SECRET,
+      app_id: process.env.LARK_APP_ID,
+      app_secret: process.env.LARK_APP_SECRET,
     }
   );
   return resp.data.tenant_access_token;
@@ -878,6 +878,21 @@ async function fetchWOWBUY() {
   try {
     console.log("⏳ Fetching WOWBUY data via axios login...");
 
+    // Common headers for all requests
+    const commonHeaders = {
+      'accept': 'application/json, text/javascript, */*; q=0.01',
+      'accept-language': 'vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5',
+      'content-type': 'application/json',
+      'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'empty',
+      'sec-fetch-mode': 'cors',
+      'sec-fetch-site': 'same-origin',
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+      'x-requested-with': 'XMLHttpRequest'
+    };
+
     // 1️⃣ Login
     const loginResp = await axios.post(
       WOWBUY_LOGIN_URL,
@@ -891,8 +906,10 @@ async function fetchWOWBUY() {
       },
       {
         headers: {
-          "Content-Type": "application/json",
-          "X-Requested-With": "XMLHttpRequest",
+          ...commonHeaders,
+          'origin': 'https://report.wowbuy.ai',
+          'referer': 'https://report.wowbuy.ai/webroot/decision/login',
+          'content-type': 'application/json',
         },
       }
     );
@@ -904,35 +921,140 @@ async function fetchWOWBUY() {
 
     console.log("✅ Login OK, có cookie session");
 
-    // 2️⃣ Gửi parameters_d (dùng raw body từ curl)
-    const rawParams =
-      "__parameters__=%7B%22SALE_STATUS%22%3A%5B%221%22%5D%2C%22LABELSKUSN_C_C%22%3A%22%5B4e0a%5D%5B4e0b%5D%5B67b6%5D%5B72b6%5D%5B6001%5D%5Bff1a%5D%22%2C%22LABELSTOREID_C%22%3A%22%5B4ed3%5D%5B5e93%5D%5Bff1a%5D%22%2C%22WH%22%3A%5B%5D%2C%22LABELSKUSN_C%22%3A%22SKU%5Bff1a%5D%22%2C%22SKUSN%22%3A%5B%5D%2C%22LABELSTOREID_C_C%22%3A%22%5B8ba2%5D%5B5355%5D%5B521b%5D%5B5efa%5D%5B65f6%5D%5B95f4%5D%5Bff1a%5D%22%2C%22SD%22%3A%222025-08-19%22%2C%22ED%22%3A%222025-09-18%22%2C%22LABELSKUSN_C_C_C%22%3A%22%5B53ef%5D%5B552e%5D%5B5e93%5D%5B5b58%5D%5Bff1a%5D%22%2C%22KS%22%3A%5B%5D%2C%22LABELSKUSN_C_C_C_C%22%3A%22%5B5546%5D%5B54c1%5D%5B7f16%5D%5B53f7%5D%5Bff1a%5D%22%2C%22SN%22%3A%22%22%7D&_=";
+    const authToken = loginResp.data.token || "";
+    if (!authToken) throw new Error("Login thất bại (không có token)");
 
+    // Common headers with auth token and cookies
+    const authHeaders = {
+      ...commonHeaders,
+      'authorization': `Bearer ${authToken}`,
+      'Cookie': `${cookie}; fineMarkId=33ecda979be5d7e00de1c37454b06101; SECKEY_ABVK=Nwx3lWSQiMnYgLUPzbqxTEpxTfCcIXaIz8VYtBDjM40%3D; BMAP_SECKEY=QhuSCbRnGHqBJGZdl_2DzsYoo980JYtVs8W1paatkWeIHaHeOYEsY9LTKlW_VwbjkCFzb4efvnRmMuzRyk_7q38kMGveRhBB4Eumi7-CsdjC-39-eQMI6vemaL0lMy-9kBBMWcHohFGygGCqYfti02xG-qDFf1MkZmcVsU0btmVFtIj5Q2q2u7jYnNYPCyT3; tenantId=default; fine_remember_login=-2; last_login_info=true`,
+    };
+
+    const sessionId = '7ebafdd4-208c-4be0-9dbf-b366d3003d46'; // Use dynamic session ID if possible
+
+    // 2️⃣ Additional initialization requests
+    // /login/info
     await axios.post(
-      "https://report.wowbuy.ai/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d",
-      rawParams,
+      'https://report.wowbuy.ai/webroot/decision/login/info',
+      {
+        time: new Date().toISOString().replace('T', ' ').split('.')[0],
+        ip: '115.79.32.207', // Replace with dynamic IP if needed
+        city: '',
+      },
       {
         headers: {
-          "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-          Cookie: cookie,
-          "X-Requested-With": "XMLHttpRequest",
-          Referer:
-            "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667",
-          sessionid: "7e34a4fe-d9c8-463c-8889-b4d575b39eb1", // từ curl
+          ...authHeaders,
+          'referer': 'https://report.wowbuy.ai/webroot/decision',
         },
       }
     );
 
-    // 3️⃣ Gọi page_content để lấy bảng
-    const reportResp = await axios.get(
-      "https://report.wowbuy.ai/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&_paperWidth=230&_paperHeight=510&__fit__=false",
+    // /favorite/entry/list
+    await axios.get(
+      'https://report.wowbuy.ai/webroot/decision/v10/favorite/entry/list',
       {
         headers: {
-          Cookie: cookie,
-          "X-Requested-With": "XMLHttpRequest",
-          Referer:
-            "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667",
-          sessionid: "7e34a4fe-d9c8-463c-8889-b4d575b39eb1", // từ curl
+          ...authHeaders,
+          'referer': 'https://report.wowbuy.ai/webroot/decision',
+        },
+        params: {
+          _: Date.now(),
+        },
+      }
+    );
+
+    // /view/entry/tree
+    await axios.get(
+      'https://report.wowbuy.ai/webroot/decision/v10/view/entry/tree',
+      {
+        headers: {
+          ...authHeaders,
+          'referer': 'https://report.wowbuy.ai/webroot/decision',
+        },
+        params: {
+          _: Date.now(),
+        },
+      }
+    );
+
+    // /token/refresh
+    await axios.post(
+      'https://report.wowbuy.ai/webroot/decision/token/refresh',
+      {
+        oldToken: authToken,
+        tokenTimeOut: 1209600000,
+      },
+      {
+        headers: {
+          ...authHeaders,
+          'origin': 'https://report.wowbuy.ai',
+          'referer': 'https://report.wowbuy.ai/webroot/decision',
+        },
+      }
+    );
+
+    // /preview/info/collect
+    await axios.post(
+      'https://report.wowbuy.ai/webroot/decision/preview/info/collect',
+      'webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D',
+      {
+        headers: {
+          ...authHeaders,
+          'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'origin': 'https://report.wowbuy.ai',
+          'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667',
+          'sessionid': sessionId,
+        },
+      }
+    );
+
+    // /adaptive/info/collect
+    await axios.post(
+      'https://report.wowbuy.ai/webroot/decision/adaptive/info/collect',
+      'recordInfo=%7B%22frmInfo%22%3A%7B%22sessionID%22%3A%22' + sessionId + '%22%2C%22browserSize%22%3A%22%7B257%2C666%7D%22%2C%22browserScrollBar%22%3A%22%7B1%2C1%7D%22%2C%22fontZoom%22%3A1%2C%22componentInformation%22%3A%22%5B%5D%7BBODY%2C257%2C666%2C(0%2C0)%2C0%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%2C%7BLABEL0%2C224%2C126%2C(62%2C130)%2Cundefined%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%5D%22%7D%2C%22elementCases%22%3A%5B%5D%7D',
+      {
+        headers: {
+          ...authHeaders,
+          'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'origin': 'https://report.wowbuy.ai',
+          'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667',
+          'sessionid': sessionId,
+        },
+      }
+    );
+
+    // 3️⃣ Gửi parameters_d
+    const rawParams =
+      '__parameters__=%7B%22SALE_STATUS%22%3A%5B%221%22%5D%2C%22LABELSKUSN_C_C%22%3A%22%5B4e0a%5D%5B4e0b%5D%5B67b6%5D%5B72b6%5D%5B6001%5D%5Bff1a%5D%22%2C%22LABELSTOREID_C%22%3A%22%5B4ed3%5D%5B5e93%5D%5Bff1a%5D%22%2C%22WH%22%3A%5B%5D%2C%22LABELSKUSN_C%22%3A%22SKU%5Bff1a%5D%22%2C%22SKUSN%22%3A%5B%5D%2C%22LABELSTOREID_C_C%22%3A%22%5B8ba2%5D%5B5355%5D%5B521b%5D%5B5efa%5D%5B65f6%5D%5B95f4%5D%5Bff1a%5D%22%2C%22SD%22%3A%222025-08-19%22%2C%22ED%22%3A%222025-09-18%22%2C%22LABELSKUSN_C_C_C%22%3A%22%5B53ef%5D%5B552e%5D%5B5e93%5D%5B5b58%5D%5Bff1a%5D%22%2C%22KS%22%3A%5B%5D%2C%22LABELSKUSN_C_C_C_C%22%3A%22%5B5546%5D%5B54c1%5D%5B7f16%5D%5B53f7%5D%5Bff1a%5D%22%2C%22SN%22%3A%22%22%7D&_=1758166040931';
+
+    await axios.post(
+      'https://report.wowbuy.ai/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d',
+      rawParams,
+      {
+        headers: {
+          ...authHeaders,
+          'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'origin': 'https://report.wowbuy.ai',
+          'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667',
+          'sessionid': sessionId,
+        },
+      }
+    );
+
+    // 4️⃣ Gọi page_content để lấy bảng
+    const reportResp = await axios.get(
+      'https://report.wowbuy.ai/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&_paperWidth=257&_paperHeight=510&__fit__=false',
+      {
+        headers: {
+          ...authHeaders,
+          'accept': 'text/html, */*; q=0.01',
+          'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667',
+          'sessionid': sessionId,
+        },
+        params: {
+          _: Date.now(),
+          __boxModel__: true,
         },
       }
     );
