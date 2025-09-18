@@ -897,24 +897,20 @@ async function fetchWOWBUY() {
       }
     );
 
+    if (!loginResp.data) throw new Error("Login thất bại (không có response)");
+
     const cookie = loginResp.headers["set-cookie"]?.join("; ") || "";
     if (!cookie) throw new Error("Login thất bại (không có cookie)");
 
     console.log("✅ Login OK, có cookie session");
 
-    // 2️⃣ Post parameters_d (theo curl bạn gửi)
-    const params = {
-      SALE_STATUS: ["1"],
-      WH: [],
-      SKUSN: [],
-      SD: "2025-08-19",
-      ED: "2025-09-18",
-      SN: "",
-    };
+    // 2️⃣ Gửi parameters_d (dùng raw body từ curl)
+    const rawParams =
+      "__parameters__=%7B%22SALE_STATUS%22%3A%5B%221%22%5D%2C%22LABELSKUSN_C_C%22%3A%22%5B4e0a%5D%5B4e0b%5D%5B67b6%5D%5B72b6%5D%5B6001%5D%5Bff1a%5D%22%2C%22LABELSTOREID_C%22%3A%22%5B4ed3%5D%5B5e93%5D%5Bff1a%5D%22%2C%22WH%22%3A%5B%5D%2C%22LABELSKUSN_C%22%3A%22SKU%5Bff1a%5D%22%2C%22SKUSN%22%3A%5B%5D%2C%22LABELSTOREID_C_C%22%3A%22%5B8ba2%5D%5B5355%5D%5B521b%5D%5B5efa%5D%5B65f6%5D%5B95f4%5D%5Bff1a%5D%22%2C%22SD%22%3A%222025-08-19%22%2C%22ED%22%3A%222025-09-18%22%2C%22LABELSKUSN_C_C_C%22%3A%22%5B53ef%5D%5B552e%5D%5B5e93%5D%5B5b58%5D%5Bff1a%5D%22%2C%22KS%22%3A%5B%5D%2C%22LABELSKUSN_C_C_C_C%22%3A%22%5B5546%5D%5B54c1%5D%5B7f16%5D%5B53f7%5D%5Bff1a%5D%22%2C%22SN%22%3A%22%22%7D&_=";
 
     await axios.post(
       "https://report.wowbuy.ai/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d",
-      `__parameters__=${encodeURIComponent(JSON.stringify(params))}`,
+      rawParams,
       {
         headers: {
           "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -922,20 +918,21 @@ async function fetchWOWBUY() {
           "X-Requested-With": "XMLHttpRequest",
           Referer:
             "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667",
+          sessionid: "7e34a4fe-d9c8-463c-8889-b4d575b39eb1", // từ curl
         },
       }
     );
 
-    // 3️⃣ Gọi page_content (trả về bảng HTML)
+    // 3️⃣ Gọi page_content để lấy bảng
     const reportResp = await axios.get(
       "https://report.wowbuy.ai/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&_paperWidth=230&_paperHeight=510&__fit__=false",
       {
         headers: {
-          Accept: "text/html, */*; q=0.01",
           Cookie: cookie,
           "X-Requested-With": "XMLHttpRequest",
           Referer:
             "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667",
+          sessionid: "7e34a4fe-d9c8-463c-8889-b4d575b39eb1", // từ curl
         },
       }
     );
