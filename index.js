@@ -895,7 +895,7 @@ async function fetchWOWBUY() {
 
     // 1️⃣ Login
     const loginResp = await axios.post(
-      WOWBUY_LOGIN_URL,
+      'https://report.wowbuy.ai/webroot/decision/login',
       {
         username: process.env.WOWBUY_USERNAME,
         password: encryptPassword(process.env.WOWBUY_PASSWORD),
@@ -909,10 +909,12 @@ async function fetchWOWBUY() {
           ...commonHeaders,
           'origin': 'https://report.wowbuy.ai',
           'referer': 'https://report.wowbuy.ai/webroot/decision/login',
-          'content-type': 'application/json',
+          'cookie': 'tenantId=default; fine_remember_login=-2'
         },
       }
     );
+
+    console.log("📄 Login response:", JSON.stringify(loginResp.data));
 
     if (!loginResp.data) throw new Error("Login thất bại (không có response)");
 
@@ -921,8 +923,15 @@ async function fetchWOWBUY() {
 
     console.log("✅ Login OK, có cookie session");
 
-    const authToken = loginResp.data.token || "";
-    if (!authToken) throw new Error("Login thất bại (không có token)");
+    // Lấy token từ cookie fine_auth_token hoặc response
+    let authToken = loginResp.data.token;
+    if (!authToken) {
+      const fineAuthToken = loginResp.headers["set-cookie"]?.find(c => c.includes('fine_auth_token'))?.match(/fine_auth_token=([^;]+)/)?.[1];
+      if (!fineAuthToken) throw new Error("Login thất bại (không có token)");
+      authToken = fineAuthToken;
+    }
+
+    console.log("🔑 Auth token:", authToken);
 
     // Common headers with auth token and cookies
     const authHeaders = {
@@ -931,15 +940,14 @@ async function fetchWOWBUY() {
       'Cookie': `${cookie}; fineMarkId=33ecda979be5d7e00de1c37454b06101; SECKEY_ABVK=Nwx3lWSQiMnYgLUPzbqxTEpxTfCcIXaIz8VYtBDjM40%3D; BMAP_SECKEY=QhuSCbRnGHqBJGZdl_2DzsYoo980JYtVs8W1paatkWeIHaHeOYEsY9LTKlW_VwbjkCFzb4efvnRmMuzRyk_7q38kMGveRhBB4Eumi7-CsdjC-39-eQMI6vemaL0lMy-9kBBMWcHohFGygGCqYfti02xG-qDFf1MkZmcVsU0btmVFtIj5Q2q2u7jYnNYPCyT3; tenantId=default; fine_remember_login=-2; last_login_info=true`,
     };
 
-    const sessionId = '7ebafdd4-208c-4be0-9dbf-b366d3003d46'; // Use dynamic session ID if possible
+    const sessionId = '7ebafdd4-208c-4be0-9dbf-b366d3003d46'; // Cần lấy động nếu có
 
     // 2️⃣ Additional initialization requests
-    // /login/info
     await axios.post(
       'https://report.wowbuy.ai/webroot/decision/login/info',
       {
         time: new Date().toISOString().replace('T', ' ').split('.')[0],
-        ip: '115.79.32.207', // Replace with dynamic IP if needed
+        ip: '115.79.32.207',
         city: '',
       },
       {
@@ -950,7 +958,6 @@ async function fetchWOWBUY() {
       }
     );
 
-    // /favorite/entry/list
     await axios.get(
       'https://report.wowbuy.ai/webroot/decision/v10/favorite/entry/list',
       {
@@ -958,13 +965,10 @@ async function fetchWOWBUY() {
           ...authHeaders,
           'referer': 'https://report.wowbuy.ai/webroot/decision',
         },
-        params: {
-          _: Date.now(),
-        },
+        params: { _: Date.now() },
       }
     );
 
-    // /view/entry/tree
     await axios.get(
       'https://report.wowbuy.ai/webroot/decision/v10/view/entry/tree',
       {
@@ -972,13 +976,10 @@ async function fetchWOWBUY() {
           ...authHeaders,
           'referer': 'https://report.wowbuy.ai/webroot/decision',
         },
-        params: {
-          _: Date.now(),
-        },
+        params: { _: Date.now() },
       }
     );
 
-    // /token/refresh
     await axios.post(
       'https://report.wowbuy.ai/webroot/decision/token/refresh',
       {
@@ -994,7 +995,6 @@ async function fetchWOWBUY() {
       }
     );
 
-    // /preview/info/collect
     await axios.post(
       'https://report.wowbuy.ai/webroot/decision/preview/info/collect',
       'webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D',
@@ -1009,7 +1009,6 @@ async function fetchWOWBUY() {
       }
     );
 
-    // /adaptive/info/collect
     await axios.post(
       'https://report.wowbuy.ai/webroot/decision/adaptive/info/collect',
       'recordInfo=%7B%22frmInfo%22%3A%7B%22sessionID%22%3A%22' + sessionId + '%22%2C%22browserSize%22%3A%22%7B257%2C666%7D%22%2C%22browserScrollBar%22%3A%22%7B1%2C1%7D%22%2C%22fontZoom%22%3A1%2C%22componentInformation%22%3A%22%5B%5D%7BBODY%2C257%2C666%2C(0%2C0)%2C0%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%2C%7BLABEL0%2C224%2C126%2C(62%2C130)%2Cundefined%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%5D%22%7D%2C%22elementCases%22%3A%5B%5D%7D',
