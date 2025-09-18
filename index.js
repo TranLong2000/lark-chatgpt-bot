@@ -911,6 +911,7 @@ async function fetchWOWBUY() {
       encrypted: true,
     };
 
+    console.log("📝 Login payload:", JSON.stringify(loginPayload));
     const loginResponse = await axiosInstance.post('/login', loginPayload, {
       headers: {
         ...commonHeaders,
@@ -918,7 +919,15 @@ async function fetchWOWBUY() {
       },
     });
 
-    const authToken = loginResponse.data?.fine_auth_token || loginResponse.headers['set-cookie']?.find(c => c.includes('fine_auth_token'))?.split(';')[0].split('=')[1];
+    console.log("📡 Login response data:", JSON.stringify(loginResponse.data));
+    console.log("📡 Login response headers:", JSON.stringify(loginResponse.headers));
+
+    let authToken = loginResponse.data?.fine_auth_token;
+    if (!authToken) {
+      const cookieToken = loginResponse.headers['set-cookie']?.find(c => c.includes('fine_auth_token'))?.split(';')[0].split('=')[1];
+      authToken = cookieToken || loginResponse.data?.token || loginResponse.data?.access_token;
+    }
+
     if (!authToken) throw new Error("Login thất bại (không có token)");
 
     console.log("🔑 Auth token:", authToken);
@@ -938,8 +947,7 @@ async function fetchWOWBUY() {
       },
     });
 
-    // 4️⃣ Socket.io (bỏ qua vì không cần xử lý trực tiếp bằng Axios)
-    // 5️⃣ Lấy danh sách yêu thích
+    // 4️⃣ Lấy danh sách yêu thích
     await axiosInstance.get('/v10/favorite/entry/list', {
       params: { _: Date.now() },
       headers: {
@@ -949,7 +957,7 @@ async function fetchWOWBUY() {
       },
     });
 
-    // 6️⃣ Lấy cây entry
+    // 5️⃣ Lấy cây entry
     await axiosInstance.get('/v10/view/entry/tree', {
       params: { _: Date.now() },
       headers: {
@@ -959,7 +967,7 @@ async function fetchWOWBUY() {
       },
     });
 
-    // 7️⃣ Làm mới token
+    // 6️⃣ Làm mới token
     await axiosInstance.post('/token/refresh', {
       oldToken: authToken,
       tokenTimeOut: 1209600000,
@@ -971,7 +979,7 @@ async function fetchWOWBUY() {
       },
     });
 
-    // 8️⃣ Thu thập thông tin preview
+    // 7️⃣ Thu thập thông tin preview
     await axiosInstance.post('/preview/info/collect', 'webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D', {
       headers: {
         ...commonHeaders,
@@ -983,7 +991,7 @@ async function fetchWOWBUY() {
       },
     });
 
-    // 9️⃣ Thu thập thông tin adaptive
+    // 8️⃣ Thu thập thông tin adaptive
     await axiosInstance.post('/adaptive/info/collect', 'recordInfo=%7B%22frmInfo%22%3A%7B%22sessionID%22%3A%22c6b6d4b5-811a-476b-bacf-ab325243d979%22%2C%22browserSize%22%3A%22%7B257%2C666%7D%22%2C%22browserScrollBar%22%3A%22%7B1%2C1%7D%22%2C%22fontZoom%22%3A1%2C%22componentInformation%22%3A%22%5B%5D%7BBODY%2C257%2C666%2C(0%2C0)%2C0%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%2C%7BLABEL0%2C224%2C126%2C(62%2C130)%2Cundefined%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%5D%22%7D%2C%22elementCases%22%3A%5B%5D%7D', {
       headers: {
         ...commonHeaders,
@@ -995,7 +1003,7 @@ async function fetchWOWBUY() {
       },
     });
 
-    // 🔟 Lấy báo cáo
+    // 9️⃣ Lấy báo cáo
     const reportResp = await axiosInstance.get('/view/report', {
       params: {
         _: Date.now(),
