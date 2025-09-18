@@ -884,13 +884,13 @@ async function fetchWOWBUY() {
 
     console.log("✅ Login OK, có cookie session");
 
-    // 2️⃣ Gửi param request (như curl 3)
+    // 2️⃣ Post parameters_d (theo curl bạn gửi)
     const params = {
       SALE_STATUS: ["1"],
       WH: [],
       SKUSN: [],
-      SD: "2025-08-18",
-      ED: "2025-09-17",
+      SD: "2025-08-19",
+      ED: "2025-09-18",
       SN: "",
     };
 
@@ -902,11 +902,13 @@ async function fetchWOWBUY() {
           "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
           Cookie: cookie,
           "X-Requested-With": "XMLHttpRequest",
+          Referer:
+            "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667",
         },
       }
     );
 
-    // 3️⃣ Gọi page_content (curl 5)
+    // 3️⃣ Gọi page_content (trả về bảng HTML)
     const reportResp = await axios.get(
       "https://report.wowbuy.ai/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&_paperWidth=230&_paperHeight=510&__fit__=false",
       {
@@ -914,6 +916,8 @@ async function fetchWOWBUY() {
           Accept: "text/html, */*; q=0.01",
           Cookie: cookie,
           "X-Requested-With": "XMLHttpRequest",
+          Referer:
+            "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=257&height=667",
         },
       }
     );
