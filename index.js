@@ -892,22 +892,31 @@ async function fetchWOWBUY() {
     commonHeaders['Cookie'] = `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}; last_login_info=true; fineMarkId=33ecda979be5d7e00de1c37454b06101`;
 
     const axiosInstance = axios.create({
-      baseURL: 'https://report.wowbuy.ai/webroot/decision',
+      baseURL: 'https://report.wowbuy.ai/webroot/decision', // Thử thay đổi nếu cần
       headers: commonHeaders,
       withCredentials: true,
-      timeout: 5000, // Giảm timeout để tăng tốc
+      timeout: 5000,
     });
 
-    // 1️⃣ Kiểm tra token (cURL 5)
-    const infoResponse = await axiosInstance.post('/login/info', {
+    // Debug URL
+    const testUrl = '/login/info';
+    const fullUrl = axiosInstance.defaults.baseURL + testUrl;
+    console.log("📡 Testing URL:", fullUrl);
+
+    // Thử gửi request
+    const infoResponse = await axiosInstance.post(testUrl, {
       time: new Date().toISOString().replace('T', ' ').split('.')[0],
       ip: '115.79.32.207',
       city: '',
     });
     if (infoResponse.data?.errorCode) throw new Error("Token không hợp lệ");
 
-    // 2️⃣ Lấy báo cáo (cURL 19)
-    const reportResponse = await axios.get('/view/report', {
+    console.log("📡 Login info response:", JSON.stringify(infoResponse.data));
+
+    // Lấy báo cáo
+    const reportUrl = '/view/report';
+    console.log("📡 Fetching report from:", axiosInstance.defaults.baseURL + reportUrl);
+    const reportResponse = await axios.get(reportUrl, {
       params: {
         _: Date.now(),
         __boxModel__: true,
@@ -930,7 +939,6 @@ async function fetchWOWBUY() {
       return [];
     }
 
-    // 3️⃣ Trích xuất dữ liệu
     const $ = cheerio.load(reportResponse.data);
     const rows = [];
     $('table tr').each((_, tr) => {
@@ -950,6 +958,7 @@ async function fetchWOWBUY() {
 
 // Chạy hàm
 fetchWOWBUY().then(() => console.log("Done"));
+
 // ========= Ghi data vào Lark Sheet =========
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) {
