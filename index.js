@@ -903,10 +903,10 @@ async function fetchWOWBUY() {
     commonHeaders['Cookie'] = `tenantId=default; fine_remember_login=-2; fine_auth_token=${authToken}; last_login_info=true; fineMarkId=33ecda979be5d7e00de1c37454b06101`;
 
     const axiosInstance = axios.create({
-      baseURL: 'https://report.wowbuy.ai/webroot/decision', // Đảm bảo khớp với domain thực tế
+      baseURL: 'https://report.wowbuy.ai/webroot/decision', // Kiểm tra lại nếu cần
       headers: commonHeaders,
       withCredentials: true,
-      timeout: 10000, // Timeout 10s
+      timeout: 10000,
     });
 
     // 2️⃣ Kiểm tra token bằng cách gửi login/info (cURL 5)
@@ -940,7 +940,9 @@ async function fetchWOWBUY() {
     console.log("📡 Additional info:", JSON.stringify(additionalInfoResponse.data));
 
     // 6️⃣ Thu thập thông tin preview (cURL 10)
-    await axiosInstance.post('/preview/info/collect', 'webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D', {
+    const previewUrl = '/preview/info/collect';
+    console.log("📡 Sending request to:", axiosInstance.defaults.baseURL + previewUrl);
+    await axiosInstance.post(previewUrl, 'webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D', {
       headers: {
         ...commonHeaders,
         'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -950,7 +952,9 @@ async function fetchWOWBUY() {
     });
 
     // 7️⃣ Thu thập thông tin adaptive (cURL 12)
-    await axiosInstance.post('/adaptive/info/collect', 'recordInfo=%7B%22frmInfo%22%3A%7B%22sessionID%22%3A%22c6b6d4b5-811a-476b-bacf-ab325243d979%22%2C%22browserSize%22%3A%22%7B257%2C666%7D%22%2C%22browserScrollBar%22%3A%22%7B1%2C1%7D%22%2C%22fontZoom%22%3A1%2C%22componentInformation%22%3A%22%5B%5D%7BBODY%2C257%2C666%2C(0%2C0)%2C0%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%2C%7BLABEL0%2C224%2C126%2C(62%2C130)%2Cundefined%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%5D%22%7D%2C%22elementCases%22%3A%5B%5D%7D', {
+    const adaptiveUrl = '/adaptive/info/collect';
+    console.log("📡 Sending request to:", axiosInstance.defaults.baseURL + adaptiveUrl);
+    await axiosInstance.post(adaptiveUrl, 'recordInfo=%7B%22frmInfo%22%3A%7B%22sessionID%22%3A%22c6b6d4b5-811a-476b-bacf-ab325243d979%22%2C%22browserSize%22%3A%22%7B257%2C666%7D%22%2C%22browserScrollBar%22%3A%22%7B1%2C1%7D%22%2C%22fontZoom%22%3A1%2C%22componentInformation%22%3A%22%5B%5D%7BBODY%2C257%2C666%2C(0%2C0)%2C0%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%2C%7BLABEL0%2C224%2C126%2C(62%2C130)%2Cundefined%2C(undefined%2Cundefined%2Cundefined%2Cundefined)%7D%5D%22%7D%2C%22elementCases%22%3A%5B%5D%7D', {
       headers: {
         ...commonHeaders,
         'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -960,7 +964,9 @@ async function fetchWOWBUY() {
     });
 
     // 8️⃣ Lấy tài nguyên JavaScript (cURL 15)
-    await axios.get('/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js', {
+    const resourceUrl = '/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js';
+    console.log("📡 Sending request to:", 'https://report.wowbuy.ai/webroot/decision' + resourceUrl); // Sử dụng URL đầy đủ
+    await axios.get('https://report.wowbuy.ai/webroot/decision' + resourceUrl, {
       headers: {
         ...commonHeaders,
         'accept': 'text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01',
@@ -971,7 +977,9 @@ async function fetchWOWBUY() {
     });
 
     // 9️⃣ Truy vấn tham số yêu thích (cURL 16)
-    await axios.post('/view/report?op=fr_paramstpl&cmd=query_favorite_params', '', {
+    const paramUrl = '/view/report?op=fr_paramstpl&cmd=query_favorite_params';
+    console.log("📡 Sending request to:", axiosInstance.defaults.baseURL + paramUrl);
+    await axios.post(axiosInstance.defaults.baseURL + paramUrl, '', {
       headers: {
         ...commonHeaders,
         'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -982,7 +990,9 @@ async function fetchWOWBUY() {
     });
 
     // 🔟 Truy vấn tham số dialog (cURL 17)
-    await axios.post('/view/report?op=fr_dialog&cmd=parameters_d', '__parameters__=%7B%22SALE_STATUS%22%3A%5B%221%22%5D%2C%22LABELSKUSN_C_C%22%3A%22%E4%BA%A%E4%BB%B%22%2C%22LABELSTOREID_C%22%3A%22%E7%9B%B4%E7%94%9F%22%2C%22WH%22%3A%5B%5D%2C%22LABELSKUSN_C%22%3A%22SKU%22%2C%22SKUSN%22%3A%5B%5D%2C%22LABELSTOREID_C_C%22%3A%22%E8D%85%E5%BA%95%E5%8F%91%E5%8D%95%22%2C%22SD%22%3A%222025-08-19%22%2C%22ED%22%3A%222025-09-18%22%2C%22LABELSKUSN_C_C_C%22%3A%22%E5%8F%8C%E7%94%B5%E7%AB%99%22%2C%22KS%22%3A%5B%5D%2C%22LABELSKUSN_C_C_C_C%22%3A%22%E5%94%AE%E5%8D%83%E5%8F%91%E7%A5%A8%22%2C%22SN%22%3A%22%22%7D&_=1758166040931', {
+    const dialogUrl = '/view/report?op=fr_dialog&cmd=parameters_d';
+    console.log("📡 Sending request to:", axiosInstance.defaults.baseURL + dialogUrl);
+    await axios.post(axiosInstance.defaults.baseURL + dialogUrl, '__parameters__=%7B%22SALE_STATUS%22%3A%5B%221%22%5D%2C%22LABELSKUSN_C_C%22%3A%22%E4%BA%A%E4%BB%B%22%2C%22LABELSTOREID_C%22%3A%22%E7%9B%B4%E7%94%9F%22%2C%22WH%22%3A%5B%5D%2C%22LABELSKUSN_C%22%3A%22SKU%22%2C%22SKUSN%22%3A%5B%5D%2C%22LABELSTOREID_C_C%22%3A%22%E8D%85%E5%BA%95%E5%8F%91%E5%8D%95%22%2C%22SD%22%3A%222025-08-19%22%2C%22ED%22%3A%222025-09-18%22%2C%22LABELSKUSN_C_C_C%22%3A%22%E5%8F%8C%E7%94%B5%E7%AB%99%22%2C%22KS%22%3A%5B%5D%2C%22LABELSKUSN_C_C_C_C%22%3A%22%E5%94%AE%E5%8D%83%E5%8F%91%E7%A5%A8%22%2C%22SN%22%3A%22%22%7D&_=1758166040931', {
       headers: {
         ...commonHeaders,
         'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -992,7 +1002,9 @@ async function fetchWOWBUY() {
     });
 
     // 1️⃣1️⃣ Thu thập thông tin preview (cURL 18)
-    await axios.post('/preview/info/collect', 'webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D', {
+    const previewCollectUrl = '/preview/info/collect';
+    console.log("📡 Sending request to:", axiosInstance.defaults.baseURL + previewCollectUrl);
+    await axios.post(previewCollectUrl, 'webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D', {
       headers: {
         ...commonHeaders,
         'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -1002,7 +1014,9 @@ async function fetchWOWBUY() {
     });
 
     // 1️⃣2️⃣ Lấy báo cáo và trích xuất dữ liệu (cURL 19)
-    const reportResponse = await axios.get('/view/report', {
+    const reportUrl = '/view/report';
+    console.log("📡 Sending request to:", axiosInstance.defaults.baseURL + reportUrl);
+    const reportResponse = await axios.get(reportUrl, {
       params: {
         _: Date.now(),
         __boxModel__: true,
