@@ -873,6 +873,9 @@ function encryptPassword(password) {
   return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(password));
 }
 
+const axios = require('axios');
+const cheerio = require('cheerio');
+
 async function fetchWOWBUY() {
   try {
     console.log("⏳ Fetching WOWBUY data via Axios...");
@@ -916,80 +919,31 @@ async function fetchWOWBUY() {
       resource: '/com/fr/web/core/js/paramtemplate.js',
       _: Date.now(),
     };
-    console.log("📡 Resource URL:", axiosInstance.getUri({
+    const fullResourceUrl = axiosInstance.getUri({
       url: resourceUrl,
       params: resourceParams,
-    }));
-    await axios.get(resourceUrl, {
+    });
+    console.log("📡 Resource URL:", fullResourceUrl);
+
+    const resourceResponse = await axios.get(resourceUrl, {
       params: resourceParams,
       headers: {
         ...commonHeaders,
         'accept': 'text/javascript, application/javascript, application/ecmascript, application/x-ecmascript, */*; q=0.01',
         'if-modified-since': 'Mon, 26 May 2025 13:06:53 GMT',
         'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=243&height=667',
+        'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'priority': 'u=0, i',
       },
     });
+    console.log("📡 Resource response:", JSON.stringify(resourceResponse.data));
 
-    // 3️⃣ Lấy tham số yêu thích (cURL 16)
-    const paramUrl = '/view/report';
-    const paramParams = {
-      op: 'fr_paramstpl',
-      cmd: 'query_favorite_params',
-      _: Date.now(),
-    };
-    console.log("📡 Param URL:", axiosInstance.getUri({
-      url: paramUrl,
-      params: paramParams,
-    }));
-    await axios.post(paramUrl, '', {
-      params: paramParams,
-      headers: {
-        ...commonHeaders,
-        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'sessionid': 'a031a7e6-d61a-4157-805b-e6074cffbef9',
-        'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=243&height=667',
-      },
-    });
-
-    // 4️⃣ Gửi tham số dialog (cURL 17)
-    const dialogUrl = '/view/report';
-    const dialogParams = {
-      op: 'fr_dialog',
-      cmd: 'parameters_d',
-      _: Date.now(),
-    };
-    console.log("📡 Dialog URL:", axiosInstance.getUri({
-      url: dialogUrl,
-      params: dialogParams,
-    }));
-    await axios.post(dialogUrl, {
-      __parameters__: {
-        SALE_STATUS: ['1'],
-        LABELSKUSN_C_C: '商品种类',
-        LABELSTOREID_C: '直生',
-        WH: [],
-        LABELSKUSN_C: 'SKU',
-        SKUSN: [],
-        LABELSTOREID_C_C: '订单发货单',
-        SD: '2025-08-19',
-        ED: '2025-09-18',
-        LABELSKUSN_C_C_C: '双电站',
-        KS: [],
-        LABELSKUSN_C_C_C_C: '售千发券',
-        SN: '',
-      },
-      _: 1758190710650,
-    }, {
-      params: dialogParams,
-      headers: {
-        ...commonHeaders,
-        'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'sessionid': 'a031a7e6-d61a-4157-805b-e6074cffbef9',
-        'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=243&height=667',
-      },
-    });
-
-    // 5️⃣ Lấy báo cáo (cURL 19)
+    // 3️⃣ Lấy báo cáo (cURL 19)
     const reportUrl = '/view/report';
     const reportParams = {
       _: Date.now(),
@@ -1014,6 +968,13 @@ async function fetchWOWBUY() {
         'accept': 'text/html, */*; q=0.01',
         'referer': 'https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=243&height=667',
         'sessionid': 'a031a7e6-d61a-4157-805b-e6074cffbef9',
+        'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"Windows"',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-origin',
+        'priority': 'u=1, i',
       },
     });
 
@@ -1034,7 +995,7 @@ async function fetchWOWBUY() {
     console.log("✅ Data fetched and parsed successfully");
     return rows;
   } catch (err) {
-    console.error("❌ fetchWOWBUY error:", err.message);
+    console.error("❌ fetchWOWBUY error:", err.message, err.response?.status, err.response?.data);
     return [];
   }
 }
