@@ -980,40 +980,30 @@ async function fetchWOWBUY() {
     await fetchCollectInfo();
     const page = await fetchPageContent();
 
-    // Lưu full ra file (nếu chạy local thì mở được, còn Railway thì ignore)
-    fs.writeFileSync("wowbuy.html", page, "utf8");
-    console.log("✅ Đã lưu dữ liệu ra wowbuy.html");
+    // ❌ Bỏ ghi file, thay bằng in trực tiếp
+    console.log("✅ Đã lấy dữ liệu từ WOWBUY");
 
-    // In thử preview HTML
+    // In preview HTML (1000 ký tự đầu)
     console.log("🔎 HTML preview (1000 ký tự đầu):\n", page.slice(0, 1000));
 
-    // In 20 dòng đầu tiên
+    // In 20 dòng đầu tiên của HTML
     const lines = page.split("\n").slice(0, 20);
     console.log("🔎 20 dòng HTML đầu tiên:\n", lines.join("\n"));
 
-    // Parse bảng thử (nếu có)
-   const $ = cheerio.load(page);
-   const rows = [];
-   $("table tr").each((i, tr) => {
-     const cols = [];
-     $(tr)
-       .find("td")
-       .each((j, td) => {
-         cols.push($(td).text().trim());
-       });
-     if (cols.length > 0) rows.push(cols);
-   });
-   
-   console.log("📊 Tổng số dòng (table tr):", rows.length);
-   console.log("🔎 10 dòng đầu tiên:", rows.slice(0, 10));
+    // Parse bảng thử bằng cheerio
+    const $ = cheerio.load(page);
+    const rows = $("table tr").map((i, el) => {
+      return $(el).text().trim();
+    }).get();
 
+    console.log("📊 Tổng số dòng (table tr):", rows.length);
+    console.log("🔎 10 dòng đầu tiên:", rows.slice(0, 10));
 
     return rows;
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
   }
 }
-
 
 // ========= Ghi data vào Lark Sheet =========
 async function getTenantAccessToken() {
@@ -1053,8 +1043,8 @@ async function writeToLark(tableData) {
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
 }
 
-// ========= Cron job 5 phút =========
-cron.schedule("*/5 * * * *", async () => {
+// ========= Cron job 1 phút =========
+cron.schedule("*/1 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
