@@ -964,17 +964,23 @@ async function fetchPageContent() {
         "Authorization": `Bearer ${currentToken}`,
         "Cookie": currentCookie,
         "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json, text/javascript, */*; q=0.01",
+        "Accept": "*/*",
         "X-Requested-With": "XMLHttpRequest",
       },
     });
 
     if (!res.ok) throw new Error(`[PageContent] HTTP ${res.status}`);
 
-    const data = await res.json();        // 👈 Parse JSON
-    console.log("✅ [PageContent] Done");
+    const raw = await res.text();
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch (e) {
+      console.error("⚠️ Không parse được JSON. Raw preview:\n", raw.slice(0, 500));
+      throw e;
+    }
 
-    // Trả ra HTML bên trong
+    console.log("✅ [PageContent] Done");
     return data.html || "";
   } catch (err) {
     console.error(`❌ [PageContent] Error:`, err.message);
