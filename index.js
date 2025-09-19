@@ -1003,43 +1003,29 @@ async function fetchWOWBUY() {
     await fetchFavoriteParams();
     await fetchDialogParameters();
     await fetchCollectInfo();
-    const page = await fetchPageContent();
-    fs.writeFileSync("wowbuy.html", page, "utf8"); // page lúc này là HTML lấy từ JSON
+    const raw = await fetchPageContent();
 
-    // ❌ Bỏ ghi file, thay bằng in trực tiếp
-    console.log("✅ Đã lấy dữ liệu từ WOWBUY");
+    console.log("📄 Raw response length:", raw.length);
 
-    // In preview HTML (1000 ký tự đầu)
-    console.log("🔎 HTML preview (1000 ký tự đầu):\n", page.slice(0, 1000));
-
-    // In 20 dòng đầu tiên của HTML
-    const lines = page.split("\n").slice(0, 20);
+    // In thử 20 dòng đầu
+    const lines = raw.split("\n").slice(0, 20);
     console.log("🔎 20 dòng HTML đầu tiên:\n", lines.join("\n"));
 
-    // Parse HTML để debug thêm
-   const $ = cheerio.load(page);
+    // Dùng cheerio để parse bảng
+    const $ = cheerio.load(raw);
 
-   // In thử iframe
-   const iframes = $("iframe").map((i, el) => $(el).attr("src")).get();
-   console.log("🖼️ Tìm thấy iframe:", iframes);
-   
-   // In thử script (chỉ lấy 500 ký tự đầu mỗi script để tránh log quá dài)
-   $("script").each((i, el) => {
-     const content = $(el).html();
-     if (content && content.length > 50) {
-       console.log(`📜 Script[${i}] preview:`, content.slice(0, 200));
-     }
-   });
-   
-   // Vẫn thử parse table (nếu có)
-   const rows = $("table tr").map((i, el) => {
-     return $(el).text().trim();
-   }).get();
-   
-   console.log("📊 Tổng số dòng (table tr):", rows.length);
-   console.log("🔎 10 dòng đầu tiên:", rows.slice(0, 10));
+    const tableData = [];
+    $("table.x-table tr").each((i, row) => {
+      const cells = $(row).find("td").map((j, cell) => $(cell).text().trim()).get();
+      if (cells.length > 0) {
+        tableData.push(cells);
+      }
+    });
 
-    return rows;
+    console.log("📊 Tổng số dòng bảng:", tableData.length);
+    console.log("🔎 5 dòng đầu tiên:", tableData.slice(0, 5));
+
+    return tableData;
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
   }
