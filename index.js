@@ -853,27 +853,6 @@ const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
 const LARK_TABLE_ID = "EmjelX"; // sheet id
 
-const WOWBUY_LOGIN_URL = "https://report.wowbuy.ai/webroot/decision/login";
-const WOWBUY_REPORT_URL =
-  "https://report.wowbuy.ai/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d";
-
-// ========= HELPER =========
-async function getTenantAccessToken() {
-  const resp = await axios.post(
-    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
-    {
-      app_id: process.env.LARK_APP_ID,
-      app_secret: process.env.LARK_APP_SECRET,
-    }
-  );
-  return resp.data.tenant_access_token;
-}
-
-// ===== Helper encrypt password =====
-function encryptPassword(password) {
-  return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(password));
-}
-
 const BASE_URL = "https://report.wowbuy.ai";
 
 let currentToken = process.env.WOWBUY_TOKEN;
@@ -903,8 +882,8 @@ async function fetchLoginInfo() {
     url,
     {
       headers: {
-        "Authorization": `Bearer ${currentToken}`,
-        "Cookie": currentCookie,
+        Authorization: `Bearer ${currentToken}`,
+        Cookie: currentCookie,
       },
     },
     "LoginInfo"
@@ -916,9 +895,7 @@ async function fetchParamsTemplate() {
   return await safeFetch(
     url,
     {
-      headers: {
-        "Cookie": currentCookie,
-      },
+      headers: { Cookie: currentCookie },
     },
     "ParamTemplate"
   );
@@ -931,8 +908,8 @@ async function fetchFavoriteParams() {
     {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${currentToken}`,
-        "Cookie": currentCookie,
+        Authorization: `Bearer ${currentToken}`,
+        Cookie: currentCookie,
       },
     },
     "FavoriteParams"
@@ -941,15 +918,16 @@ async function fetchFavoriteParams() {
 
 async function fetchDialogParameters() {
   const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
-  const body = "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+  const body =
+    "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
   return await safeFetch(
     url,
     {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${currentToken}`,
+        Authorization: `Bearer ${currentToken}`,
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "Cookie": currentCookie,
+        Cookie: currentCookie,
       },
       body,
     },
@@ -964,9 +942,9 @@ async function fetchCollectInfo() {
     {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${currentToken}`,
+        Authorization: `Bearer ${currentToken}`,
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "Cookie": currentCookie,
+        Cookie: currentCookie,
       },
       body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
     },
@@ -980,8 +958,8 @@ async function fetchPageContent() {
     url,
     {
       headers: {
-        "Authorization": `Bearer ${currentToken}`,
-        "Cookie": currentCookie,
+        Authorization: `Bearer ${currentToken}`,
+        Cookie: currentCookie,
       },
     },
     "PageContent"
@@ -1004,16 +982,43 @@ async function fetchWOWBUY() {
 
     fs.writeFileSync("wowbuy.html", page, "utf8");
     console.log("✅ Đã lưu dữ liệu ra wowbuy.html");
+
+    // === NEW: parse table từ HTML ===
+    const $ = cheerio.load(page);
+    const rows = [];
+    $("table tr").each((i, tr) => {
+      const cols = [];
+      $(tr)
+        .find("td, th")
+        .each((j, td) => {
+          cols.push($(td).text().trim());
+        });
+      if (cols.length > 0) rows.push(cols);
+    });
+
+    console.log("📊 Tổng số dòng:", rows.length);
+    console.log("🔍 10 dòng đầu tiên:");
+    console.log(rows.slice(0, 10));
+
+    return rows; // để writeToLark dùng
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
+    return [];
   }
 }
 
-// Run
-fetchWOWBUY();
-
-
 // ========= Ghi data vào Lark Sheet =========
+async function getTenantAccessToken() {
+  const resp = await axios.post(
+    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
+    {
+      app_id: LARK_APP_ID,
+      app_secret: LARK_APP_SECRET,
+    }
+  );
+  return resp.data.tenant_access_token;
+}
+
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) {
     console.warn("⚠️ Không có dữ liệu để ghi");
@@ -1025,7 +1030,7 @@ async function writeToLark(tableData) {
 
   const body = {
     valueRange: {
-      range: `${LARK_TABLE_ID}!J1`,
+      range: `${LARK_TABLE_ID}!A1`,
       values: tableData,
     },
   };
@@ -1040,8 +1045,8 @@ async function writeToLark(tableData) {
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
 }
 
-// ========= Cron job 5 phút =========
-cron.schedule("*/1 * * * *", async () => {
+// ========= Cron job =========
+cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
@@ -1053,6 +1058,9 @@ cron.schedule("*/1 * * * *", async () => {
 app.listen(3000, () => {
   console.log("🚀 Bot running on port 3000");
 });
+
+// Run ngay lập tức
+fetchWOWBUY();
 
        
 /* =======================================================
