@@ -945,7 +945,11 @@ async function fetchCollectInfo() {
 }
 
 async function fetchPageContent() {
-  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+  // copy nguyên __parameters__ từ request thật
+  const PARAMETERS =
+    "%7B%22SALE_STATUS%22%3A%5B5b%5D%221%22%5B5d%5D%2C%22LABELSKUSN_C_C%22%3A%22%5B4e0a%5D%5B4e0b%5D%5B67b6%5D%5B72b6%5D%5B6001%5D%5Bff1a%5D%22%2C%22LABELSTOREID_C%22%3A%22%5B4ed3%5D%5B5e93%5D%5Bff1a%5D%22%2C%22WH%22%3A%5B5b%5D%5B5d%5D%2C%22LABELSKUSN_C%22%3A%22SKU%5Bff1a%5D%22%2C%22SKUSN%22%3A%5B5b%5D%5B5d%5D%2C%22LABELSTOREID_C_C%22%3A%22%5B8ba2%5D%5B5355%5D%5B521b%5D%5B5efa%5D%5B65f6%5D%5B95f4%5D%5Bff1a%5D%22%2C%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%2C%22LABELSKUSN_C_C_C%22%3A%22%5B53ef%5D%5B552e%5D%5B5e93%5D%5B5b58%5D%5Bff1a%5D%22%2C%22KS%22%3A%5B5b%5D%5B5d%5D%2C%22LABELSKUSN_C_C_C_C%22%3A%22%5B5546%5D%5B54c1%5D%5B7f16%5D%5B53f7%5D%5Bff1a%5D%22%2C%22SN%22%3A%22%22%7D";
+
+  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&__parameters__=${PARAMETERS}`;
 
   return await safeFetch(
     url,
@@ -953,16 +957,17 @@ async function fetchPageContent() {
       headers: {
         "Authorization": `Bearer ${currentToken}`,
         "Cookie": currentCookie,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
         "Accept": "text/html, */*; q=0.01",
         "X-Requested-With": "XMLHttpRequest",
-        "Referer": "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667"
+        "Referer":
+          "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
       },
     },
     "PageContent"
   );
 }
-
 
 // ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
@@ -987,13 +992,21 @@ async function fetchWOWBUY() {
     console.log("🔎 20 dòng HTML đầu tiên:\n", lines.join("\n"));
 
     // Parse bảng thử (nếu có)
-    const $ = cheerio.load(page);
-    const rows = $("table tr").map((i, el) => {
-      return $(el).text().trim();
-    }).get();
+   const $ = cheerio.load(page);
+   const rows = [];
+   $("table tr").each((i, tr) => {
+     const cols = [];
+     $(tr)
+       .find("td")
+       .each((j, td) => {
+         cols.push($(td).text().trim());
+       });
+     if (cols.length > 0) rows.push(cols);
+   });
+   
+   console.log("📊 Tổng số dòng (table tr):", rows.length);
+   console.log("🔎 10 dòng đầu tiên:", rows.slice(0, 10));
 
-    console.log("📊 Tổng số dòng (table tr):", rows.length);
-    console.log("🔎 10 dòng đầu tiên:", rows.slice(0, 10));
 
     return rows;
   } catch (err) {
