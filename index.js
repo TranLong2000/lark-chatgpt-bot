@@ -873,9 +873,6 @@ function encryptPassword(password) {
   return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(password));
 }
 
-const axios = require('axios');
-const cheerio = require('cheerio');
-
 async function fetchWOWBUY() {
   try {
     console.log("⏳ Fetching WOWBUY data via Axios...");
