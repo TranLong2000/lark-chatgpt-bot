@@ -821,25 +821,35 @@ async function sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_I
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
 
-// ===== 6. Cron Job mỗi 18:00 =====
-cron.schedule("0 18 * * *", async () => {
-  try {
-    const APP_ACCESS_TOKEN = await getAppAccessToken(); // Section 1 đã có
-    const LARK_GROUP_CHAT_IDS_TEST = process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
-    const SPREADSHEET_TOKEN_TEST = process.env.SPREADSHEET_TOKEN_TEST;
-    const SHEET_ID_TEST = process.env.SHEET_ID_TEST;
+// ===== 6. Cron Job mỗi 18:00 (giờ VN) =====
+cron.schedule(
+  "0 18 * * *",
+  async () => {
+    try {
+      const APP_ACCESS_TOKEN = await getAppAccessToken(); // Section 1 đã có
+      const LARK_GROUP_CHAT_IDS_TEST =
+        process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
+      const SPREADSHEET_TOKEN_TEST = process.env.SPREADSHEET_TOKEN_TEST;
+      const SHEET_ID_TEST = process.env.SHEET_ID_TEST;
 
-    await sendSheetAsImageWithMockStyle(
-      APP_ACCESS_TOKEN,
-      LARK_GROUP_CHAT_IDS_TEST,
-      SPREADSHEET_TOKEN_TEST,
-      SHEET_ID_TEST
-    );
-    console.log("✅ [Cron] Đã gửi hình (mock style, E2 xanh nhạt) từ Sheet vào group test!");
-  } catch (err) {
-    console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
+      await sendSheetAsImageWithMockStyle(
+        APP_ACCESS_TOKEN,
+        LARK_GROUP_CHAT_IDS_TEST,
+        SPREADSHEET_TOKEN_TEST,
+        SHEET_ID_TEST
+      );
+      console.log(
+        "✅ [Cron] Đã gửi hình (mock style, E2 xanh nhạt) từ Sheet vào group test!"
+      );
+    } catch (err) {
+      console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
+    }
+  },
+  {
+    scheduled: true,
+    timezone: "Asia/Ho_Chi_Minh", // 👈 Thêm timezone để chạy đúng 18:00 giờ VN
   }
-});
+);
 
 /* ==================================================
    FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
@@ -990,14 +1000,28 @@ async function fetchWOWBUY() {
     const lines = page.split("\n").slice(0, 20);
     console.log("🔎 20 dòng HTML đầu tiên:\n", lines.join("\n"));
 
-    // Parse bảng thử bằng cheerio
-    const $ = cheerio.load(page);
-    const rows = $("table tr").map((i, el) => {
-      return $(el).text().trim();
-    }).get();
+    // Parse HTML để debug thêm
+   const $ = cheerio.load(page);
 
-    console.log("📊 Tổng số dòng (table tr):", rows.length);
-    console.log("🔎 10 dòng đầu tiên:", rows.slice(0, 10));
+   // In thử iframe
+   const iframes = $("iframe").map((i, el) => $(el).attr("src")).get();
+   console.log("🖼️ Tìm thấy iframe:", iframes);
+   
+   // In thử script (chỉ lấy 500 ký tự đầu mỗi script để tránh log quá dài)
+   $("script").each((i, el) => {
+     const content = $(el).html();
+     if (content && content.length > 50) {
+       console.log(`📜 Script[${i}] preview:`, content.slice(0, 200));
+     }
+   });
+   
+   // Vẫn thử parse table (nếu có)
+   const rows = $("table tr").map((i, el) => {
+     return $(el).text().trim();
+   }).get();
+   
+   console.log("📊 Tổng số dòng (table tr):", rows.length);
+   console.log("🔎 10 dòng đầu tiên:", rows.slice(0, 10));
 
     return rows;
   } catch (err) {
