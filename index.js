@@ -954,7 +954,7 @@ async function fetchCollectInfo() {
   );
 }
 
-// ---------------- fetchPageContent ----------------
+// ---------------------- Fetch Page Content ----------------------
 async function fetchPageContent() {
   const url =
     "https://report.wowbuy.ai/webroot/decision/view/report?_=1758265383254&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false";
@@ -962,15 +962,15 @@ async function fetchPageContent() {
   const res = await fetch(url, {
     method: "GET",
     headers: {
-      "accept": "text/html, */*; q=0.01",
+      accept: "text/html, */*; q=0.01",
       "accept-language":
         "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
-      "authorization":
+      authorization:
         "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTQ3MTQ1NSwiaWF0IjoxNzU4MjY1MDA3LCJqdGkiOiJlR041bm5BRlNVK0dJS0RUSWVvNUw0UnJrMHkwcU9GK2RPdTZFbWhyRWRtUXRzZWYifQ.cmcNEcI_QxQWjTNwHRhkO7kmHmbXQyf2rljAoX4PY6o",
-      "cookie":
+      cookie:
         "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTQ3MTQ1NSwiaWF0IjoxNzU4MjY1MDA3LCJqdGkiOiJlR041bm5BRlNVK0dJS0RUSWVvNUw0UnJrMHkwcU9GK2RPdTZFbWhyRWRtUXRzZWYifQ.cmcNEcI_QxQWjTNwHRhkO7kmHmbXQyf2rljAoX4PY6o",
-      "priority": "u=1, i",
-      "referer":
+      priority: "u=1, i",
+      referer:
         "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
       "sec-ch-ua":
         '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
@@ -979,7 +979,7 @@ async function fetchPageContent() {
       "sec-fetch-dest": "empty",
       "sec-fetch-mode": "cors",
       "sec-fetch-site": "same-origin",
-      "sessionid": "8f73ed76-216a-4162-b18f-c47feac36a7b",
+      sessionid: "8f73ed76-216a-4162-b18f-c47feac36a7b",
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       "x-requested-with": "XMLHttpRequest",
@@ -990,6 +990,7 @@ async function fetchPageContent() {
   console.log("📄 Raw response length:", raw.length);
   console.log("🔎 Raw preview (300 ký tự):\n", raw.slice(0, 300));
 
+  // Nếu response là JSON
   let html = "";
   try {
     const data = JSON.parse(raw);
@@ -1000,44 +1001,35 @@ async function fetchPageContent() {
     html = raw;
   }
 
-  return html;
+  // Parse HTML bằng cheerio
+  const $ = cheerio.load(html);
+  const rows = [];
+
+  // Quan trọng: chọn tất cả tr có id dạng r-...
+  $("tr[id^='r-']").each((i, tr) => {
+    const cols = [];
+    $(tr)
+      .find("td")
+      .each((j, td) => cols.push($(td).text().trim()));
+    if (cols.length > 0) rows.push(cols);
+  });
+
+  console.log("📊 Tổng số dòng:", rows.length);
+  console.log("🔎 3 dòng đầu tiên:", rows.slice(0, 3));
+
+  return rows;
 }
 
-// ---------------- fetchWOWBUY ----------------
+// ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
   try {
     console.log("🔐 Dùng token + cookie từ .env");
 
-    await fetchParamsTemplate();
-    await fetchFavoriteParams();
-    await fetchDialogParameters();
-    await fetchCollectInfo();
+    const tableData = await fetchPageContent();
 
-    const html = await fetchPageContent();
-    if (!html) {
-      console.warn("⚠️ Không có HTML trả về");
+    if (!tableData || tableData.length === 0) {
+      console.warn("⚠️ Không có dữ liệu để ghi");
       return [];
-    }
-
-    // In thử 20 dòng đầu để debug
-    const lines = html.split("\n").slice(0, 20);
-    console.log("🔎 20 dòng HTML đầu tiên:\n", lines.join("\n"));
-
-    // Parse HTML table
-    const $ = cheerio.load(html);
-    const tableData = [];
-
-    $("table.x-table tr").each((i, row) => {
-      const cells = $(row)
-        .find("td")
-        .map((j, cell) => $(cell).text().trim())
-        .get();
-
-      if (cells.length > 0) tableData.push(cells);
-    });
-
-    if (!tableData.length) {
-      console.warn("⚠️ Không tìm thấy dữ liệu trong table.x-table");
     }
 
     console.log("📊 Tổng số dòng bảng:", tableData.length);
@@ -1049,6 +1041,8 @@ async function fetchWOWBUY() {
     return [];
   }
 }
+
+fetchWOWBUY();
 
 // ========= Ghi data vào Lark Sheet =========
 async function getTenantAccessToken() {
