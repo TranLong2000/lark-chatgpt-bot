@@ -957,11 +957,13 @@ async function fetchCollectInfo() {
 async function fetchPageContent() {
   const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
 
-  const body = "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+  // ⚠️ Body quan trọng: truyền tham số thời gian vào
+  const body =
+    "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
 
   console.log(`📡 [PageContent] Fetching: ${url}`);
   const res = await fetch(url, {
-    method: "POST",   // 🔴 quan trọng
+    method: "POST", // 🔴 thay GET bằng POST
     headers: {
       "Authorization": `Bearer ${currentToken}`,
       "Cookie": currentCookie,
@@ -969,23 +971,25 @@ async function fetchPageContent() {
       "Accept": "*/*",
       "X-Requested-With": "XMLHttpRequest",
       "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "Referer": "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667"
+      "Referer":
+        "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
     },
-    body,  // 🔴 gửi __parameters__ trong body thay vì query
+    body,
   });
 
   const raw = await res.text();
-  fs.writeFileSync("debug_pagecontent.txt", raw, "utf8");
-  console.log("📄 Saved raw response length:", raw.length);
+  console.log("📄 Raw response length:", raw.length);
+  console.log("🔎 Raw preview (300 ký tự):\n", raw.slice(0, 300));
 
   let data;
   try {
     data = JSON.parse(raw);
   } catch {
-    console.error("⚠️ Không parse được JSON. Raw preview:", raw.slice(0, 500));
+    console.error("⚠️ Không parse được JSON. Raw đầu tiên:\n", raw.slice(0, 500));
     return "";
   }
 
+  console.log("✅ JSON parse thành công, html length:", data.html.length);
   return data.html || "";
 }
 
