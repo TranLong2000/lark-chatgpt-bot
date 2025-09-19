@@ -945,19 +945,24 @@ async function fetchCollectInfo() {
 }
 
 async function fetchPageContent() {
-  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true`;
+  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+
   return await safeFetch(
     url,
     {
       headers: {
-        "authorization": `Bearer ${currentToken}`,
-        "cookie": currentCookie,
-        "x-requested-with": "XMLHttpRequest",
+        "Authorization": `Bearer ${currentToken}`,
+        "Cookie": currentCookie,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        "Accept": "text/html, */*; q=0.01",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667"
       },
     },
     "PageContent"
   );
 }
+
 
 // ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
