@@ -874,187 +874,142 @@ function encryptPassword(password) {
   return CryptoJS.enc.Base64.stringify(CryptoJS.enc.Utf8.parse(password));
 }
 
-// ===== Step 1: Login =====
-async function loginWOWBUY(username, password) {
+const BASE_URL = "https://report.wowbuy.ai";
+
+let currentToken = process.env.WOWBUY_TOKEN;
+let currentCookie = process.env.WOWBUY_COOKIE;
+
+// ---------------------- Helpers ----------------------
+async function safeFetch(url, options = {}, stepName = "Unknown") {
   try {
-    console.log("🔐 [Step 1] Đang login...");
-
-    const resp = await axios.post(
-      "https://report.wowbuy.ai/webroot/decision/login",
-      {
-        userNo: username,
-        password: encryptPassword(password),
-        validity: -1,
-      },
-      {
-        headers: {
-          "content-type": "application/json",
-          origin: "https://report.wowbuy.ai",
-          referer: "https://report.wowbuy.ai/webroot/decision",
-          "user-agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-        },
-        withCredentials: true,
-      }
-    );
-
-    const data = resp.data;
-    if (!data?.token) {
-      throw new Error("Login thất bại, không có token.");
+    console.log(`📡 [${stepName}] Fetching: ${url}`);
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      throw new Error(`[${stepName}] HTTP ${res.status}`);
     }
-
-    const authToken = data.token;
-    const cookieHeader = (resp.headers["set-cookie"] || [])
-      .map(c => c.split(";")[0])
-      .join("; ");
-
-    console.log("✅ [Step 1] Login thành công, token:", authToken);
-    return { authToken, cookieHeader };
+    const text = await res.text();
+    console.log(`✅ [${stepName}] Done`);
+    return text;
   } catch (err) {
-    console.error("❌ [Step 1] Login lỗi:", err.message);
+    console.error(`❌ [${stepName}] Error:`, err.message);
     throw err;
   }
 }
 
-// ===== Step 2: Check token =====
-async function checkLoginInfo(authToken, cookieHeader) {
-  try {
-    console.log("🔎 [Step 2] Check login info...");
-
-    const resp = await axios.post(
-      "https://report.wowbuy.ai/webroot/decision/login/info",
-      {
-        time: new Date().toISOString().replace("T", " ").split(".")[0],
-        ip: "115.79.32.207",
-        city: "",
-      },
-      {
-        headers: {
-          accept: "application/json, text/javascript, */*; q=0.01",
-          "content-type": "application/json",
-          authorization: `Bearer ${authToken}`,
-          cookie: cookieHeader,
-          origin: "https://report.wowbuy.ai",
-          referer: "https://report.wowbuy.ai/webroot/decision",
-          "user-agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-        },
-      }
-    );
-
-    if (resp.data?.errorCode) {
-      throw new Error("Token không hợp lệ.");
-    }
-
-    console.log("✅ [Step 2] Token hợp lệ!");
-    return true;
-  } catch (err) {
-    console.error("❌ [Step 2] Check login info lỗi:", err.message);
-    return false;
-  }
-}
-
-// ===== Step 3 → 5: Fetch data =====
-async function fetchWOWBUYData(authToken, cookieHeader, sessionId) {
-  const baseURL = "https://report.wowbuy.ai/webroot/decision";
-  const headersBase = {
-    authorization: `Bearer ${authToken}`,
-    cookie: cookieHeader,
-    "user-agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-    "x-requested-with": "XMLHttpRequest",
-    referer:
-      "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
-    origin: "https://report.wowbuy.ai",
-    sessionid: sessionId,
-  };
-
-  try {
-    // Step 2: Query favorite params
-    console.log("📌 [Step 3] Query favorite params...");
-    const res2 = await axios.post(
-      `${baseURL}/view/report?op=fr_paramstpl&cmd=query_favorite_params`,
-      {},
-      { headers: { ...headersBase, "content-length": 0 } }
-    );
-    console.log("✅ [Step 3] Done:", JSON.stringify(res2.data).slice(0, 200));
-
-    // Step 3: Send parameters
-    console.log("📌 [Step 4] Gửi parameters...");
-    const paramsBody =
-      "__parameters__=" +
-      encodeURIComponent(
-        JSON.stringify({
-          SALE_STATUS: ["1"],
-          SD: "2025-08-20",
-          ED: "2025-09-19",
-          SN: "",
-        })
-      );
-
-    const res3 = await axios.post(
-      `${baseURL}/view/report?op=fr_dialog&cmd=parameters_d`,
-      paramsBody,
-      {
-        headers: {
-          ...headersBase,
-          "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        },
-      }
-    );
-    console.log("✅ [Step 4] Done:", JSON.stringify(res3.data).slice(0, 200));
-
-    // Step 4: Collect preview info
-    console.log("📌 [Step 5] Collect preview info...");
-    const collectBody =
-      "webInfo=" +
-      encodeURIComponent(JSON.stringify({ webResolution: "1536*864", fullScreen: 0 }));
-
-    const res4 = await axios.post(`${baseURL}/preview/info/collect`, collectBody, {
+// ---------------------- API Calls ----------------------
+async function fetchLoginInfo() {
+  const url = `${BASE_URL}/webroot/decision/login/info`;
+  return await safeFetch(
+    url,
+    {
       headers: {
-        ...headersBase,
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Authorization": `Bearer ${currentToken}`,
+        "Cookie": currentCookie,
       },
-    });
-    console.log("✅ [Step 5] Done:", JSON.stringify(res4.data).slice(0, 200));
-
-    // Step 5: Get report page content
-    console.log("📌 [Step 6] Get report page content...");
-    const res5 = await axios.get(
-      `${baseURL}/view/report?_= ${Date.now()}&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`,
-      { headers: { ...headersBase, accept: "text/html, */*; q=0.01" } }
-    );
-    console.log("✅ [Step 6] HTML length:", res5.data.length);
-
-    return res5.data;
-  } catch (err) {
-    console.error("❌ fetchWOWBUYData error:", err.message);
-    throw err;
-  }
+    },
+    "LoginInfo"
+  );
 }
 
-// ===== Main function =====
+async function fetchParamsTemplate() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
+  return await safeFetch(
+    url,
+    {
+      headers: {
+        "Cookie": currentCookie,
+      },
+    },
+    "ParamTemplate"
+  );
+}
+
+async function fetchFavoriteParams() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`;
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${currentToken}`,
+        "Cookie": currentCookie,
+      },
+    },
+    "FavoriteParams"
+  );
+}
+
+async function fetchDialogParameters() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
+  const body = "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${currentToken}`,
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Cookie": currentCookie,
+      },
+      body,
+    },
+    "DialogParameters"
+  );
+}
+
+async function fetchCollectInfo() {
+  const url = `${BASE_URL}/webroot/decision/preview/info/collect`;
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${currentToken}`,
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Cookie": currentCookie,
+      },
+      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
+    },
+    "CollectInfo"
+  );
+}
+
+async function fetchPageContent() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true`;
+  return await safeFetch(
+    url,
+    {
+      headers: {
+        "Authorization": `Bearer ${currentToken}`,
+        "Cookie": currentCookie,
+      },
+    },
+    "PageContent"
+  );
+}
+
+// ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
   try {
-    const { authToken, cookieHeader } = await loginWOWBUY(
-      process.env.WOWBUY_USER,
-      process.env.WOWBUY_PASS
-    );
+    console.log("🔐 Bắt đầu dùng token + cookie từ .env");
 
-    const ok = await checkLoginInfo(authToken, cookieHeader);
-    if (!ok) throw new Error("Login không hợp lệ!");
+    const loginInfo = await fetchLoginInfo();
+    console.log("ℹ️ Login Info:", loginInfo.slice(0, 200));
 
-    // TODO: thay sessionId bằng cái bạn lấy được từ web
-    const sessionId = "4b2293b0-c1e2-4b9a-bf4b-002a5882a91a";
+    await fetchParamsTemplate();
+    await fetchFavoriteParams();
+    await fetchDialogParameters();
+    await fetchCollectInfo();
+    const page = await fetchPageContent();
 
-    const html = await fetchWOWBUYData(authToken, cookieHeader, sessionId);
-    console.log("🎉 Fetch xong, dữ liệu HTML:", html.slice(0, 500)); // in thử 500 ký tự đầu
+    fs.writeFileSync("wowbuy.html", page, "utf8");
+    console.log("✅ Đã lưu dữ liệu ra wowbuy.html");
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
   }
 }
 
-// Gọi thử
+// Run
 fetchWOWBUY();
 
 
