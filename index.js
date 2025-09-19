@@ -954,6 +954,7 @@ async function fetchCollectInfo() {
   );
 }
 
+// ---------------- fetchPageContent ----------------
 async function fetchPageContent() {
   const url =
     "https://report.wowbuy.ai/webroot/decision/view/report?_=1758265383254&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false";
@@ -999,24 +1000,10 @@ async function fetchPageContent() {
     html = raw;
   }
 
-  // Dùng cheerio parse table
-  const $ = cheerio.load(html);
-  const rows = [];
-  $("table.x-table tbody tr").each((i, tr) => {
-    const cols = [];
-    $(tr)
-      .find("td")
-      .each((j, td) => cols.push($(td).text().trim()));
-    rows.push(cols);
-  });
-
-  console.log("📊 Tổng số dòng:", rows.length);
-  console.log("🔎 10 dòng đầu tiên:", rows.slice(0, 10));
+  return html;
 }
 
-fetchPageContent();
-
-// ---------------------- Main Flow ----------------------
+// ---------------- fetchWOWBUY ----------------
 async function fetchWOWBUY() {
   try {
     console.log("🔐 Dùng token + cookie từ .env");
@@ -1025,16 +1012,19 @@ async function fetchWOWBUY() {
     await fetchFavoriteParams();
     await fetchDialogParameters();
     await fetchCollectInfo();
-    const raw = await fetchPageContent();
 
-    console.log("📄 Raw response length:", raw.length);
+    const html = await fetchPageContent();
+    if (!html) {
+      console.warn("⚠️ Không có HTML trả về");
+      return [];
+    }
 
     // In thử 20 dòng đầu để debug
-    const lines = raw.split("\n").slice(0, 20);
+    const lines = html.split("\n").slice(0, 20);
     console.log("🔎 20 dòng HTML đầu tiên:\n", lines.join("\n"));
 
     // Parse HTML table
-    const $ = cheerio.load(raw);
+    const $ = cheerio.load(html);
     const tableData = [];
 
     $("table.x-table tr").each((i, row) => {
@@ -1046,12 +1036,17 @@ async function fetchWOWBUY() {
       if (cells.length > 0) tableData.push(cells);
     });
 
+    if (!tableData.length) {
+      console.warn("⚠️ Không tìm thấy dữ liệu trong table.x-table");
+    }
+
     console.log("📊 Tổng số dòng bảng:", tableData.length);
     console.log("🔎 5 dòng đầu tiên:", tableData.slice(0, 5));
 
     return tableData;
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
+    return [];
   }
 }
 
