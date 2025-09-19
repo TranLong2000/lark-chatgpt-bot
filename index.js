@@ -955,43 +955,44 @@ async function fetchCollectInfo() {
 }
 
 async function fetchPageContent() {
-  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+  const url =
+    "https://report.wowbuy.ai/webroot/decision/view/report?_=1758265383254&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false";
 
-  // ⚠️ Body quan trọng: truyền tham số thời gian vào
-  const body =
-    "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
-
-  console.log(`📡 [PageContent] Fetching: ${url}`);
   const res = await fetch(url, {
-    method: "POST", // 🔴 thay GET bằng POST
+    method: "GET",
     headers: {
-      "Authorization": `Bearer ${currentToken}`,
-      "Cookie": currentCookie,
-      "User-Agent": "Mozilla/5.0",
-      "Accept": "*/*",
-      "X-Requested-With": "XMLHttpRequest",
-      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "Referer":
-        "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
+      "accept": "text/html, */*; q=0.01",
+      "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+      "authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTQ3MTQ1NSwiaWF0IjoxNzU4MjY1MDA3LCJqdGkiOiJlR041bm5BRlNVK0dJS0RUSWVvNUw0UnJrMHkwcU9GK2RPdTZFbWhyRWRtUXRzZWYifQ.cmcNEcI_QxQWjTNwHRhkO7kmHmbXQyf2rljAoX4PY6o",
+      "cookie": "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTQ3MTQ1NSwiaWF0IjoxNzU4MjY1MDA3LCJqdGkiOiJlR041bm5BRlNVK0dJS0RUSWVvNUw0UnJrMHkwcU9GK2RPdTZFbWhyRWRtUXRzZWYifQ.cmcNEcI_QxQWjTNwHRhkO7kmHmbXQyf2rljAoX4PY6o",
+      "priority": "u=1, i",
+      "referer": "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
+      "sec-ch-ua": "\"Chromium\";v=\"140\", \"Not=A?Brand\";v=\"24\", \"Google Chrome\";v=\"140\"",
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": "\"Windows\"",
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "sessionid": "8f73ed76-216a-4162-b18f-c47feac36a7b",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
     },
-    body,
   });
 
   const raw = await res.text();
   console.log("📄 Raw response length:", raw.length);
   console.log("🔎 Raw preview (300 ký tự):\n", raw.slice(0, 300));
 
-  let data;
+  // JSON parse nếu có
   try {
-    data = JSON.parse(raw);
+    const data = JSON.parse(raw);
+    console.log("✅ JSON parsed, html length:", data.html?.length || 0);
   } catch {
-    console.error("⚠️ Không parse được JSON. Raw đầu tiên:\n", raw.slice(0, 500));
-    return "";
+    console.warn("⚠️ Không parse được JSON, in raw");
   }
-
-  console.log("✅ JSON parse thành công, html length:", data.html.length);
-  return data.html || "";
 }
+
+fetchPageContent();
 
 // ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
