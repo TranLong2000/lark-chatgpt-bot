@@ -866,10 +866,10 @@ const BASE_URL = "https://report.wowbuy.ai";
 
 // --- Cookie + token lần đầu từ login ---
 let currentToken =
-  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTc0MzAyOCwiaWF0IjoxNzU4NTMzNDI4LCJqdGkiOiI1UlpaVGk2eGQ2VyszRktIekNrN2xPYWgrbHRrOE5nbFhWazVwcXhwYndOVE9ZMisifQ.NvhlPpQd2ErBrOevee_7SmkKREhM_qg4vsKpoaB_4a4";
+  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTc0MzUwOCwiaWF0IjoxNzU4NTMzOTA4LCJqdGkiOiJ6U1M5aURNK1pid1NNWUpZeFN6K0JBMTdrazFoYU1CcjN4eFZBVXRMNU1BRkUvZ2gifQ.qZSydxijAonrOvtOr8T1sGi9eNOlgHSwIULeZ-ONfr8";
 
 let currentCookie =
-  "tenantId=default; fine_remember_login=-2; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTc0MzAyOCwiaWF0IjoxNzU4NTMzNDI4LCJqdGkiOiI1UlpaVGk2eGQ2VyszRktIekNrN2xPYWgrbHRrOE5nbFhWazVwcXhwYndOVE9ZMisifQ.NvhlPpQd2ErBrOevee_7SmkKREhM_qg4vsKpoaB_4a4";
+  "tenantId=default; fine_remember_login=-2; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTc0MzUwOCwiaWF0IjoxNzU4NTMzOTA4LCJqdGkiOiJ6U1M5aURNK1pid1NNWUpZeFN6K0JBMTdrazFoYU1CcjN4eFZBVXRMNU1BRkUvZ2gifQ.qZSydxijAonrOvtOr8T1sGi9eNOlgHSwIULeZ-ONfr8";
 
 // ---------------------- Helpers ----------------------
 async function safeFetch(url, options = {}, stepName = "Unknown") {
