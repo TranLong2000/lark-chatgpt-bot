@@ -1088,12 +1088,13 @@ async function writeToLark(tableData) {
     console.log(`🔗 SheetId=${LARK_TABLE_ID} → SheetName=${LARK_SHEET_NAME}`);
   }
 
+  // ✅ Sửa lại URL chuẩn
   const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values_batch_update`;
 
   const body = {
     valueRanges: [
       {
-        range: `${LARK_SHEET_NAME}!J1`, // dùng tên tab
+        range: `${LARK_SHEET_NAME}!J1`, // dùng tên tab, không dùng sheetId
         values: tableData,
       },
     ],
@@ -1109,6 +1110,7 @@ async function writeToLark(tableData) {
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
   console.log("📥 Response:", resp.data);
 }
+
 
 // ========= Cron job 1 phút =========
 cron.schedule("*/1 * * * *", async () => {
