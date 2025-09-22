@@ -965,9 +965,9 @@ async function fetchPageContent() {
     headers: {
       "accept": "text/html, */*; q=0.01",
       "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
-      "authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTcyMTU4MiwiaWF0IjoxNzU4NTEyMzk1LCJqdGkiOiJtSzJWWHI1RXVvcXRYQTFBcDNLbUtPOHVkT1N0d0psSDY1U1gxL2svQzNvdU5hMW4ifQ.3XNptysimY_eKnovzMZlAlt2GRiaW7MAlBk_XaFNiKM",
+      "authorization": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTczNDU2NywiaWF0IjoxNzU4NTI0OTY3LCJqdGkiOiIxemR6NDdPV3MzMVR4aXArSXlHOGNPQTlpU09Zdmd1NE1GcFhLZzBkNnlTYktReDgifQ.3bSDV-JjcX0S0UWU_RI5xxY36F01SU6ZCXyJzf7Gs2o",
       "cookie":
-        "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTcyMTU4MiwiaWF0IjoxNzU4NTEyMzk1LCJqdGkiOiJtSzJWWHI1RXVvcXRYQTFBcDNLbUtPOHVkT1N0d0psSDY1U1gxL2svQzNvdU5hMW4ifQ.3XNptysimY_eKnovzMZlAlt2GRiaW7MAlBk_XaFNiKM",
+        "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTczNDU2NywiaWF0IjoxNzU4NTI0OTY3LCJqdGkiOiIxemR6NDdPV3MzMVR4aXArSXlHOGNPQTlpU09Zdmd1NE1GcFhLZzBkNnlTYktReDgifQ.3bSDV-JjcX0S0UWU_RI5xxY36F01SU6ZCXyJzf7Gs2o",
       "priority": "u=1, i",
       "referer":
         "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
@@ -977,7 +977,7 @@ async function fetchPageContent() {
       "sec-fetch-dest": "empty",
       "sec-fetch-mode": "cors",
       "sec-fetch-site": "same-origin",
-      "sessionid": "2f8181fe-3d01-4f64-83c8-5cdbd2f73fad",
+      "sessionid": "f4f3f776-cf86-42e6-80e9-cac80298b7a7",
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       "x-requested-with": "XMLHttpRequest",
