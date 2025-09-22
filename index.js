@@ -853,23 +853,36 @@ cron.schedule(
 
 /* ==================================================
    FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
+   Với Puppeteer tự login + refresh sessionid + log chi tiết
    ================================================== */
+import express from "express";
+import bodyParser from "body-parser";
+import fetch from "node-fetch";
+import cheerio from "cheerio";
+import cron from "node-cron";
+import axios from "axios";
+import puppeteer from "puppeteer";
+import dotenv from "dotenv";
 
+dotenv.config();
+const app = express();
 app.use(bodyParser.json());
 
 // ========= CONFIG =========
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-const LARK_TABLE_ID = "EmjelX";
+const LARK_TABLE_ID = "EmjelX"; // sheet id
 const BASE_URL = "https://report.wowbuy.ai";
 
-// --- Cookie + token lần đầu từ login ---
-let currentToken =
-  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTc0MzUwOCwiaWF0IjoxNzU4NTMzOTA4LCJqdGkiOiJ6U1M5aURNK1pid1NNWUpZeFN6K0JBMTdrazFoYU1CcjN4eFZBVXRMNU1BRkUvZ2gifQ.qZSydxijAonrOvtOr8T1sGi9eNOlgHSwIULeZ-ONfr8";
+// WOWBUY LOGIN
+const WOWBUY_USERNAME = process.env.WOWBUY_USERNAME;
+const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD; // Base64 encoded
 
-let currentCookie =
-  "tenantId=default; fine_remember_login=-2; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTc0MzUwOCwiaWF0IjoxNzU4NTMzOTA4LCJqdGkiOiJ6U1M5aURNK1pid1NNWUpZeFN6K0JBMTdrazFoYU1CcjN4eFZBVXRMNU1BRkUvZ2gifQ.qZSydxijAonrOvtOr8T1sGi9eNOlgHSwIULeZ-ONfr8";
+// Runtime cookies/token/session
+let currentCookie = "";
+let currentToken = "";
+let currentSessionId = "";
 
 // ---------------------- Helpers ----------------------
 async function safeFetch(url, options = {}, stepName = "Unknown") {
@@ -886,114 +899,156 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
   }
 }
 
-// ---------------------- Refresh token/sessionid ----------------------
-async function refreshTokenAndSession() {
+// ---------------------- Puppeteer Login + Refresh ----------------------
+async function loginWOWBUY() {
+  console.log("🔐 Puppeteer login WOWBUY...");
+  const browser = await puppeteer.launch({ headless: true });
+  const page = await browser.newPage();
+
+  await page.goto(`${BASE_URL}/webroot/decision/login`, { waitUntil: "networkidle2" });
+
+  // Điền username + password
+  await page.type('input[name="username"]', WOWBUY_USERNAME, { delay: 50 });
+  await page.type('input[name="password"]', WOWBUY_PASSWORD, { delay: 50 });
+  await page.click('button[type="submit"]');
+
+  await page.waitForNavigation({ waitUntil: "networkidle2" });
+
+  // Lấy cookies và fine_auth_token
+  const cookies = await page.cookies();
+  currentCookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+
+  // Lấy token từ cookie fine_auth_token
+  const authCookie = cookies.find(c => c.name === "fine_auth_token");
+  currentToken = authCookie ? authCookie.value : "";
+
+  // Lấy sessionid hiện tại
+  const sessionCookie = cookies.find(c => c.name === "sessionid");
+  currentSessionId = sessionCookie ? sessionCookie.value : "";
+
+  console.log("✅ Login thành công.");
+  console.log("📝 Token:", currentToken);
+  console.log("📝 Cookie:", currentCookie);
+  console.log("📝 SessionID:", currentSessionId);
+
+  await browser.close();
+}
+
+async function refreshSessionId() {
   console.log("🔄 Refresh fine_auth_token + sessionid...");
+  const url = `${BASE_URL}/webroot/decision/token/refresh`;
   try {
-    const url = `${BASE_URL}/webroot/decision/token/refresh`;
     const res = await fetch(url, {
       method: "POST",
       headers: {
-        "authorization": `Bearer ${currentToken}`,
-        "content-type": "application/json",
-        "cookie": currentCookie,
+        Authorization: `Bearer ${currentToken}`,
+        Cookie: currentCookie,
+        "Content-Type": "application/json",
         "x-requested-with": "XMLHttpRequest",
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       },
     });
 
     const setCookie = res.headers.get("set-cookie");
-    if (setCookie) {
-      const match = setCookie.match(/fine_auth_token=([^;]+)/);
-      if (match) {
-        const newToken = match[1];
-        currentCookie = currentCookie.replace(
-          /fine_auth_token=[^;]+/,
-          `fine_auth_token=${newToken}`
-        );
-        currentToken = newToken;
-        console.log("✅ Token + cookie đã refresh thành công");
-      } else {
-        console.warn("⚠️ Không tìm thấy fine_auth_token trong Set-Cookie");
-      }
-    } else {
-      console.warn("⚠️ Server không trả Set-Cookie");
+    if (!setCookie) {
+      console.warn("⚠️ Server không trả Set-Cookie → giữ sessionid cũ");
+      return;
+    }
+
+    // Cập nhật sessionid mới
+    const match = setCookie.match(/sessionid=([^;]+)/);
+    if (match) {
+      currentSessionId = match[1];
+      console.log("✅ SessionID mới:", currentSessionId);
     }
   } catch (err) {
-    console.error("❌ Refresh error:", err.message);
+    console.error("❌ refreshSessionId error:", err.message);
   }
 }
 
-// ---------------------- API Calls ----------------------
+// ---------------------- API Calls từ code cũ ----------------------
 async function fetchParamsTemplate() {
-  await refreshTokenAndSession();
   const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
-  return await safeFetch(url, {
-    headers: {
-      "cookie": currentCookie,
-      "x-requested-with": "XMLHttpRequest",
+  return await safeFetch(
+    url,
+    {
+      headers: {
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
     },
-  }, "ParamTemplate");
+    "ParamTemplate"
+  );
 }
 
 async function fetchFavoriteParams() {
-  await refreshTokenAndSession();
   const url = `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`;
-  return await safeFetch(url, {
-    method: "POST",
-    headers: {
-      "authorization": `Bearer ${currentToken}`,
-      "cookie": currentCookie,
-      "x-requested-with": "XMLHttpRequest",
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${currentToken}`,
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
     },
-  }, "FavoriteParams");
+    "FavoriteParams"
+  );
 }
 
 async function fetchDialogParameters() {
-  await refreshTokenAndSession();
   const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
-  const body = "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
-  return await safeFetch(url, {
-    method: "POST",
-    headers: {
-      "authorization": `Bearer ${currentToken}`,
-      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "cookie": currentCookie,
-      "x-requested-with": "XMLHttpRequest",
+  const body =
+    "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body,
     },
-    body,
-  }, "DialogParameters");
+    "DialogParameters"
+  );
 }
 
 async function fetchCollectInfo() {
-  await refreshTokenAndSession();
   const url = `${BASE_URL}/webroot/decision/preview/info/collect`;
-  return await safeFetch(url, {
-    method: "POST",
-    headers: {
-      "authorization": `Bearer ${currentToken}`,
-      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "cookie": currentCookie,
-      "x-requested-with": "XMLHttpRequest",
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
     },
-    body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
-  }, "CollectInfo");
+    "CollectInfo"
+  );
 }
 
+// ---------------------- Fetch Page Content ----------------------
 async function fetchPageContent() {
-  await refreshTokenAndSession();
-  const url = `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+  const url =
+    `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true`;
+
   const res = await fetch(url, {
     method: "GET",
     headers: {
-      accept: "text/html, */*; q=0.01",
-      "accept-language": "vi-VN,vi;q=0.9",
-      authorization: `Bearer ${currentToken}`,
-      cookie: currentCookie,
+      "accept": "text/html, */*; q=0.01",
+      "authorization": `Bearer ${currentToken}`,
+      "cookie": `${currentCookie}; sessionid=${currentSessionId}`,
+      "x-requested-with": "XMLHttpRequest",
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "x-requested-with": "XMLHttpRequest",
     },
   });
 
@@ -1001,9 +1056,14 @@ async function fetchPageContent() {
   let html = "";
   try {
     const data = JSON.parse(raw);
-    html = data.html || raw;
+    html = data.html || "";
   } catch {
     html = raw;
+  }
+
+  if (!html.includes("<table")) {
+    console.warn("⚠️ Không thấy table trong HTML, log 1000 ký tự cuối:");
+    console.log(html.slice(-1000));
   }
 
   const $ = cheerio.load(html);
@@ -1016,14 +1076,35 @@ async function fetchPageContent() {
     if (cols.length > 0) rows.push(cols);
   });
 
+  console.log("📊 Tổng số dòng:", rows.length);
+  console.log("🔎 5 dòng đầu:", rows.slice(0, 5));
   return rows;
 }
 
 // ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
   try {
+    if (!currentToken || !currentCookie) await loginWOWBUY();
+    await refreshSessionId();
+
+    console.log("🔐 Dùng token + cookie runtime:");
+    console.log("📝 Token:", currentToken);
+    console.log("📝 Cookie:", currentCookie);
+    console.log("📝 SessionID:", currentSessionId);
+
+    // Call các API phụ
+    await fetchParamsTemplate();
+    await fetchFavoriteParams();
+    await fetchDialogParameters();
+    await fetchCollectInfo();
+
     const tableData = await fetchPageContent();
-    return tableData || [];
+    if (!tableData || tableData.length === 0) {
+      console.warn("⚠️ Không có dữ liệu để ghi");
+      return [];
+    }
+
+    return tableData;
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
     return [];
@@ -1034,7 +1115,10 @@ async function fetchWOWBUY() {
 async function getTenantAccessToken() {
   const resp = await axios.post(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
-    { app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }
+    {
+      app_id: LARK_APP_ID,
+      app_secret: LARK_APP_SECRET,
+    }
   );
   return resp.data.tenant_access_token;
 }
@@ -1044,10 +1128,19 @@ async function writeToLark(tableData) {
 
   const token = await getTenantAccessToken();
   const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
-  const body = { valueRange: { range: `${LARK_TABLE_ID}!J1`, values: tableData } };
+
+  const body = {
+    valueRange: {
+      range: `${LARK_TABLE_ID}!J1`,
+      values: tableData,
+    },
+  };
 
   await axios.put(url, body, {
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
   });
 
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
