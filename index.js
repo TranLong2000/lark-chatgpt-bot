@@ -855,17 +855,7 @@ cron.schedule(
    FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
    Với Puppeteer tự login + refresh sessionid + log chi tiết
    ================================================== */
-import express from "express";
-import bodyParser from "body-parser";
-import fetch from "node-fetch";
-import cheerio from "cheerio";
-import cron from "node-cron";
-import axios from "axios";
-import puppeteer from "puppeteer";
-import dotenv from "dotenv";
 
-dotenv.config();
-const app = express();
 app.use(bodyParser.json());
 
 // ========= CONFIG =========
