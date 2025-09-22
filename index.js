@@ -1007,33 +1007,49 @@ async function fetchCollectInfo() {
   );
 }
 
+// ---------------------- Fetch Page Content ----------------------
 async function fetchPageContent() {
-  console.log("🌐 Đang load page content...");
+  const url =
+    `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
 
-  // gọi các API chuẩn bị session
-  await fetchParamsTemplate();
-  await fetchFavoriteParams();
-  await fetchDialogParameters();
-  await fetchCollectInfo();
-
-  const url = `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
-
-  const raw = await safeFetch(
-    url,
-    {
+  async function doRequest() {
+    const res = await fetch(url, {
+      method: "GET",
       headers: {
-        authorization: `Bearer ${currentToken}`,
-        cookie: currentCookie,
+        "accept": "text/html, */*; q=0.01",
+        "accept-language":
+          "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+        "authorization": `Bearer ${currentToken}`,
+        "cookie": currentCookie,
+        "referer":
+          `${BASE_URL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`,
         "x-requested-with": "XMLHttpRequest",
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       },
-    },
-    "PageContent"
-  );
+    });
+    return await res.text();
+  }
+
+  let raw = await doRequest();
+
+  // Nếu response rỗng hoặc chứa "login" thì thử refresh session
+  if (!raw || raw.includes("login")) {
+    console.warn("⚠️ Token/cookie có thể hết hạn → Refresh session...");
+    try {
+      await fetchParamsTemplate();
+      await fetchFavoriteParams();
+      await fetchDialogParameters();
+      await fetchCollectInfo();
+      raw = await doRequest();
+    } catch (err) {
+      console.error("❌ Refresh session thất bại:", err.message);
+    }
+  }
 
   console.log("📄 Raw response length:", raw.length);
   console.log("🔎 Raw preview (500 ký tự):\n", raw.slice(0, 500));
 
-  // nếu response là JSON thì parse
   let html = "";
   try {
     const data = JSON.parse(raw);
@@ -1044,7 +1060,6 @@ async function fetchPageContent() {
     html = raw;
   }
 
-  // nếu không có table thì log thêm cuối response
   if (!html.includes("<table")) {
     console.warn("⚠️ Không thấy <table> trong response");
     console.log("🔎 1000 ký tự cuối:\n", html.slice(-1000));
@@ -1057,9 +1072,13 @@ async function fetchPageContent() {
 async function fetchWOWBUY() {
   try {
     console.log("🔐 Đang login WOWBUY...");
-
-    // auto login trước (cập nhật currentCookie, currentToken)
     await autoLogin();
+
+    // gọi chain các bước chuẩn bị trước khi lấy page content
+    await fetchParamsTemplate();
+    await fetchFavoriteParams();
+    await fetchDialogParameters();
+    await fetchCollectInfo();
 
     console.log("🌐 Đang load page content...");
     const rawHtml = await fetchPageContent();
@@ -1080,6 +1099,7 @@ async function fetchWOWBUY() {
       console.log("🔎 5 dòng đầu tiên:", rows.slice(0, 5));
     } else {
       console.warn("⚠️ Không có dữ liệu để ghi");
+      console.log("🔎 1000 ký tự cuối:\n", rawHtml.slice(-1000));
     }
 
     return rows;
@@ -1088,7 +1108,6 @@ async function fetchWOWBUY() {
     return [];
   }
 }
-
 
 // ---------------------- Lark API ----------------------
 async function getTenantAccessToken() {
