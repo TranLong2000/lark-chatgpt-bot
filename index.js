@@ -852,7 +852,7 @@ cron.schedule(
 );
 
 /* ==================================================
-   FULL BOT — WOWBUY → Lark Sheet (Puppeteer login)
+   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
    ================================================== */
 
 app.use(bodyParser.json());
@@ -867,15 +867,17 @@ const BASE_URL = "https://report.wowbuy.ai";
 const WOWBUY_USERNAME = process.env.WOWBUY_USERNAME;
 const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
 
-let currentToken = null;   // fine_auth_token runtime
-let currentSession = null; // sessionid runtime
+let currentToken = null;
+let currentSession = null;
 
 // ---------------------- Helpers ----------------------
 async function safeFetch(url, options = {}, stepName = "Unknown") {
   try {
     console.log(`📡 [${stepName}] Fetching: ${url}`);
     const res = await fetch(url, options);
-    if (!res.ok) throw new Error(`[${stepName}] HTTP ${res.status}`);
+    if (!res.ok) {
+      throw new Error(`[${stepName}] HTTP ${res.status}`);
+    }
     const text = await res.text();
     console.log(`✅ [${stepName}] Done`);
     return text;
@@ -886,109 +888,127 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
 }
 
 // ---------------------- Puppeteer login ----------------------
-async function loginWOWBUY(username, password) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
-  const page = await browser.newPage();
-
+async function loginWOWBUY() {
   console.log("🔐 Puppeteer: mở trang login WOWBUY...");
-  await page.goto('https://report.wowbuy.ai/webroot/decision/login', { waitUntil: 'networkidle2' });
+  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+  const page = await browser.newPage();
+  await page.goto(`${BASE_URL}/webroot/decision/login`, { waitUntil: "networkidle2" });
 
-  await page.waitForSelector('input[placeholder="Username"]', { timeout: 10000 });
-  await page.type('input[placeholder="Username"]', username, { delay: 50 });
+  // Nhập username + password
+  await page.type('input[placeholder="Username"]', WOWBUY_USERNAME, { delay: 50 });
+  await page.type('input[placeholder="Password"]', WOWBUY_PASSWORD, { delay: 50 });
 
-  await page.waitForSelector('input[placeholder="Password"]', { timeout: 10000 });
-  await page.type('input[placeholder="Password"]', password, { delay: 50 });
-
-  await page.waitForSelector('div.login-button', { timeout: 5000 });
+  // Click login button
   await page.click('div.login-button');
-
+  
   // Chờ SPA load xong
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  await page.waitForTimeout(5000); // 5s chờ SPA xử lý
 
-  console.log("✅ Login xong, lấy cookie và token...");
-
-  const cookies = await page.cookies();
-  const fine_auth_token = cookies.find(c => c.name === 'fine_auth_token')?.value || null;
-  const sessionid = cookies.find(c => c.name === 'sessionid')?.value || null;
+  // Lấy fine_auth_token từ localStorage
+  const fine_auth_token = await page.evaluate(() => localStorage.getItem('fine_auth_token'));
+  const sessionid = await page.evaluate(() => sessionStorage.getItem('sessionid'));
 
   console.log("🍪 fine_auth_token:", fine_auth_token);
   console.log("🆔 sessionid:", sessionid);
 
+  currentToken = fine_auth_token;
+  currentSession = sessionid;
+
   await browser.close();
-  return { fine_auth_token, sessionid };
+
+  if (!currentToken || !currentSession) {
+    throw new Error("❌ Login không lấy được token hoặc sessionid!");
+  }
 }
 
-// ---------------------- Fetch WOWBUY ----------------------
+// ---------------------- API Calls ----------------------
 async function fetchParamsTemplate() {
   const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
-  return await safeFetch(url, {
-    headers: {
-      "cookie": `fine_auth_token=${currentToken}; sessionid=${currentSession}`,
-      "x-requested-with": "XMLHttpRequest",
-    }
-  }, "ParamTemplate");
+  return await safeFetch(
+    url,
+    {
+      headers: {
+        "cookie": `sessionid=${currentSession}`,
+        "x-requested-with": "XMLHttpRequest",
+      },
+    },
+    "ParamTemplate"
+  );
 }
 
 async function fetchFavoriteParams() {
   const url = `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`;
-  return await safeFetch(url, {
-    method: "POST",
-    headers: {
-      "authorization": `Bearer ${currentToken}`,
-      "cookie": `fine_auth_token=${currentToken}; sessionid=${currentSession}`,
-      "x-requested-with": "XMLHttpRequest",
-    }
-  }, "FavoriteParams");
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${currentToken}`,
+        "cookie": `sessionid=${currentSession}`,
+        "x-requested-with": "XMLHttpRequest",
+      },
+    },
+    "FavoriteParams"
+  );
 }
 
 async function fetchDialogParameters() {
   const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
-  const body = "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
-  return await safeFetch(url, {
-    method: "POST",
-    headers: {
-      "authorization": `Bearer ${currentToken}`,
-      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "cookie": `fine_auth_token=${currentToken}; sessionid=${currentSession}`,
-      "x-requested-with": "XMLHttpRequest",
+  const body =
+    "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "cookie": `sessionid=${currentSession}`,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body,
     },
-    body
-  }, "DialogParameters");
+    "DialogParameters"
+  );
 }
 
 async function fetchCollectInfo() {
   const url = `${BASE_URL}/webroot/decision/preview/info/collect`;
-  const body = "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D";
-  return await safeFetch(url, {
-    method: "POST",
-    headers: {
-      "authorization": `Bearer ${currentToken}`,
-      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-      "cookie": `fine_auth_token=${currentToken}; sessionid=${currentSession}`,
-      "x-requested-with": "XMLHttpRequest",
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "cookie": `sessionid=${currentSession}`,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
     },
-    body
-  }, "CollectInfo");
+    "CollectInfo"
+  );
 }
 
+// ---------------------- Fetch Page Content ----------------------
 async function fetchPageContent() {
-  const url = `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+  const url =
+    `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+
   const res = await fetch(url, {
     method: "GET",
     headers: {
       "accept": "text/html, */*; q=0.01",
       "authorization": `Bearer ${currentToken}`,
-      "cookie": `fine_auth_token=${currentToken}; sessionid=${currentSession}`,
+      "cookie": `sessionid=${currentSession}`,
       "x-requested-with": "XMLHttpRequest",
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
     },
   });
 
   const raw = await res.text();
   console.log("📄 Raw response length:", raw.length);
+
   let html = "";
   try {
     const data = JSON.parse(raw);
@@ -1007,6 +1027,7 @@ async function fetchPageContent() {
     if (cols.length > 0) rows.push(cols);
   });
 
+  console.log("📊 Tổng số dòng:", rows.length);
   return rows;
 }
 
@@ -1015,18 +1036,10 @@ async function fetchWOWBUY() {
   try {
     if (!currentToken || !currentSession) {
       console.log("🔄 Chưa có token/sessionid, login WOWBUY...");
-      const loginData = await loginWOWBUY(WOWBUY_USERNAME, WOWBUY_PASSWORD);
-      currentToken = loginData.fine_auth_token;
-      currentSession = loginData.sessionid;
+      await loginWOWBUY();
     }
 
-    // Fetch tất cả endpoints
-    await fetchParamsTemplate();
-    await fetchFavoriteParams();
-    await fetchDialogParameters();
-    await fetchCollectInfo();
     const tableData = await fetchPageContent();
-
     console.log("📊 Tổng số dòng bảng:", tableData.length);
     return tableData;
   } catch (err) {
@@ -1035,7 +1048,7 @@ async function fetchWOWBUY() {
   }
 }
 
-// ---------------------- Lark Sheet ----------------------
+// ========= Ghi data vào Lark Sheet =========
 async function getTenantAccessToken() {
   const resp = await axios.post(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
@@ -1046,11 +1059,24 @@ async function getTenantAccessToken() {
 
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) return;
+
   const token = await getTenantAccessToken();
   const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
-  await axios.put(url, {
-    valueRange: { range: `${LARK_TABLE_ID}!J1`, values: tableData }
-  }, { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } });
+
+  const body = {
+    valueRange: {
+      range: `${LARK_TABLE_ID}!J1`,
+      values: tableData,
+    },
+  };
+
+  await axios.put(url, body, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
 }
 
@@ -1064,7 +1090,9 @@ cron.schedule("*/1 * * * *", async () => {
   }
 });
 
-app.listen(3000, () => console.log("🚀 Bot running on port 3000"));
+app.listen(3000, () => {
+  console.log("🚀 Bot running on port 3000");
+});
 
        
 /* =======================================================
