@@ -910,18 +910,14 @@ async function loginWOWBUY(username, password) {
   await page.waitForSelector('input[placeholder="Password"]', { timeout: 10000 });
   await page.type('input[placeholder="Password"]', password, { delay: 50 });
 
-  // Click nút login
-  const loginButton = await page.$('div.bi-button-mask');
-  if (!loginButton) {
-    console.error("❌ Không tìm thấy nút login!");
-    await browser.close();
-    return null;
-  }
+  // Click nút login chính xác
+  await page.waitForSelector('div.login-button', { timeout: 5000 });
+  await page.click('div.login-button');
 
-  await loginButton.click();
-  await page.waitForNavigation({ waitUntil: 'networkidle2' });
+  // Chờ trang load sau login (SPA có thể không reload, nên chờ timeout hoặc selector đặc trưng dashboard)
+  await page.waitForTimeout(3000);
 
-  console.log("✅ Login thành công, lấy cookie và token...");
+  console.log("✅ Login xong, lấy cookie và token...");
 
   // Lấy tất cả cookie
   const cookies = await page.cookies();
@@ -936,10 +932,11 @@ async function loginWOWBUY(username, password) {
   return { cookies, fine_auth_token, sessionid };
 }
 
-// Ví dụ dùng:
+// Ví dụ gọi login
 loginWOWBUY(process.env.WOWBUY_USERNAME, process.env.WOWBUY_PASSWORD)
   .then(data => console.log("🎯 Login data:", data))
   .catch(err => console.error(err));
+
 
 async function refreshSessionId() {
   console.log("🔄 Refresh fine_auth_token + sessionid...");
