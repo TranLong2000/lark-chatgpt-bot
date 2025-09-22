@@ -853,6 +853,7 @@ cron.schedule(
 
 /* ==================================================
    FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
+   (Puppeteer-based sessionid refresh)
 ================================================== */
 
 app.use(bodyParser.json());
@@ -864,8 +865,20 @@ const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
 const LARK_TABLE_ID = "EmjelX"; // sheet id
 const BASE_URL = "https://report.wowbuy.ai";
 
-let currentToken = process.env.WOWBUY_TOKEN;
-let currentCookie = process.env.WOWBUY_COOKIE;
+// ENTRY URL: trang entry mà khi mở trình duyệt server sẽ cấp sessionid.
+// Thay bằng entry URL thật của bạn nếu khác.
+const ENTRY_URL =
+  `${BASE_URL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda`;
+
+// runtime-held values (khởi tạo từ env)
+let currentToken = process.env.WOWBUY_TOKEN || "";
+let currentCookie = process.env.WOWBUY_COOKIE || "";
+
+// helper: chuẩn hóa header Authorization (nếu env có chỉ token, tự thêm Bearer)
+function authHeaderValue(token) {
+  if (!token) return "";
+  return token.toLowerCase().startsWith("bearer ") ? token : `Bearer ${token}`;
+}
 
 // ---------------------- Helpers ----------------------
 async function safeFetch(url, options = {}, stepName = "Unknown") {
@@ -877,102 +890,191 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
     }
     const text = await res.text();
     console.log(`✅ [${stepName}] Done`);
-    return text;
+    return { text, res };
   } catch (err) {
     console.error(`❌ [${stepName}] Error:`, err.message);
     throw err;
   }
 }
 
-// ---------------------- Refresh sessionid ----------------------
-async function refreshSessionId() {
-  console.log("🔄 Đang refresh sessionid...");
+// convert cookie-string -> puppeteer cookie objects
+function cookieStringToPuppeteerCookies(cookieString, domain = "report.wowbuy.ai") {
+  if (!cookieString || typeof cookieString !== "string") return [];
+  return cookieString
+    .split(";")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((pair) => {
+      const idx = pair.indexOf("=");
+      const name = pair.slice(0, idx).trim();
+      const value = pair.slice(idx + 1);
+      // Puppeteer cookie expects {name, value, domain, path}
+      return { name, value, domain, path: "/" };
+    });
+}
 
-  // URL entry – bạn thay bằng link entry thật trong hệ thống của bạn
-  const url = `${BASE_URL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda`;
-
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      authorization: `Bearer ${currentToken}`,
-      cookie: currentCookie,
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-    },
-  });
-
-  // lấy Set-Cookie từ response
-  const setCookie = res.headers.get("set-cookie");
-  if (setCookie) {
-    console.log("📥 set-cookie:", setCookie);
-
-    const match = setCookie.match(/sessionid=([^;]+)/);
-    if (match) {
-      const newSessionId = match[1];
-      console.log("✅ sessionid mới:", newSessionId);
-
-      // cập nhật lại currentCookie
-      if (currentCookie.includes("sessionid=")) {
-        currentCookie = currentCookie.replace(
-          /sessionid=[^;]+/,
-          `sessionid=${newSessionId}`
-        );
-      } else {
-        currentCookie += `; sessionid=${newSessionId}`;
-      }
-    } else {
-      console.warn("⚠️ Không tìm thấy sessionid trong Set-Cookie");
-    }
+// helper: replace or append sessionid in cookie string
+function upsertSessionIdInCookieStr(cookieStr, newSessionId) {
+  if (!cookieStr) return `sessionid=${newSessionId}`;
+  if (cookieStr.includes("sessionid=")) {
+    return cookieStr.replace(/sessionid=[^;]+/, `sessionid=${newSessionId}`);
   } else {
-    console.warn("⚠️ Server không trả Set-Cookie → giữ sessionid cũ");
+    return `${cookieStr}; sessionid=${newSessionId}`;
   }
+}
 
-  return currentCookie;
+// save cookies.json for debugging / reuse (optional)
+function saveCookiesToFile(cookies) {
+  try {
+    const p = path.resolve(process.cwd(), "cookies.json");
+    fs.writeFileSync(p, JSON.stringify(cookies, null, 2));
+  } catch (e) {
+    console.warn("⚠️ Không thể lưu cookies.json:", e.message);
+  }
+}
+
+// ---------------------- Refresh sessionid (Puppeteer) ----------------------
+/**
+ * Mở ENTRY_URL bằng Puppeteer, set cookie & auth header hiện có,
+ * chờ load, lấy cookie trả về và cập nhật sessionid trong currentCookie.
+ */
+async function refreshSessionIdWithPuppeteer() {
+  console.log("🔄 (Puppeteer) Đang refresh sessionid...");
+
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+
+    const page = await browser.newPage();
+
+    // Set Authorization header if present
+    const authVal = authHeaderValue(currentToken);
+    if (authVal) {
+      page.setExtraHTTPHeaders({ authorization: authVal });
+    }
+
+    // If we have a cookie string, set them into the page
+    if (currentCookie) {
+      const puppeteerCookies = cookieStringToPuppeteerCookies(currentCookie);
+      if (puppeteerCookies.length > 0) {
+        try {
+          await page.setCookie(...puppeteerCookies);
+        } catch (err) {
+          console.warn("⚠️ setCookie failed:", err.message);
+        }
+      }
+    }
+
+    // Goto entry URL that typically triggers server to issue/rotate sessionid
+    await page.goto(ENTRY_URL, { waitUntil: "networkidle2", timeout: 30000 });
+
+    // small delay to allow server to set cookies via JS if any
+    await page.waitForTimeout(1000);
+
+    // read cookies
+    const cookies = await page.cookies();
+    // optional: save for debugging
+    saveCookiesToFile(cookies);
+
+    // find sessionid cookie
+    const sessionCookie = cookies.find((c) => c.name.toLowerCase() === "sessionid");
+    if (sessionCookie && sessionCookie.value) {
+      const newSessionId = sessionCookie.value;
+      console.log("✅ (Puppeteer) sessionid mới:", newSessionId);
+
+      // update currentCookie string
+      currentCookie = upsertSessionIdInCookieStr(currentCookie, newSessionId);
+
+      // we may also update other cookie values from the puppeteer cookies (optional)
+      // Build a new cookie string merging keys we have and new ones from 'cookies'
+      const cookieMap = {};
+      // existing cookie map from currentCookie
+      currentCookie.split(";").forEach((p) => {
+        const s = p.trim();
+        if (!s) return;
+        const idx = s.indexOf("=");
+        const k = s.slice(0, idx).trim();
+        const v = s.slice(idx + 1);
+        cookieMap[k] = v;
+      });
+      // override/insert from puppeteer cookies
+      for (const c of cookies) {
+        cookieMap[c.name] = c.value;
+      }
+      // rebuild cookie string
+      currentCookie = Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join("; ");
+      // save file for debug
+      try {
+        fs.writeFileSync(path.resolve(process.cwd(), "current_cookie.txt"), currentCookie);
+      } catch (e) {
+        /* ignore */
+      }
+
+      await browser.close();
+      return currentCookie;
+    } else {
+      console.warn("⚠️ (Puppeteer) Không tìm thấy sessionid trong cookies trả về");
+      await browser.close();
+      return currentCookie; // giữ nguyên
+    }
+  } catch (err) {
+    console.error("❌ (Puppeteer) refresh error:", err.message);
+    if (browser) {
+      try {
+        await browser.close();
+      } catch (e) {}
+    }
+    return currentCookie;
+  }
 }
 
 // ---------------------- API Calls ----------------------
 async function fetchParamsTemplate() {
   const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
-  return await safeFetch(
+  const { text } = await safeFetch(
     url,
     {
       headers: {
         cookie: currentCookie,
         "x-requested-with": "XMLHttpRequest",
+        authorization: authHeaderValue(currentToken),
       },
     },
     "ParamTemplate"
   );
+  return text;
 }
 
 async function fetchFavoriteParams() {
   const url = `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`;
-  return await safeFetch(
+  const { text } = await safeFetch(
     url,
     {
       method: "POST",
       headers: {
-        authorization: `Bearer ${currentToken}`,
+        authorization: authHeaderValue(currentToken),
         cookie: currentCookie,
         "x-requested-with": "XMLHttpRequest",
       },
     },
     "FavoriteParams"
   );
+  return text;
 }
 
 async function fetchDialogParameters() {
   const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
-  const body =
-    "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
-  return await safeFetch(
+  const body = "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+  const { text } = await safeFetch(
     url,
     {
       method: "POST",
       headers: {
-        authorization: `Bearer ${currentToken}`,
-        "content-type":
-          "application/x-www-form-urlencoded; charset=UTF-8",
+        authorization: authHeaderValue(currentToken),
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
         cookie: currentCookie,
         "x-requested-with": "XMLHttpRequest",
       },
@@ -980,39 +1082,44 @@ async function fetchDialogParameters() {
     },
     "DialogParameters"
   );
+  return text;
 }
 
 async function fetchCollectInfo() {
   const url = `${BASE_URL}/webroot/decision/preview/info/collect`;
-  return await safeFetch(
+  const { text } = await safeFetch(
     url,
     {
       method: "POST",
       headers: {
-        authorization: `Bearer ${currentToken}`,
-        "content-type":
-          "application/x-www-form-urlencoded; charset=UTF-8",
+        authorization: authHeaderValue(currentToken),
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
         cookie: currentCookie,
         "x-requested-with": "XMLHttpRequest",
       },
-      body:
-        "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
+      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
     },
     "CollectInfo"
   );
+  return text;
 }
 
 // ---------------------- Fetch Page Content ----------------------
 async function fetchPageContent() {
-  // refresh sessionid trước khi gọi
-  await refreshSessionId();
+  // 1) Try Puppeteer refresh (robust)
+  try {
+    await refreshSessionIdWithPuppeteer();
+  } catch (e) {
+    console.warn("⚠️ refreshSessionIdWithPuppeteer failed, tiếp tục với cookie cũ:", e.message);
+  }
 
+  // 2) Then call page_content API
   const url = `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
   const res = await fetch(url, {
     method: "GET",
     headers: {
       accept: "text/html, */*; q=0.01",
-      authorization: `Bearer ${currentToken}`,
+      authorization: authHeaderValue(currentToken),
       cookie: currentCookie,
       "x-requested-with": "XMLHttpRequest",
       "user-agent":
@@ -1052,7 +1159,7 @@ async function fetchPageContent() {
 // ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
   try {
-    console.log("🔐 Dùng token + cookie từ .env");
+    console.log("🔐 Dùng token + cookie từ .env (runtime)");
     const tableData = await fetchPageContent();
     if (!tableData || tableData.length === 0) {
       console.warn("⚠️ Không có dữ liệu để ghi");
@@ -1111,10 +1218,19 @@ cron.schedule("*/1 * * * *", async () => {
   }
 });
 
+// ========= Cron job refresh sessionid every 15 minutes (optional) =========
+cron.schedule("*/15 * * * *", async () => {
+  try {
+    console.log("🕒 Scheduled refresh sessionid (every 15m)");
+    await refreshSessionIdWithPuppeteer();
+  } catch (err) {
+    console.warn("⚠️ Scheduled refresh failed:", err.message);
+  }
+});
+
 app.listen(3000, () => {
   console.log("🚀 Bot running on port 3000");
 });
-
        
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
