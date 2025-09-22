@@ -879,17 +879,23 @@ async function autoLogin() {
         fine_password: process.env.WOWBUY_PASSWORD,
       },
       {
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-requested-with": "XMLHttpRequest",
+          "origin": BASE_URL,
+          "referer": `${BASE_URL}/webroot/decision/login`,
+          "user-agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+          "cookie": "tenantId=default; fine_remember_login=-2",
+        },
       }
     );
 
     const setCookie = resp.headers["set-cookie"];
     if (!setCookie) throw new Error("Không nhận được cookie từ login!");
 
-    // Gộp cookie
     currentCookie = setCookie.map((c) => c.split(";")[0]).join("; ");
 
-    // Lấy fine_auth_token
     const tokenMatch = currentCookie.match(/fine_auth_token=([^;]+)/);
     if (tokenMatch) {
       currentToken = tokenMatch[1];
@@ -899,10 +905,11 @@ async function autoLogin() {
 
     console.log("✅ Login thành công, token & cookie đã cập nhật");
   } catch (err) {
-    console.error("❌ autoLogin thất bại:", err.message);
+    console.error("❌ autoLogin thất bại:", err.response?.data || err.message);
     throw err;
   }
 }
+
 
 // ---------------------- Helpers ----------------------
 async function safeFetch(url, options = {}, stepName = "Unknown") {
