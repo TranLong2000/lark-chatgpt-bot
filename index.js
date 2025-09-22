@@ -861,7 +861,8 @@ app.use(bodyParser.json());
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-const LARK_TABLE_ID = "EmjelX"; // sheet id
+const LARK_TABLE_ID = "EmjelX"; // sheetId trong link
+let LARK_SHEET_NAME = ""; // sẽ được resolve thành "Test"
 
 const BASE_URL = "https://report.wowbuy.ai";
 let currentToken = process.env.WOWBUY_TOKEN;
@@ -1057,19 +1058,42 @@ async function getTenantAccessToken() {
   return resp.data.tenant_access_token;
 }
 
+async function getSheetNameFromId(sheetToken, sheetId, tenantToken) {
+  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${sheetToken}/sheets/query`;
+  const resp = await axios.get(url, {
+    headers: { Authorization: `Bearer ${tenantToken}` },
+  });
+
+  const sheets = resp.data.data.sheets;
+  const sheet = sheets.find((s) => s.sheetId === sheetId);
+  if (!sheet) throw new Error(`❌ Không tìm thấy sheetId=${sheetId}`);
+  return sheet.title; // ví dụ "Test"
+}
+
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) {
     console.warn("⚠️ Không có dữ liệu để ghi");
     return;
   }
 
-  const token = await getTenantAccessToken();
+  const tenantToken = await getTenantAccessToken();
+
+  // Resolve sheetName lần đầu
+  if (!LARK_SHEET_NAME) {
+    LARK_SHEET_NAME = await getSheetNameFromId(
+      LARK_SHEET_TOKEN,
+      LARK_TABLE_ID,
+      tenantToken
+    );
+    console.log(`🔗 SheetId=${LARK_TABLE_ID} → SheetName=${LARK_SHEET_NAME}`);
+  }
+
   const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values_batch_update`;
 
   const body = {
     valueRanges: [
       {
-        range: `${LARK_TABLE_ID}!J1`, // Sheet range
+        range: `${LARK_SHEET_NAME}!J1`, // dùng tên tab
         values: tableData,
       },
     ],
@@ -1077,7 +1101,7 @@ async function writeToLark(tableData) {
 
   const resp = await axios.post(url, body, {
     headers: {
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${tenantToken}`,
       "Content-Type": "application/json",
     },
   });
