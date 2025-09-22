@@ -953,7 +953,7 @@ async function refreshSessionIdWithPuppeteer() {
     // Set Authorization header if present
     const authVal = authHeaderValue(currentToken);
     if (authVal) {
-      page.setExtraHTTPHeaders({ authorization: authVal });
+      await page.setExtraHTTPHeaders({ authorization: authVal });
     }
 
     // If we have a cookie string, set them into the page
@@ -968,64 +968,33 @@ async function refreshSessionIdWithPuppeteer() {
       }
     }
 
-    // Goto entry URL that typically triggers server to issue/rotate sessionid
+    // Goto entry URL
     await page.goto(ENTRY_URL, { waitUntil: "networkidle2", timeout: 30000 });
 
-    // small delay to allow server to set cookies via JS if any
-    await page.waitForTimeout(1000);
+    // Small delay (dùng setTimeout thay vì waitForTimeout)
+    await new Promise(r => setTimeout(r, 1000));
 
     // read cookies
     const cookies = await page.cookies();
-    // optional: save for debugging
-    saveCookiesToFile(cookies);
 
-    // find sessionid cookie
-    const sessionCookie = cookies.find((c) => c.name.toLowerCase() === "sessionid");
+    const sessionCookie = cookies.find(c => c.name.toLowerCase() === "sessionid");
     if (sessionCookie && sessionCookie.value) {
       const newSessionId = sessionCookie.value;
       console.log("✅ (Puppeteer) sessionid mới:", newSessionId);
 
-      // update currentCookie string
       currentCookie = upsertSessionIdInCookieStr(currentCookie, newSessionId);
-
-      // we may also update other cookie values from the puppeteer cookies (optional)
-      // Build a new cookie string merging keys we have and new ones from 'cookies'
-      const cookieMap = {};
-      // existing cookie map from currentCookie
-      currentCookie.split(";").forEach((p) => {
-        const s = p.trim();
-        if (!s) return;
-        const idx = s.indexOf("=");
-        const k = s.slice(0, idx).trim();
-        const v = s.slice(idx + 1);
-        cookieMap[k] = v;
-      });
-      // override/insert from puppeteer cookies
-      for (const c of cookies) {
-        cookieMap[c.name] = c.value;
-      }
-      // rebuild cookie string
-      currentCookie = Object.entries(cookieMap).map(([k, v]) => `${k}=${v}`).join("; ");
-      // save file for debug
-      try {
-        fs.writeFileSync(path.resolve(process.cwd(), "current_cookie.txt"), currentCookie);
-      } catch (e) {
-        /* ignore */
-      }
-
-      await browser.close();
-      return currentCookie;
     } else {
-      console.warn("⚠️ (Puppeteer) Không tìm thấy sessionid trong cookies trả về");
-      await browser.close();
-      return currentCookie; // giữ nguyên
+      console.warn("⚠️ (Puppeteer) Không tìm thấy sessionid trong cookies");
     }
+
+    await browser.close();
+    return currentCookie;
   } catch (err) {
     console.error("❌ (Puppeteer) refresh error:", err.message);
     if (browser) {
       try {
         await browser.close();
-      } catch (e) {}
+      } catch {}
     }
     return currentCookie;
   }
