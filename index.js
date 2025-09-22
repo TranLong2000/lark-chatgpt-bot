@@ -1010,16 +1010,15 @@ async function fetchCollectInfo() {
 async function fetchPageContent() {
   console.log("🌐 Đang load page content...");
 
-  // các request chuẩn bị session
+  // gọi các API chuẩn bị session
   await fetchParamsTemplate();
   await fetchFavoriteParams();
   await fetchDialogParameters();
   await fetchCollectInfo();
 
-  // request chính để lấy dữ liệu
   const url = `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
 
-  const html = await safeFetch(
+  const raw = await safeFetch(
     url,
     {
       headers: {
@@ -1031,23 +1030,65 @@ async function fetchPageContent() {
     "PageContent"
   );
 
-  console.log("✅ Page content loaded");
+  console.log("📄 Raw response length:", raw.length);
+  console.log("🔎 Raw preview (500 ký tự):\n", raw.slice(0, 500));
+
+  // nếu response là JSON thì parse
+  let html = "";
+  try {
+    const data = JSON.parse(raw);
+    html = data.html || "";
+    console.log("✅ JSON parsed, html length:", html.length);
+  } catch {
+    console.warn("⚠️ Không parse được JSON → dùng raw làm HTML");
+    html = raw;
+  }
+
+  // nếu không có table thì log thêm cuối response
+  if (!html.includes("<table")) {
+    console.warn("⚠️ Không thấy <table> trong response");
+    console.log("🔎 1000 ký tự cuối:\n", html.slice(-1000));
+  }
+
   return html;
 }
 
 // ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
   try {
-    if (!currentCookie) {
-      await autoLogin();
+    console.log("🔐 Đang login WOWBUY...");
+
+    // auto login trước (cập nhật currentCookie, currentToken)
+    await autoLogin();
+
+    console.log("🌐 Đang load page content...");
+    const rawHtml = await fetchPageContent();
+
+    // parse table từ rawHtml
+    const $ = cheerio.load(rawHtml);
+    const rows = [];
+    $("table tr").each((i, tr) => {
+      const cols = $(tr)
+        .find("td")
+        .map((j, td) => $(td).text().trim())
+        .get();
+      if (cols.length > 0) rows.push(cols);
+    });
+
+    console.log("📊 Tổng số dòng:", rows.length);
+    if (rows.length > 0) {
+      console.log("🔎 5 dòng đầu tiên:", rows.slice(0, 5));
+    } else {
+      console.warn("⚠️ Không có dữ liệu để ghi");
     }
-    const tableData = await fetchPageContent();
-    return tableData;
+
+    return rows;
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
     return [];
   }
 }
+
 
 // ---------------------- Lark API ----------------------
 async function getTenantAccessToken() {
