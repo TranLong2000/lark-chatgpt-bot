@@ -937,45 +937,102 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
   }
 }
 
-// ---------------------- Fetch Page Content ----------------------
-async function fetchPageContent() {
-  const url =
-    `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
-
-  const res = await safeFetch(
+// ---------------------- API Calls ----------------------
+async function fetchParamsTemplate() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
+  return await safeFetch(
     url,
     {
-      method: "GET",
       headers: {
-        "accept": "text/html, */*; q=0.01",
-        "authorization": currentToken ? `Bearer ${currentToken}` : "",
-        "cookie": currentCookie,
+        cookie: currentCookie,
         "x-requested-with": "XMLHttpRequest",
-        "user-agent": "Mozilla/5.0",
+      },
+    },
+    "ParamTemplate"
+  );
+}
+
+async function fetchFavoriteParams() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`;
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${currentToken}`,
+        cookie: currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
+    },
+    "FavoriteParams"
+  );
+}
+
+async function fetchDialogParameters() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
+  const body =
+    "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        cookie: currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body,
+    },
+    "DialogParameters"
+  );
+}
+
+async function fetchCollectInfo() {
+  const url = `${BASE_URL}/webroot/decision/preview/info/collect`;
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        cookie: currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
+    },
+    "CollectInfo"
+  );
+}
+
+async function fetchPageContent() {
+  console.log("🌐 Đang load page content...");
+
+  // các request chuẩn bị session
+  await fetchParamsTemplate();
+  await fetchFavoriteParams();
+  await fetchDialogParameters();
+  await fetchCollectInfo();
+
+  // request chính để lấy dữ liệu
+  const url = `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+
+  const html = await safeFetch(
+    url,
+    {
+      headers: {
+        authorization: `Bearer ${currentToken}`,
+        cookie: currentCookie,
+        "x-requested-with": "XMLHttpRequest",
       },
     },
     "PageContent"
   );
 
-  let html = "";
-  if (typeof res === "string") {
-    html = res;
-  } else if (res?.html) {
-    html = res.html;
-  }
-
-  const $ = cheerio.load(html);
-  const rows = [];
-  $("table tr").each((i, tr) => {
-    const cols = $(tr)
-      .find("td")
-      .map((j, td) => $(td).text().trim())
-      .get();
-    if (cols.length > 0) rows.push(cols);
-  });
-
-  console.log("📊 Tổng số dòng:", rows.length);
-  return rows;
+  console.log("✅ Page content loaded");
+  return html;
 }
 
 // ---------------------- Main Flow ----------------------
