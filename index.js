@@ -965,7 +965,7 @@ async function fetchPageContent() {
     headers: {
       "accept": "text/html, */*; q=0.01",
       "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
-      "authorization": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTczNDU2NywiaWF0IjoxNzU4NTI0OTY3LCJqdGkiOiIxemR6NDdPV3MzMVR4aXArSXlHOGNPQTlpU09Zdmd1NE1GcFhLZzBkNnlTYktReDgifQ.3bSDV-JjcX0S0UWU_RI5xxY36F01SU6ZCXyJzf7Gs2o",
+      "authorization": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTczNjE0OCwiaWF0IjoxNzU4NTI2NTQ4LCJqdGkiOiJTcDBSZ0VhNFFFeXlXbmI5UnpvUG5ZSkJsbDhOc3ZoM3l1UzhuTjFXY09IQ3RiTzgifQ.0LD9biBEI3qQiZcUEvmXC9Doox0s10z-YyLJLl2qaYs",
       "cookie":
         "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTczNDU2NywiaWF0IjoxNzU4NTI0OTY3LCJqdGkiOiIxemR6NDdPV3MzMVR4aXArSXlHOGNPQTlpU09Zdmd1NE1GcFhLZzBkNnlTYktReDgifQ.3bSDV-JjcX0S0UWU_RI5xxY36F01SU6ZCXyJzf7Gs2o",
       "priority": "u=1, i",
