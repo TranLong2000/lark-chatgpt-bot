@@ -853,8 +853,7 @@ cron.schedule(
 
 /* ==================================================
    FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
-   ================================================== */
-
+================================================== */
 app.use(bodyParser.json());
 
 // ========= CONFIG =========
@@ -873,9 +872,7 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
   try {
     console.log(`📡 [${stepName}] Fetching: ${url}`);
     const res = await fetch(url, options);
-    if (!res.ok) {
-      throw new Error(`[${stepName}] HTTP ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`[${stepName}] HTTP ${res.status}`);
     const text = await res.text();
     console.log(`✅ [${stepName}] Done`);
     return text;
@@ -892,7 +889,7 @@ async function fetchParamsTemplate() {
     url,
     {
       headers: {
-        "cookie": currentCookie,
+        cookie: currentCookie,
         "x-requested-with": "XMLHttpRequest",
       },
     },
@@ -907,8 +904,8 @@ async function fetchFavoriteParams() {
     {
       method: "POST",
       headers: {
-        "authorization": `Bearer ${currentToken}`,
-        "cookie": currentCookie,
+        authorization: `Bearer ${currentToken}`,
+        cookie: currentCookie,
         "x-requested-with": "XMLHttpRequest",
       },
     },
@@ -926,9 +923,9 @@ async function fetchDialogParameters() {
     {
       method: "POST",
       headers: {
-        "authorization": `Bearer ${currentToken}`,
+        authorization: `Bearer ${currentToken}`,
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "cookie": currentCookie,
+        cookie: currentCookie,
         "x-requested-with": "XMLHttpRequest",
       },
       body,
@@ -944,9 +941,9 @@ async function fetchCollectInfo() {
     {
       method: "POST",
       headers: {
-        "authorization": `Bearer ${currentToken}`,
+        authorization: `Bearer ${currentToken}`,
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "cookie": currentCookie,
+        cookie: currentCookie,
         "x-requested-with": "XMLHttpRequest",
       },
       body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
@@ -956,36 +953,47 @@ async function fetchCollectInfo() {
 }
 
 // ---------------------- Fetch Page Content ----------------------
-
 async function fetchPageContent() {
   const url =
     "https://report.wowbuy.ai/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false";
 
-  const res = await fetch(url, {
-    method: "GET",
-    headers: {
-      "accept": "text/html, */*; q=0.01",
-      "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
-      "authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTcyMTU4MiwiaWF0IjoxNzU4NTEyMzk1LCJqdGkiOiJtSzJWWHI1RXVvcXRYQTFBcDNLbUtPOHVkT1N0d0psSDY1U1gxL2svQzNvdU5hMW4ifQ.3XNptysimY_eKnovzMZlAlt2GRiaW7MAlBk_XaFNiKM",
-      "cookie":
-        "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTcyMTU4MiwiaWF0IjoxNzU4NTEyMzk1LCJqdGkiOiJtSzJWWHI1RXVvcXRYQTFBcDNLbUtPOHVkT1N0d0psSDY1U1gxL2svQzNvdU5hMW4ifQ.3XNptysimY_eKnovzMZlAlt2GRiaW7MAlBk_XaFNiKM",
-      "priority": "u=1, i",
-      "referer":
-        "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
-      "sec-ch-ua": `"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"`,
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": `"Windows"`,
-      "sec-fetch-dest": "empty",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-site": "same-origin",
-      "sessionid": "2f8181fe-3d01-4f64-83c8-5cdbd2f73fad",
-      "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "x-requested-with": "XMLHttpRequest",
-    },
-  });
+  async function doRequest() {
+    const res = await fetch(url, {
+      method: "GET",
+      headers: {
+        "accept": "text/html, */*; q=0.01",
+        "accept-language":
+          "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+        "authorization": `Bearer ${currentToken}`,
+        "cookie": currentCookie,
+        "referer":
+          "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
+        "x-requested-with": "XMLHttpRequest",
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      },
+    });
 
-  const raw = await res.text();
+    const raw = await res.text();
+    return raw;
+  }
+
+  let raw = await doRequest();
+
+  // Nếu response rỗng hoặc chứa "login" thì thử refresh session
+  if (!raw || raw.includes("login")) {
+    console.warn("⚠️ Token/cookie có thể hết hạn → Refresh session...");
+    try {
+      await fetchParamsTemplate();
+      await fetchFavoriteParams();
+      await fetchDialogParameters();
+      await fetchCollectInfo();
+      raw = await doRequest();
+    } catch (err) {
+      console.error("❌ Refresh session thất bại:", err.message);
+    }
+  }
+
   console.log("📄 Raw response length:", raw.length);
   console.log("🔎 Raw preview (300 ký tự):\n", raw.slice(0, 300));
 
@@ -999,12 +1007,11 @@ async function fetchPageContent() {
     html = raw;
   }
 
-  // Nếu không thấy table => log thêm 1000 ký tự cuối để debug
   if (!html.includes("<table")) {
     console.log("🔎 1000 ký tự cuối:\n", html.slice(-1000));
   }
 
-  // Dùng cheerio để parse
+  // Parse bằng cheerio
   const $ = cheerio.load(html);
   const rows = [];
   $("table tr").each((i, tr) => {
@@ -1020,23 +1027,17 @@ async function fetchPageContent() {
   return rows;
 }
 
-fetchPageContent();
-
 // ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
   try {
     console.log("🔐 Dùng token + cookie từ .env");
-
     const tableData = await fetchPageContent();
-
     if (!tableData || tableData.length === 0) {
       console.warn("⚠️ Không có dữ liệu để ghi");
       return [];
     }
-
     console.log("📊 Tổng số dòng bảng:", tableData.length);
     console.log("🔎 5 dòng đầu tiên:", tableData.slice(0, 5));
-
     return tableData;
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
@@ -1078,17 +1079,18 @@ async function writeToLark(tableData) {
 
   const tenantToken = await getTenantAccessToken();
 
-  // Resolve sheetName lần đầu
   if (!global.LARK_SHEET_NAME) {
     global.LARK_SHEET_NAME = await getSheetNameFromId(
       LARK_SHEET_TOKEN,
       LARK_TABLE_ID,
       tenantToken
     );
-    console.log(`🔗 SheetId=${LARK_TABLE_ID} → SheetName=${global.LARK_SHEET_NAME}`);
+    console.log(
+      `🔗 SheetId=${LARK_TABLE_ID} → SheetName=${global.LARK_SHEET_NAME}`
+    );
   }
 
-  // ✅ đổi v2 → v3
+  // ✅ dùng v3 thay vì v2
   const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${LARK_SHEET_TOKEN}/values_batch_update`;
 
   const body = {
