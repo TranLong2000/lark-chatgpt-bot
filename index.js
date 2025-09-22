@@ -853,7 +853,8 @@ cron.schedule(
 
 /* ==================================================
    FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
-   ================================================== */
+   Optimized for Railway / Cloud deployment
+================================================== */
 
 app.use(bodyParser.json());
 
@@ -862,15 +863,18 @@ const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
 const LARK_TABLE_ID = "EmjelX"; // sheet id
-const BASE_URL = "https://report.wowbuy.ai";
 
+const BASE_URL = "https://report.wowbuy.ai";
 const WOWBUY_USERNAME = process.env.WOWBUY_USERNAME;
 const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
 
-let currentToken = null;
-let currentSession = null;
+// ========= SESSION =========
+let session = {
+  fine_auth_token: null,
+  sessionid: null,
+};
 
-// ---------------------- Helpers ----------------------
+// ==================== Helpers ====================
 async function safeFetch(url, options = {}, stepName = "Unknown") {
   try {
     console.log(`📡 [${stepName}] Fetching: ${url}`);
@@ -887,32 +891,32 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
   }
 }
 
-// ---------------------- Puppeteer login ----------------------
+// ==================== Puppeteer Login ====================
+async function loginWOWBUY() {
+  console.log("🔄 Chưa có token/sessionid, login WOWBUY...");
 
-async function loginWOWBUY(username, password) {
-   const browser = await puppeteer.launch({
-     headless: true,
-     executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome',
-     args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox']
-   });
+  const browser = await puppeteer.launch({
+    headless: true,
+    executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome',
+    args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox']
+  });
 
   const page = await browser.newPage();
-  await page.goto('https://report.wowbuy.ai/webroot/decision/login');
+  await page.goto(`${BASE_URL}/webroot/decision/login`, { waitUntil: 'networkidle2' });
 
   // Điền username/password
-  await page.type('input[placeholder="Username"]', username, { delay: 50 });
-  await page.type('input[placeholder="Password"]', password, { delay: 50 });
+  await page.type('input[placeholder="Username"]', WOWBUY_USERNAME, { delay: 50 });
+  await page.type('input[placeholder="Password"]', WOWBUY_PASSWORD, { delay: 50 });
 
-  // Click button login bằng page.evaluate để trigger JS
+  // Click login bằng evaluate
   await page.evaluate(() => {
     const btn = document.querySelector('.login-button.bi-basic-button');
     if (btn) btn.click();
   });
 
-  // Chờ 5 giây để trang xử lý login
+  // Chờ 5 giây để login và set cookie
   await new Promise(resolve => setTimeout(resolve, 5000));
 
-  // Lấy cookie sau khi login
   const cookies = await page.cookies();
   let fine_auth_token = null;
   let sessionid = null;
@@ -930,137 +934,64 @@ async function loginWOWBUY(username, password) {
     throw new Error('❌ Login không lấy được token hoặc sessionid!');
   }
 
-  return { fine_auth_token, sessionid };
+  session.fine_auth_token = fine_auth_token;
+  session.sessionid = sessionid;
 }
 
-// ---------------------- API Calls ----------------------
-async function fetchParamsTemplate() {
-  const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
-  return await safeFetch(
-    url,
-    {
-      headers: {
-        "cookie": `sessionid=${currentSession}`,
-        "x-requested-with": "XMLHttpRequest",
-      },
-    },
-    "ParamTemplate"
-  );
-}
-
-async function fetchFavoriteParams() {
-  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`;
-  return await safeFetch(
-    url,
-    {
-      method: "POST",
-      headers: {
-        "authorization": `Bearer ${currentToken}`,
-        "cookie": `sessionid=${currentSession}`,
-        "x-requested-with": "XMLHttpRequest",
-      },
-    },
-    "FavoriteParams"
-  );
-}
-
-async function fetchDialogParameters() {
-  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
-  const body =
-    "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
-
-  return await safeFetch(
-    url,
-    {
-      method: "POST",
-      headers: {
-        "authorization": `Bearer ${currentToken}`,
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "cookie": `sessionid=${currentSession}`,
-        "x-requested-with": "XMLHttpRequest",
-      },
-      body,
-    },
-    "DialogParameters"
-  );
-}
-
-async function fetchCollectInfo() {
-  const url = `${BASE_URL}/webroot/decision/preview/info/collect`;
-  return await safeFetch(
-    url,
-    {
-      method: "POST",
-      headers: {
-        "authorization": `Bearer ${currentToken}`,
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "cookie": `sessionid=${currentSession}`,
-        "x-requested-with": "XMLHttpRequest",
-      },
-      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
-    },
-    "CollectInfo"
-  );
-}
-
-// ---------------------- Fetch Page Content ----------------------
+// ==================== Fetch WOWBUY Data ====================
 async function fetchPageContent() {
-  const url =
-    `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+  if (!session.fine_auth_token || !session.sessionid) {
+    await loginWOWBUY();
+  }
 
+  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1`;
   const res = await fetch(url, {
     method: "GET",
     headers: {
       "accept": "text/html, */*; q=0.01",
-      "authorization": `Bearer ${currentToken}`,
-      "cookie": `sessionid=${currentSession}`,
+      "authorization": `Bearer ${session.fine_auth_token}`,
+      "cookie": `fine_auth_token=${session.fine_auth_token}; sessionid=${session.sessionid}`,
       "x-requested-with": "XMLHttpRequest",
+      "user-agent": "Mozilla/5.0",
     },
   });
 
   const raw = await res.text();
   console.log("📄 Raw response length:", raw.length);
 
-  let html = "";
+  let html = raw;
   try {
     const data = JSON.parse(raw);
     html = data.html || "";
+    console.log("✅ JSON parsed, html length:", html.length);
   } catch {
-    html = raw;
+    console.warn("⚠️ Không parse được JSON, coi như HTML thẳng");
   }
 
   const $ = cheerio.load(html);
   const rows = [];
   $("table tr").each((i, tr) => {
-    const cols = $(tr)
-      .find("td")
-      .map((j, td) => $(td).text().trim())
-      .get();
+    const cols = $(tr).find("td").map((j, td) => $(td).text().trim()).get();
     if (cols.length > 0) rows.push(cols);
   });
 
   console.log("📊 Tổng số dòng:", rows.length);
+  console.log("🔎 5 dòng đầu:", rows.slice(0, 5));
   return rows;
 }
 
-// ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
   try {
-    if (!currentToken || !currentSession) {
-      console.log("🔄 Chưa có token/sessionid, login WOWBUY...");
-      await loginWOWBUY();
-    }
-
+    console.log("🔐 Dùng token/sessionid hiện tại...");
     const tableData = await fetchPageContent();
-    console.log("📊 Tổng số dòng bảng:", tableData.length);
-    return tableData;
+    return tableData || [];
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
     return [];
   }
 }
 
-// ========= Ghi data vào Lark Sheet =========
+// ==================== Lark Sheet ====================
 async function getTenantAccessToken() {
   const resp = await axios.post(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
@@ -1070,17 +1001,14 @@ async function getTenantAccessToken() {
 }
 
 async function writeToLark(tableData) {
-  if (!tableData || tableData.length === 0) return;
+  if (!tableData || tableData.length === 0) {
+    console.warn("⚠️ Không có dữ liệu để ghi");
+    return;
+  }
 
   const token = await getTenantAccessToken();
   const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
-
-  const body = {
-    valueRange: {
-      range: `${LARK_TABLE_ID}!J1`,
-      values: tableData,
-    },
-  };
+  const body = { valueRange: { range: `${LARK_TABLE_ID}!J1`, values: tableData } };
 
   await axios.put(url, body, {
     headers: {
@@ -1092,7 +1020,7 @@ async function writeToLark(tableData) {
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
 }
 
-// ========= Cron job 1 phút =========
+// ==================== Cron Job ====================
 cron.schedule("*/1 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
