@@ -860,9 +860,8 @@ app.use(bodyParser.json());
 // ========= CONFIG =========
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
-const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Spreadsheet token
-const LARK_SHEET_ID = "EmjelX"; // sheetId từ link
-let LARK_SHEET_NAME = ""; // sẽ resolve thành "Test"
+const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
+const LARK_TABLE_ID = "EmjelX"; // sheet id
 
 const BASE_URL = "https://report.wowbuy.ai";
 let currentToken = process.env.WOWBUY_TOKEN;
@@ -885,33 +884,78 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
   }
 }
 
-// ---------------------- Lark API ----------------------
-async function getTenantAccessToken() {
-  const resp = await axios.post(
-    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
+// ---------------------- API Calls ----------------------
+async function fetchParamsTemplate() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
+  return await safeFetch(
+    url,
     {
-      app_id: LARK_APP_ID,
-      app_secret: LARK_APP_SECRET,
-    }
+      headers: {
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
+    },
+    "ParamTemplate"
   );
-  return resp.data.tenant_access_token;
 }
 
-async function getSheetNameFromId(sheetToken, sheetId, tenantToken) {
-  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${sheetToken}/sheets/query`;
-  const resp = await axios.get(url, {
-    headers: {
-      Authorization: `Bearer ${tenantToken}`,
+async function fetchFavoriteParams() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`;
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${currentToken}`,
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
     },
-  });
+    "FavoriteParams"
+  );
+}
 
-  const sheets = resp.data.data.sheets;
-  const sheet = sheets.find((s) => s.sheetId === sheetId);
-  if (!sheet) throw new Error(`❌ Không tìm thấy sheetId=${sheetId}`);
-  return sheet.title; // ví dụ "Test"
+async function fetchDialogParameters() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
+  const body =
+    "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body,
+    },
+    "DialogParameters"
+  );
+}
+
+async function fetchCollectInfo() {
+  const url = `${BASE_URL}/webroot/decision/preview/info/collect`;
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "authorization": `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
+    },
+    "CollectInfo"
+  );
 }
 
 // ---------------------- Fetch Page Content ----------------------
+
 async function fetchPageContent() {
   const url =
     "https://report.wowbuy.ai/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false";
@@ -920,11 +964,20 @@ async function fetchPageContent() {
     method: "GET",
     headers: {
       "accept": "text/html, */*; q=0.01",
-      "accept-language": "vi-VN,vi;q=0.9",
-      "authorization": `Bearer ${currentToken}`,
-      "cookie": currentCookie,
+      "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+      "authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTcyMTU4MiwiaWF0IjoxNzU4NTEyMzk1LCJqdGkiOiJtSzJWWHI1RXVvcXRYQTFBcDNLbUtPOHVkT1N0d0psSDY1U1gxL2svQzNvdU5hMW4ifQ.3XNptysimY_eKnovzMZlAlt2GRiaW7MAlBk_XaFNiKM",
+      "cookie":
+        "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTcyMTU4MiwiaWF0IjoxNzU4NTEyMzk1LCJqdGkiOiJtSzJWWHI1RXVvcXRYQTFBcDNLbUtPOHVkT1N0d0psSDY1U1gxL2svQzNvdU5hMW4ifQ.3XNptysimY_eKnovzMZlAlt2GRiaW7MAlBk_XaFNiKM",
+      "priority": "u=1, i",
       "referer":
         "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
+      "sec-ch-ua": `"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"`,
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": `"Windows"`,
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "sessionid": "2f8181fe-3d01-4f64-83c8-5cdbd2f73fad",
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       "x-requested-with": "XMLHttpRequest",
@@ -945,7 +998,12 @@ async function fetchPageContent() {
     html = raw;
   }
 
-  // Parse bằng cheerio
+  // Nếu không thấy table => log thêm 1000 ký tự cuối để debug
+  if (!html.includes("<table")) {
+    console.log("🔎 1000 ký tự cuối:\n", html.slice(-1000));
+  }
+
+  // Dùng cheerio để parse
   const $ = cheerio.load(html);
   const rows = [];
   $("table tr").each((i, tr) => {
@@ -960,6 +1018,8 @@ async function fetchPageContent() {
   console.log("🔎 5 dòng đầu:", rows.slice(0, 5));
   return rows;
 }
+
+fetchPageContent();
 
 // ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
@@ -983,37 +1043,41 @@ async function fetchWOWBUY() {
   }
 }
 
+fetchWOWBUY();
+
 // ========= Ghi data vào Lark Sheet =========
+async function getTenantAccessToken() {
+  const resp = await axios.post(
+    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
+    {
+      app_id: LARK_APP_ID,
+      app_secret: LARK_APP_SECRET,
+    }
+  );
+  return resp.data.tenant_access_token;
+}
+
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) {
     console.warn("⚠️ Không có dữ liệu để ghi");
     return;
   }
 
-  const tenantToken = await getTenantAccessToken();
-
-  // Resolve sheetName nếu chưa có
-  if (!LARK_SHEET_NAME) {
-    LARK_SHEET_NAME = await getSheetNameFromId(
-      LARK_SHEET_TOKEN,
-      LARK_SHEET_ID,
-      tenantToken
-    );
-    console.log(`🔗 SheetId=${LARK_SHEET_ID} → SheetName=${LARK_SHEET_NAME}`);
-  }
-
-  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
+  const token = await getTenantAccessToken();
+  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values_batch_update`;
 
   const body = {
-    valueRange: {
-      range: `${LARK_SHEET_NAME}!J1`, // dùng sheetName đã resolve
-      values: tableData,
-    },
+    valueRanges: [
+      {
+        range: `${LARK_TABLE_ID}!J1`, // Sheet range
+        values: tableData,
+      },
+    ],
   };
 
-  const resp = await axios.put(url, body, {
+  const resp = await axios.post(url, body, {
     headers: {
-      Authorization: `Bearer ${tenantToken}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
   });
@@ -1035,6 +1099,7 @@ cron.schedule("*/1 * * * *", async () => {
 app.listen(3000, () => {
   console.log("🚀 Bot running on port 3000");
 });
+
        
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
