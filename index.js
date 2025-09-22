@@ -890,10 +890,12 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
 // ---------------------- Puppeteer login ----------------------
 
 async function loginWOWBUY(username, password) {
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
+   const browser = await puppeteer.launch({
+     headless: true,
+     executablePath: process.env.CHROME_PATH || '/usr/bin/google-chrome',
+     args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox']
+   });
+
   const page = await browser.newPage();
   await page.goto('https://report.wowbuy.ai/webroot/decision/login');
 
