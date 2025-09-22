@@ -902,24 +902,20 @@ async function loginWOWBUY(username, password) {
   console.log("🔐 Puppeteer: mở trang login WOWBUY...");
   await page.goto('https://report.wowbuy.ai/webroot/decision/login', { waitUntil: 'networkidle2' });
 
-  // Chờ và điền Username
   await page.waitForSelector('input[placeholder="Username"]', { timeout: 10000 });
   await page.type('input[placeholder="Username"]', username, { delay: 50 });
 
-  // Chờ và điền Password
   await page.waitForSelector('input[placeholder="Password"]', { timeout: 10000 });
   await page.type('input[placeholder="Password"]', password, { delay: 50 });
 
-  // Click nút login chính xác
   await page.waitForSelector('div.login-button', { timeout: 5000 });
   await page.click('div.login-button');
 
-  // Chờ trang load sau login (SPA có thể không reload, nên chờ timeout hoặc selector đặc trưng dashboard)
-  await page.waitForTimeout(3000);
+  // Chờ SPA load xong (dùng setTimeout thay vì waitForTimeout)
+  await new Promise(resolve => setTimeout(resolve, 3000));
 
   console.log("✅ Login xong, lấy cookie và token...");
 
-  // Lấy tất cả cookie
   const cookies = await page.cookies();
   const fine_auth_token = cookies.find(c => c.name === 'fine_auth_token')?.value || null;
   const sessionid = cookies.find(c => c.name === 'sessionid')?.value || null;
@@ -931,11 +927,6 @@ async function loginWOWBUY(username, password) {
 
   return { cookies, fine_auth_token, sessionid };
 }
-
-// Ví dụ gọi login
-loginWOWBUY(process.env.WOWBUY_USERNAME, process.env.WOWBUY_PASSWORD)
-  .then(data => console.log("🎯 Login data:", data))
-  .catch(err => console.error(err));
 
 
 async function refreshSessionId() {
