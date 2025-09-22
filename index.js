@@ -861,25 +861,22 @@ app.use(bodyParser.json());
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
 const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-const LARK_TABLE_ID = "EmjelX"; // sheet id
-
+const LARK_TABLE_ID = "EmjelX";
 const BASE_URL = "https://report.wowbuy.ai";
-let currentToken = process.env.WOWBUY_TOKEN;
-let currentCookie = process.env.WOWBUY_COOKIE;
 
-// ========= Helpers =========
-function authHeaderValue(token) {
-  return token ? `Bearer ${token}` : "";
-}
+// --- Cookie + token lần đầu từ login ---
+let currentToken =
+  "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTc0MzAyOCwiaWF0IjoxNzU4NTMzNDI4LCJqdGkiOiI1UlpaVGk2eGQ2VyszRktIekNrN2xPYWgrbHRrOE5nbFhWazVwcXhwYndOVE9ZMisifQ.NvhlPpQd2ErBrOevee_7SmkKREhM_qg4vsKpoaB_4a4";
 
-// Safe fetch with logging
+let currentCookie =
+  "tenantId=default; fine_remember_login=-2; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTc0MzAyOCwiaWF0IjoxNzU4NTMzNDI4LCJqdGkiOiI1UlpaVGk2eGQ2VyszRktIekNrN2xPYWgrbHRrOE5nbFhWazVwcXhwYndOVE9ZMisifQ.NvhlPpQd2ErBrOevee_7SmkKREhM_qg4vsKpoaB_4a4";
+
+// ---------------------- Helpers ----------------------
 async function safeFetch(url, options = {}, stepName = "Unknown") {
   try {
     console.log(`📡 [${stepName}] Fetching: ${url}`);
     const res = await fetch(url, options);
-    if (!res.ok) {
-      throw new Error(`[${stepName}] HTTP ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`[${stepName}] HTTP ${res.status}`);
     const text = await res.text();
     console.log(`✅ [${stepName}] Done`);
     return text;
@@ -889,97 +886,126 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
   }
 }
 
-// ========= Refresh sessionid / fine_auth_token bằng API =========
-async function refreshSessionIdWithAPI() {
-  console.log("🔄 (API) Đang refresh sessionid/fine_auth_token...");
-
-  const url = `${BASE_URL}/webroot/decision/token/refresh`;
-
+// ---------------------- Refresh token/sessionid ----------------------
+async function refreshTokenAndSession() {
+  console.log("🔄 Refresh fine_auth_token + sessionid...");
   try {
+    const url = `${BASE_URL}/webroot/decision/token/refresh`;
     const res = await fetch(url, {
       method: "POST",
       headers: {
-        "authorization": authHeaderValue(currentToken),
+        "authorization": `Bearer ${currentToken}`,
         "content-type": "application/json",
         "cookie": currentCookie,
         "x-requested-with": "XMLHttpRequest",
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       },
     });
 
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-
-    // Lấy cookie trả về
-    const rawSetCookie = res.headers.raw()["set-cookie"];
-    if (!rawSetCookie || rawSetCookie.length === 0) {
-      console.warn("⚠️ Server không trả Set-Cookie → giữ cookie cũ");
-      return currentCookie;
-    }
-
-    rawSetCookie.forEach((sc) => {
-      const parts = sc.split(";")[0]; // chỉ lấy key=value
-      const [key, value] = parts.split("=");
-      if (key && value) {
-        if (currentCookie.includes(`${key}=`)) {
-          currentCookie = currentCookie.replace(
-            new RegExp(`${key}=[^;]*`),
-            `${key}=${value}`
-          );
-        } else {
-          currentCookie += `; ${key}=${value}`;
-        }
+    const setCookie = res.headers.get("set-cookie");
+    if (setCookie) {
+      const match = setCookie.match(/fine_auth_token=([^;]+)/);
+      if (match) {
+        const newToken = match[1];
+        currentCookie = currentCookie.replace(
+          /fine_auth_token=[^;]+/,
+          `fine_auth_token=${newToken}`
+        );
+        currentToken = newToken;
+        console.log("✅ Token + cookie đã refresh thành công");
+      } else {
+        console.warn("⚠️ Không tìm thấy fine_auth_token trong Set-Cookie");
       }
-    });
-
-    console.log("✅ (API) sessionid/fine_auth_token refreshed");
-    return currentCookie;
+    } else {
+      console.warn("⚠️ Server không trả Set-Cookie");
+    }
   } catch (err) {
-    console.error("❌ (API) refresh error:", err.message);
-    return currentCookie;
+    console.error("❌ Refresh error:", err.message);
   }
 }
 
-// ========= Fetch Page Content =========
+// ---------------------- API Calls ----------------------
+async function fetchParamsTemplate() {
+  await refreshTokenAndSession();
+  const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
+  return await safeFetch(url, {
+    headers: {
+      "cookie": currentCookie,
+      "x-requested-with": "XMLHttpRequest",
+    },
+  }, "ParamTemplate");
+}
+
+async function fetchFavoriteParams() {
+  await refreshTokenAndSession();
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`;
+  return await safeFetch(url, {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${currentToken}`,
+      "cookie": currentCookie,
+      "x-requested-with": "XMLHttpRequest",
+    },
+  }, "FavoriteParams");
+}
+
+async function fetchDialogParameters() {
+  await refreshTokenAndSession();
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
+  const body = "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+  return await safeFetch(url, {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${currentToken}`,
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "cookie": currentCookie,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body,
+  }, "DialogParameters");
+}
+
+async function fetchCollectInfo() {
+  await refreshTokenAndSession();
+  const url = `${BASE_URL}/webroot/decision/preview/info/collect`;
+  return await safeFetch(url, {
+    method: "POST",
+    headers: {
+      "authorization": `Bearer ${currentToken}`,
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      "cookie": currentCookie,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
+  }, "CollectInfo");
+}
+
 async function fetchPageContent() {
-  // Refresh token / sessionid trước
-  await refreshSessionIdWithAPI();
-
-  const url =
-    `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
-
+  await refreshTokenAndSession();
+  const url = `${BASE_URL}/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
   const res = await fetch(url, {
     method: "GET",
     headers: {
       accept: "text/html, */*; q=0.01",
-      "authorization": authHeaderValue(currentToken),
+      "accept-language": "vi-VN,vi;q=0.9",
+      authorization: `Bearer ${currentToken}`,
       cookie: currentCookie,
-      "x-requested-with": "XMLHttpRequest",
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
     },
   });
 
   const raw = await res.text();
-  console.log("📄 Raw response length:", raw.length);
-  console.log("🔎 Raw preview (300 ký tự):\n", raw.slice(0, 300));
-
   let html = "";
   try {
     const data = JSON.parse(raw);
-    html = data.html || "";
-    console.log("✅ JSON parsed, html length:", html.length);
+    html = data.html || raw;
   } catch {
-    console.warn("⚠️ Không parse được JSON, coi như HTML thẳng");
     html = raw;
   }
 
-  // Nếu không thấy table => log thêm 1000 ký tự cuối
-  if (!html.includes("<table")) {
-    console.log("🔎 1000 ký tự cuối:\n", html.slice(-1000));
-  }
-
-  // Parse HTML table
   const $ = cheerio.load(html);
   const rows = [];
   $("table tr").each((i, tr) => {
@@ -990,26 +1016,14 @@ async function fetchPageContent() {
     if (cols.length > 0) rows.push(cols);
   });
 
-  console.log("📊 Tổng số dòng:", rows.length);
-  console.log("🔎 5 dòng đầu:", rows.slice(0, 5));
   return rows;
 }
 
-// ========= Main Flow =========
+// ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
   try {
-    console.log("🔐 Dùng token + cookie từ .env (runtime)");
     const tableData = await fetchPageContent();
-
-    if (!tableData || tableData.length === 0) {
-      console.warn("⚠️ Không có dữ liệu để ghi");
-      return [];
-    }
-
-    console.log("📊 Tổng số dòng bảng:", tableData.length);
-    console.log("🔎 5 dòng đầu tiên:", tableData.slice(0, 5));
-
-    return tableData;
+    return tableData || [];
   } catch (err) {
     console.error("❌ fetchWOWBUY error:", err.message);
     return [];
@@ -1020,35 +1034,20 @@ async function fetchWOWBUY() {
 async function getTenantAccessToken() {
   const resp = await axios.post(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
-    {
-      app_id: LARK_APP_ID,
-      app_secret: LARK_APP_SECRET,
-    }
+    { app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }
   );
   return resp.data.tenant_access_token;
 }
 
 async function writeToLark(tableData) {
-  if (!tableData || tableData.length === 0) {
-    console.warn("⚠️ Không có dữ liệu để ghi");
-    return;
-  }
+  if (!tableData || tableData.length === 0) return;
 
   const token = await getTenantAccessToken();
   const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
-
-  const body = {
-    valueRange: {
-      range: `${LARK_TABLE_ID}!J1`,
-      values: tableData,
-    },
-  };
+  const body = { valueRange: { range: `${LARK_TABLE_ID}!J1`, values: tableData } };
 
   await axios.put(url, body, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
 
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
@@ -1067,7 +1066,6 @@ cron.schedule("*/1 * * * *", async () => {
 app.listen(3000, () => {
   console.log("🚀 Bot running on port 3000");
 });
-
        
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
