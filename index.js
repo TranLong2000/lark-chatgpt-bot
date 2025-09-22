@@ -888,37 +888,47 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
 }
 
 // ---------------------- Puppeteer login ----------------------
-async function loginWOWBUY() {
-  console.log("🔐 Puppeteer: mở trang login WOWBUY...");
-  const browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+
+async function loginWOWBUY(username, password) {
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
   const page = await browser.newPage();
-  await page.goto(`${BASE_URL}/webroot/decision/login`, { waitUntil: "networkidle2" });
+  await page.goto('https://report.wowbuy.ai/webroot/decision/login');
 
-  // Nhập username + password
-  await page.type('input[placeholder="Username"]', WOWBUY_USERNAME, { delay: 50 });
-  await page.type('input[placeholder="Password"]', WOWBUY_PASSWORD, { delay: 50 });
+  // Điền username/password
+  await page.type('input[placeholder="Username"]', username, { delay: 50 });
+  await page.type('input[placeholder="Password"]', password, { delay: 50 });
 
-  // Click login button
-  await page.click('div.login-button');
-  
-  // Chờ SPA load xong
-   await new Promise(resolve => setTimeout(resolve, 5000));
+  // Click button login bằng page.evaluate để trigger JS
+  await page.evaluate(() => {
+    const btn = document.querySelector('.login-button.bi-basic-button');
+    if (btn) btn.click();
+  });
 
-  // Lấy fine_auth_token từ localStorage
-  const fine_auth_token = await page.evaluate(() => localStorage.getItem('fine_auth_token'));
-  const sessionid = await page.evaluate(() => sessionStorage.getItem('sessionid'));
+  // Chờ 5 giây để trang xử lý login
+  await new Promise(resolve => setTimeout(resolve, 5000));
 
-  console.log("🍪 fine_auth_token:", fine_auth_token);
-  console.log("🆔 sessionid:", sessionid);
+  // Lấy cookie sau khi login
+  const cookies = await page.cookies();
+  let fine_auth_token = null;
+  let sessionid = null;
+  cookies.forEach(c => {
+    if (c.name === 'fine_auth_token') fine_auth_token = c.value;
+    if (c.name === 'sessionid') sessionid = c.value;
+  });
 
-  currentToken = fine_auth_token;
-  currentSession = sessionid;
+  console.log('🍪 fine_auth_token:', fine_auth_token);
+  console.log('🆔 sessionid:', sessionid);
 
   await browser.close();
 
-  if (!currentToken || !currentSession) {
-    throw new Error("❌ Login không lấy được token hoặc sessionid!");
+  if (!fine_auth_token || !sessionid) {
+    throw new Error('❌ Login không lấy được token hoặc sessionid!');
   }
+
+  return { fine_auth_token, sessionid };
 }
 
 // ---------------------- API Calls ----------------------
