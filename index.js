@@ -890,42 +890,56 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
 }
 
 // ---------------------- Puppeteer Login + Refresh ----------------------
-async function loginWOWBUY() {
-  console.log("🔐 Puppeteer login WOWBUY...");
-   const browser = await puppeteer.launch({
-     headless: true,
-     args: ["--no-sandbox", "--disable-setuid-sandbox"],
-   });
+
+async function loginWOWBUY(username, password) {
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+
   const page = await browser.newPage();
 
-  await page.goto(`${BASE_URL}/webroot/decision/login`, { waitUntil: "networkidle2" });
+  console.log("🔐 Puppeteer: mở trang login WOWBUY...");
+  await page.goto('https://report.wowbuy.ai/webroot/decision/login', { waitUntil: 'networkidle2' });
 
-  // Điền username + password
-  await page.type('input[name="username"]', WOWBUY_USERNAME, { delay: 50 });
-  await page.type('input[name="password"]', WOWBUY_PASSWORD, { delay: 50 });
-  await page.click('button[type="submit"]');
+  // Chờ và điền Username
+  await page.waitForSelector('input[placeholder="Username"]', { timeout: 10000 });
+  await page.type('input[placeholder="Username"]', username, { delay: 50 });
 
-  await page.waitForNavigation({ waitUntil: "networkidle2" });
+  // Chờ và điền Password
+  await page.waitForSelector('input[placeholder="Password"]', { timeout: 10000 });
+  await page.type('input[placeholder="Password"]', password, { delay: 50 });
 
-  // Lấy cookies và fine_auth_token
+  // Click nút login
+  const loginButton = await page.$('div.bi-button-mask');
+  if (!loginButton) {
+    console.error("❌ Không tìm thấy nút login!");
+    await browser.close();
+    return null;
+  }
+
+  await loginButton.click();
+  await page.waitForNavigation({ waitUntil: 'networkidle2' });
+
+  console.log("✅ Login thành công, lấy cookie và token...");
+
+  // Lấy tất cả cookie
   const cookies = await page.cookies();
-  currentCookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+  const fine_auth_token = cookies.find(c => c.name === 'fine_auth_token')?.value || null;
+  const sessionid = cookies.find(c => c.name === 'sessionid')?.value || null;
 
-  // Lấy token từ cookie fine_auth_token
-  const authCookie = cookies.find(c => c.name === "fine_auth_token");
-  currentToken = authCookie ? authCookie.value : "";
-
-  // Lấy sessionid hiện tại
-  const sessionCookie = cookies.find(c => c.name === "sessionid");
-  currentSessionId = sessionCookie ? sessionCookie.value : "";
-
-  console.log("✅ Login thành công.");
-  console.log("📝 Token:", currentToken);
-  console.log("📝 Cookie:", currentCookie);
-  console.log("📝 SessionID:", currentSessionId);
+  console.log("🍪 fine_auth_token:", fine_auth_token);
+  console.log("🆔 sessionid:", sessionid);
 
   await browser.close();
+
+  return { cookies, fine_auth_token, sessionid };
 }
+
+// Ví dụ dùng:
+loginWOWBUY(process.env.WOWBUY_USERNAME, process.env.WOWBUY_PASSWORD)
+  .then(data => console.log("🎯 Login data:", data))
+  .catch(err => console.error(err));
 
 async function refreshSessionId() {
   console.log("🔄 Refresh fine_auth_token + sessionid...");
