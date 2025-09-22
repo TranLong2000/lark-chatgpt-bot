@@ -887,26 +887,31 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
 // ---------------------- Refresh sessionid ----------------------
 async function refreshSessionId() {
   console.log("🔄 Đang refresh sessionid...");
+
+  // URL entry – bạn thay bằng link entry thật trong hệ thống của bạn
   const url = `${BASE_URL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda`;
+
   const res = await fetch(url, {
+    method: "GET",
     headers: {
       authorization: `Bearer ${currentToken}`,
       cookie: currentCookie,
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
     },
   });
 
-  const setCookie = res.headers.get("set-cookie");
-  console.log("📥 set-cookie:", setCookie);
-}
-
+  // lấy Set-Cookie từ response
   const setCookie = res.headers.get("set-cookie");
   if (setCookie) {
+    console.log("📥 set-cookie:", setCookie);
+
     const match = setCookie.match(/sessionid=([^;]+)/);
     if (match) {
       const newSessionId = match[1];
       console.log("✅ sessionid mới:", newSessionId);
 
-      // cập nhật currentCookie
+      // cập nhật lại currentCookie
       if (currentCookie.includes("sessionid=")) {
         currentCookie = currentCookie.replace(
           /sessionid=[^;]+/,
@@ -916,11 +921,12 @@ async function refreshSessionId() {
         currentCookie += `; sessionid=${newSessionId}`;
       }
     } else {
-      console.warn("⚠️ Không thấy sessionid trong Set-Cookie");
+      console.warn("⚠️ Không tìm thấy sessionid trong Set-Cookie");
     }
   } else {
-    console.warn("⚠️ Server không trả Set-Cookie (dùng sessionid cũ)");
+    console.warn("⚠️ Server không trả Set-Cookie → giữ sessionid cũ");
   }
+
   return currentCookie;
 }
 
