@@ -1064,16 +1064,18 @@ async function writeToLark(tableData) {
   }
 
   const token = await getTenantAccessToken();
-  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
+  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values_batch_update`;
 
   const body = {
-    valueRange: {
-      range: `${LARK_TABLE_ID}!J1`,
-      values: tableData,
-    },
+    valueRanges: [
+      {
+        range: `${LARK_TABLE_ID}!J1`, // Sheet range
+        values: tableData,
+      },
+    ],
   };
 
-  await axios.put(url, body, {
+  const resp = await axios.post(url, body, {
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
@@ -1081,6 +1083,7 @@ async function writeToLark(tableData) {
   });
 
   console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
+  console.log("📥 Response:", resp.data);
 }
 
 // ========= Cron job 1 phút =========
