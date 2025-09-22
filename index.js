@@ -902,7 +902,7 @@ async function loginWOWBUY() {
   await page.click('div.login-button');
   
   // Chờ SPA load xong
-  await page.waitForTimeout(5000); // 5s chờ SPA xử lý
+   await new Promise(resolve => setTimeout(resolve, 5000));
 
   // Lấy fine_auth_token từ localStorage
   const fine_auth_token = await page.evaluate(() => localStorage.getItem('fine_auth_token'));
