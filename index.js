@@ -958,36 +958,64 @@ async function fetchCollectInfo() {
 
 async function fetchPageContent() {
   const url =
-    "https://report.wowbuy.ai/webroot/decision/view/report?_=1758265383254&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false";
+    "https://report.wowbuy.ai/webroot/decision/view/report?_=1758512793554&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false";
 
-  const res = await fetch(url, { /* headers giữ nguyên như bạn có */ });
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "accept": "text/html, */*; q=0.01",
+      "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+      "authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTcyMTU4MiwiaWF0IjoxNzU4NTEyMzk1LCJqdGkiOiJtSzJWWHI1RXVvcXRYQTFBcDNLbUtPOHVkT1N0d0psSDY1U1gxL2svQzNvdU5hMW4ifQ.3XNptysimY_eKnovzMZlAlt2GRiaW7MAlBk_XaFNiKM",
+      "cookie":
+        "fineMarkId=33ecda979be5d7e00de1c37454b06101; tenantId=default; fine_remember_login=-2; last_login_info=true; fine_auth_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb25nLnRyYW4iLCJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJpc3MiOiJmYW5ydWFuIiwiZGVzY3JpcHRpb24iOiJsb25nLnRyYW4obG9uZy50cmFuKSIsImV4cCI6MTc1OTcyMTU4MiwiaWF0IjoxNzU4NTEyMzk1LCJqdGkiOiJtSzJWWHI1RXVvcXRYQTFBcDNLbUtPOHVkT1N0d0psSDY1U1gxL2svQzNvdU5hMW4ifQ.3XNptysimY_eKnovzMZlAlt2GRiaW7MAlBk_XaFNiKM",
+      "priority": "u=1, i",
+      "referer":
+        "https://report.wowbuy.ai/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667",
+      "sec-ch-ua": `"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"`,
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": `"Windows"`,
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      "sessionid": "2f8181fe-3d01-4f64-83c8-5cdbd2f73fad",
+      "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  });
+
   const raw = await res.text();
-
   console.log("📄 Raw response length:", raw.length);
   console.log("🔎 Raw preview (300 ký tự):\n", raw.slice(0, 300));
 
-  // In 20 dòng đầu để debug
-  const lines = raw.split("\n");
-  console.log("🔎 20 dòng đầu HTML:\n", lines.slice(0, 20).join("\n"));
+  let html = "";
+  try {
+    const data = JSON.parse(raw);
+    html = data.html || "";
+    console.log("✅ JSON parsed, html length:", html.length);
+  } catch {
+    console.warn("⚠️ Không parse được JSON, coi như HTML thẳng");
+    html = raw;
+  }
 
-  // In thêm 1000 ký tự cuối để xem bảng có nằm cuối không
-  console.log("🔎 1000 ký tự cuối:\n", raw.slice(-1000));
+  // Nếu không thấy table => log thêm 1000 ký tự cuối để debug
+  if (!html.includes("<table")) {
+    console.log("🔎 1000 ký tự cuối:\n", html.slice(-1000));
+  }
 
-  // Parse HTML
-  const $ = cheerio.load(raw);
+  // Dùng cheerio để parse
+  const $ = cheerio.load(html);
   const rows = [];
-
-  $("table.x-table tr").each((i, tr) => {
+  $("table tr").each((i, tr) => {
     const cols = $(tr)
       .find("td")
       .map((j, td) => $(td).text().trim())
       .get();
-    if (cols.length) rows.push(cols);
+    if (cols.length > 0) rows.push(cols);
   });
 
   console.log("📊 Tổng số dòng:", rows.length);
-  console.log("🔎 3 dòng đầu tiên:", rows.slice(0, 3));
-
+  console.log("🔎 5 dòng đầu:", rows.slice(0, 5));
   return rows;
 }
 
