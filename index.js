@@ -1068,20 +1068,6 @@ app.listen(3000, () => {
   console.log("🚀 Bot running on port 3000");
 });
 
-
-// ========= Cron job refresh sessionid every 15 minutes (optional) =========
-cron.schedule("*/15 * * * *", async () => {
-  try {
-    console.log("🕒 Scheduled refresh sessionid (every 15m)");
-    await refreshSessionIdWithPuppeteer();
-  } catch (err) {
-    console.warn("⚠️ Scheduled refresh failed:", err.message);
-  }
-});
-
-app.listen(3000, () => {
-  console.log("🚀 Bot running on port 3000");
-});
        
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
