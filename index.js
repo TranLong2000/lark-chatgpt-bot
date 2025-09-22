@@ -892,7 +892,10 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
 // ---------------------- Puppeteer Login + Refresh ----------------------
 async function loginWOWBUY() {
   console.log("🔐 Puppeteer login WOWBUY...");
-  const browser = await puppeteer.launch({ headless: true });
+   const browser = await puppeteer.launch({
+     headless: true,
+     args: ["--no-sandbox", "--disable-setuid-sandbox"],
+   });
   const page = await browser.newPage();
 
   await page.goto(`${BASE_URL}/webroot/decision/login`, { waitUntil: "networkidle2" });
