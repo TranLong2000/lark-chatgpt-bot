@@ -887,13 +887,17 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
 // ---------------------- Refresh sessionid ----------------------
 async function refreshSessionId() {
   console.log("🔄 Đang refresh sessionid...");
-  const url = `${BASE_URL}/webroot/decision/view/report?pn=1`;
+  const url = `${BASE_URL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda`;
   const res = await fetch(url, {
     headers: {
       authorization: `Bearer ${currentToken}`,
       cookie: currentCookie,
     },
   });
+
+  const setCookie = res.headers.get("set-cookie");
+  console.log("📥 set-cookie:", setCookie);
+}
 
   const setCookie = res.headers.get("set-cookie");
   if (setCookie) {
