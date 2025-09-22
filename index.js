@@ -852,15 +852,14 @@ cron.schedule(
 );
 
 /* ==================================================
-   FULL BOT — Lấy dữ liệu WOWBUY → Ghi vào Lark Sheet
-   ================================================== */
-
+   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
+================================================== */
 app.use(bodyParser.json());
 
 // ========= CONFIG =========
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
-const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Spreadsheet token
+const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
 const LARK_TABLE_ID = "EmjelX"; // sheetId trong link
 let LARK_SHEET_NAME = ""; // sẽ được resolve thành "Test"
 
@@ -883,12 +882,17 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
   }
 }
 
-// ---------------------- WOWBUY API Calls ----------------------
+// ---------------------- API Calls ----------------------
 async function fetchParamsTemplate() {
   const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
   return await safeFetch(
     url,
-    { headers: { cookie: currentCookie, "x-requested-with": "XMLHttpRequest" } },
+    {
+      headers: {
+        cookie: currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+      },
+    },
     "ParamTemplate"
   );
 }
@@ -957,7 +961,6 @@ async function fetchPageContent() {
     method: "GET",
     headers: {
       accept: "text/html, */*; q=0.01",
-      "accept-language": "vi-VN,vi;q=0.9,en;q=0.5",
       authorization: `Bearer ${currentToken}`,
       cookie: currentCookie,
       "x-requested-with": "XMLHttpRequest",
@@ -982,7 +985,6 @@ async function fetchPageContent() {
     console.log("🔎 1000 ký tự cuối:\n", html.slice(-1000));
   }
 
-  // Parse table
   const $ = cheerio.load(html);
   const rows = [];
   $("table tr").each((i, tr) => {
@@ -998,7 +1000,9 @@ async function fetchPageContent() {
   return rows;
 }
 
-// ---------------------- Main WOWBUY Flow ----------------------
+fetchPageContent();
+
+// ---------------------- Main Flow ----------------------
 async function fetchWOWBUY() {
   try {
     console.log("🔐 Dùng token + cookie từ .env");
@@ -1016,7 +1020,9 @@ async function fetchWOWBUY() {
   }
 }
 
-// ---------------------- Lark Sheet API ----------------------
+fetchWOWBUY();
+
+// ========= Ghi data vào Lark Sheet =========
 async function getTenantAccessToken() {
   const resp = await axios.post(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
@@ -1033,6 +1039,7 @@ async function getSheetNameFromId(sheetToken, sheetId, tenantToken) {
   const resp = await axios.get(url, {
     headers: { Authorization: `Bearer ${tenantToken}` },
   });
+
   const sheets = resp.data.data.sheets;
   const sheet = sheets.find((s) => s.sheetId === sheetId);
   if (!sheet) throw new Error(`❌ Không tìm thấy sheetId=${sheetId}`);
@@ -1047,22 +1054,24 @@ async function writeToLark(tableData) {
 
   const tenantToken = await getTenantAccessToken();
 
-  if (!LARK_SHEET_NAME) {
-    LARK_SHEET_NAME = await getSheetNameFromId(
+  if (!global.LARK_SHEET_NAME) {
+    global.LARK_SHEET_NAME = await getSheetNameFromId(
       LARK_SHEET_TOKEN,
       LARK_TABLE_ID,
       tenantToken
     );
-    console.log(`🔗 SheetId=${LARK_TABLE_ID} → SheetName=${LARK_SHEET_NAME}`);
+    console.log(
+      `🔗 SheetId=${LARK_TABLE_ID} → SheetName=${global.LARK_SHEET_NAME}`
+    );
   }
 
-  // ✅ dùng v3 cho batch update
+  // ✅ dùng v3 thay vì v2
   const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${LARK_SHEET_TOKEN}/values_batch_update`;
 
   const body = {
     valueRanges: [
       {
-        range: `${LARK_SHEET_NAME}!J1`,
+        range: `${global.LARK_SHEET_NAME}!J1`,
         values: tableData,
       },
     ],
@@ -1079,7 +1088,7 @@ async function writeToLark(tableData) {
   console.log("📥 Response:", resp.data);
 }
 
-// ---------------------- Cron Job ----------------------
+// ========= Cron job 1 phút =========
 cron.schedule("*/1 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
@@ -1092,7 +1101,6 @@ cron.schedule("*/1 * * * *", async () => {
 app.listen(3000, () => {
   console.log("🚀 Bot running on port 3000");
 });
-
        
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
