@@ -937,7 +937,7 @@ async function loginWOWBUY() {
     console.log("📡 Status:", loginRes.status, loginRes.statusText);
     logHeadersFromFetchResponse(loginRes);
 
-    // node-fetch v2: headers.raw && headers.raw()['set-cookie'] gives array
+    // --- lấy tất cả cookie ---
     let setCookieArray = [];
     try {
       if (typeof loginRes.headers.raw === "function") {
@@ -950,12 +950,12 @@ async function loginWOWBUY() {
     } catch (e) {
       console.warn("⚠️ Không lấy được raw set-cookie:", e.message);
     }
+    console.log("🍪 Raw Set-Cookie array:", setCookieArray);
 
     const cookieHeader = buildCookieHeaderFromSetCookieArray(setCookieArray);
-    console.log("🍪 Raw Set-Cookie array:", setCookieArray);
     console.log("🍪 Built cookie header:", cookieHeader);
 
-    // read body text and try parse
+    // --- đọc body ---
     const rawText = await loginRes.text();
     console.log("📄 Raw login response (first 1000 chars):", truncate(rawText, 1000));
 
@@ -966,38 +966,40 @@ async function loginWOWBUY() {
       console.warn("⚠️ Không parse được JSON từ login response");
     }
 
-    // Prefer accessToken from body (login returns data.accessToken per logs)
+    // --- lấy token từ body ---
+    let token = null;
     if (json && json.data && json.data.accessToken) {
-      const token = json.data.accessToken;
+      token = json.data.accessToken;
       console.log("🔑 AccessToken (from login body):", token);
-
-      // prefer cookie from set-cookie if server provided fine_auth_token
-      let cookieToUse = cookieHeader;
-      if (!/fine_auth_token=[^;]+/.test(cookieToUse)) {
-        // inject fine_auth_token into cookie header so subsequent calls that expect cookie have it
-        cookieToUse = (cookieToUse ? cookieToUse + "; " : "") + `fine_auth_token=${token}`;
-      }
-
-      session.token = token;
-      session.cookie = cookieToUse;
-      session.sessionid = uuidv4();
-      session.lastLogin = Date.now();
-
-      console.log("🆔 sessionid (generated):", session.sessionid);
-      console.log("🍪 session.cookie:", session.cookie);
-      return session;
     }
 
-    // If not present in body, try to extract fine_auth_token from cookieHeader
-    const m = cookieHeader.match(/fine_auth_token=([^;]+)/);
-    if (m) {
-      const token = m[1];
-      console.log("🔑 AccessToken (from cookie):", token);
+    // --- fallback: lấy token từ cookie ---
+    if (!token) {
+      const m = cookieHeader.match(/fine_auth_token=([^;]+)/);
+      if (m) {
+        token = m[1];
+        console.log("🔑 AccessToken (from cookie):", token);
+      }
+    }
+
+    // --- tìm JSESSIONID ---
+    let sessionid = null;
+    const m2 = cookieHeader.match(/JSESSIONID=([^;]+)/);
+    if (m2) {
+      sessionid = m2[1];
+      console.log("🆔 JSESSIONID found:", sessionid);
+    }
+
+    // --- update session ---
+    if (token) {
       session.token = token;
       session.cookie = cookieHeader;
-      session.sessionid = uuidv4();
+      session.sessionid = sessionid || uuidv4();
       session.lastLogin = Date.now();
-      console.log("🆔 sessionid (generated):", session.sessionid);
+
+      console.log("✅ Login thành công");
+      console.log("🔑 session.token:", session.token);
+      console.log("🆔 session.sessionid:", session.sessionid);
       console.log("🍪 session.cookie:", session.cookie);
       return session;
     }
