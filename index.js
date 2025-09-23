@@ -898,48 +898,28 @@ async function loginWOWBUY() {
     }),
   });
 
-  // ---- Log chi tiết ----
-  console.log("📡 Status:", loginRes.status, loginRes.statusText);
-
-  console.log("📥 Response headers:");
-  loginRes.headers.forEach((v, k) => {
-    console.log("   ", k, ":", v);
-  });
-
   const rawCookie = loginRes.headers.get("set-cookie") || "";
+  const rawText = await loginRes.text();
+
+  console.log("📡 Status:", loginRes.status);
   console.log("🍪 Raw Set-Cookie:", rawCookie);
+  console.log("📄 Raw login response (first 500):", rawText.slice(0, 500));
 
-  // Chuẩn hóa cookie
-  const cookieHeader = rawCookie
-    ? rawCookie.split(",").map((c) => c.split(";")[0]).join("; ")
-    : "";
-
-  // Đọc body
-  let rawText = "";
-  let json = null;
+  let json;
   try {
-    rawText = await loginRes.text();
-    console.log("📄 Raw login response (first 500 chars):", rawText.slice(0, 500));
     json = JSON.parse(rawText);
-  } catch (e) {
-    console.warn("⚠️ Không parse được JSON từ login, giữ nguyên raw text");
+  } catch {
+    console.warn("⚠️ Không parse được JSON từ login");
+    json = {};
   }
 
-  // Nếu có accessToken trong body
   if (json?.data?.accessToken) {
-    console.log("🔑 AccessToken (from body):", json.data.accessToken);
-    session.token = json.data.accessToken;
-    session.cookie = cookieHeader || `fine_auth_token=${json.data.accessToken}`;
-    session.lastLogin = Date.now();
-    return session;
-  }
+    const token = json.data.accessToken;
+    console.log("🔑 AccessToken:", token);
 
-  // Nếu không có thì kiểm tra trong cookie
-  if (/fine_auth_token=([^;]+)/.test(cookieHeader)) {
-    const tokenFromCookie = cookieHeader.match(/fine_auth_token=([^;]+)/)[1];
-    console.log("🔑 AccessToken (from cookie):", tokenFromCookie);
-    session.token = tokenFromCookie;
-    session.cookie = cookieHeader;
+    // build cookie header
+    session.token = token;
+    session.cookie = `tenantId=default; fine_auth_token=${token}`;
     session.lastLogin = Date.now();
     return session;
   }
@@ -963,6 +943,8 @@ async function fetchPageContent() {
   await ensureSession();
 
   const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1`;
+  console.log("📡 Fetching report page:", url);
+
   const res = await fetch(url, {
     method: "GET",
     headers: {
