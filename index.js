@@ -856,6 +856,12 @@ cron.schedule(
    Optimized for Railway / Cloud deployment
 ================================================== */
 
+/* ==================================================
+   FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
+   Với chuỗi init session (resource → fr_paramstpl → fr_dialog)
+   Có log chi tiết để debug
+================================================== */
+
 app.use(bodyParser.json());
 
 // ========= CONFIG =========
@@ -872,8 +878,15 @@ const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
 let session = {
   token: null,
   cookie: null,
+  sessionid: null,
   lastLogin: 0,
 };
+
+// ================== HELPERS ==================
+function logHeaders(res) {
+  console.log("📥 Response headers:");
+  res.headers.forEach((v, k) => console.log("   ", k, ":", v));
+}
 
 // ================== LOGIN WOWBUY ==================
 async function loginWOWBUY() {
@@ -898,11 +911,13 @@ async function loginWOWBUY() {
     }),
   });
 
-  const rawCookie = loginRes.headers.get("set-cookie") || "";
-  const rawText = await loginRes.text();
+  console.log("📡 Status:", loginRes.status, loginRes.statusText);
+  logHeaders(loginRes);
 
-  console.log("📡 Status:", loginRes.status);
+  const rawCookie = loginRes.headers.get("set-cookie") || "";
   console.log("🍪 Raw Set-Cookie:", rawCookie);
+
+  const rawText = await loginRes.text();
   console.log("📄 Raw login response (first 500):", rawText.slice(0, 500));
 
   let json;
@@ -917,42 +932,105 @@ async function loginWOWBUY() {
     const token = json.data.accessToken;
     console.log("🔑 AccessToken:", token);
 
-    // build cookie header
-    session.token = token;
-    session.cookie = `tenantId=default; fine_auth_token=${token}`;
-    session.lastLogin = Date.now();
+    session = {
+      token,
+      cookie: `tenantId=default; fine_auth_token=${token}`,
+      sessionid: uuidv4(),
+      lastLogin: Date.now(),
+    };
+    console.log("🆔 SessionID:", session.sessionid);
     return session;
   }
 
-  console.error("❌ Login không lấy được accessToken!");
-  return null;
+  throw new Error("❌ Login không lấy được accessToken!");
 }
 
-// ================== Ensure Session ==================
+// ================== INIT SESSION (simulate browser) ==================
+async function initWOWBUYSession() {
+  console.log("⚙️ Init WOWBUY session...");
+
+  // 1. resource
+  const res1 = await fetch(
+    `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`,
+    {
+      headers: {
+        cookie: session.cookie,
+        authorization: `Bearer ${session.token}`,
+        sessionid: session.sessionid,
+        "x-requested-with": "XMLHttpRequest",
+      },
+    }
+  );
+  console.log("✅ Step1 resource status:", res1.status);
+
+  // 2. fr_paramstpl
+  const res2 = await fetch(
+    `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`,
+    {
+      method: "POST",
+      headers: {
+        cookie: session.cookie,
+        authorization: `Bearer ${session.token}`,
+        sessionid: session.sessionid,
+        "x-requested-with": "XMLHttpRequest",
+      },
+    }
+  );
+  console.log("✅ Step2 fr_paramstpl status:", res2.status);
+
+  // 3. fr_dialog (parameters_d)
+  const today = new Date();
+  const start = new Date(today);
+  start.setMonth(start.getMonth() - 1);
+
+  const body = `__parameters__=${encodeURIComponent(
+    JSON.stringify({
+      SD: start.toISOString().slice(0, 10),
+      ED: today.toISOString().slice(0, 10),
+    })
+  )}`;
+
+  const res3 = await fetch(
+    `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        cookie: session.cookie,
+        authorization: `Bearer ${session.token}`,
+        sessionid: session.sessionid,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body,
+    }
+  );
+  console.log("✅ Step3 fr_dialog status:", res3.status);
+
+  console.log("🎉 WOWBUY session initialized");
+}
+
+// ================== ENSURE SESSION ==================
 async function ensureSession() {
-  if (!session.token) {
-    console.log("⚠️ Chưa có token, tiến hành login...");
+  if (!session.token || Date.now() - session.lastLogin > 1000 * 60 * 50) {
+    console.log("⚠️ Chưa có token hoặc token cũ, tiến hành login...");
     await loginWOWBUY();
-  } else {
-    console.log("✅ Dùng lại token hiện tại...");
   }
 }
 
-// ==================== Fetch WOWBUY Data ====================
+// ================== FETCH DATA ==================
 async function fetchPageContent() {
   await ensureSession();
+  await initWOWBUYSession();
 
   const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1`;
   console.log("📡 Fetching report page:", url);
 
   const res = await fetch(url, {
-    method: "GET",
     headers: {
-      accept: "text/html, */*; q=0.01",
-      authorization: `Bearer ${session.token}`,
       cookie: session.cookie,
+      authorization: `Bearer ${session.token}`,
+      sessionid: session.sessionid,
       "x-requested-with": "XMLHttpRequest",
-      "user-agent": "Mozilla/5.0",
     },
   });
 
