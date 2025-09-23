@@ -894,74 +894,97 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
   }
 }
 
-// ================== LOGIN WOWBUY ==================
-
+// ================== LOGIN + REFRESH WOWBUY ==================
 async function loginAndRefresh() {
   console.log("🔐 API login WOWBUY...");
 
-  // Step 1: LOGIN
-  const loginRes = await fetch("https://report.wowbuy.ai/webroot/decision/login", {
-    method: "POST",
-    headers: {
-      "accept": "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/json",
-      "origin": "https://report.wowbuy.ai",
-      "referer": "https://report.wowbuy.ai/webroot/decision/login",
-      "x-requested-with": "XMLHttpRequest",
-    },
-    body: JSON.stringify({
-      username: process.env.WOWBUY_USERNAME,
-      password: process.env.WOWBUY_PASSWORD,
-      validity: -2,
-      sliderToken: "",
-      origin: "",
-      encrypted: true,
-    }),
-  });
+  try {
+    // --- Step 1: LOGIN ---
+    const loginRes = await fetch(`${BASE_URL}/webroot/decision/login`, {
+      method: "POST",
+      headers: {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/json",
+        "origin": BASE_URL,
+        "referer": `${BASE_URL}/webroot/decision/login`,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body: JSON.stringify({
+        username: WOWBUY_USERNAME,
+        password: WOWBUY_PASSWORD,
+        validity: -2,
+        sliderToken: "",
+        origin: "",
+        encrypted: true,
+      }),
+    });
 
-  const rawCookie = loginRes.headers.get("set-cookie");
-  console.log("🍪 Raw Set-Cookie:", rawCookie);
+    const rawCookie = loginRes.headers.get("set-cookie");
+    console.log("🍪 Raw Set-Cookie:", rawCookie);
 
-  // Lấy cookie session (nếu có)
-  let cookieHeader = "";
-  if (rawCookie) {
-    cookieHeader = rawCookie.split(",").map(c => c.split(";")[0]).join("; ");
+    let cookieHeader = "";
+    if (rawCookie) {
+      cookieHeader = rawCookie.split(",").map(c => c.split(";")[0]).join("; ");
+    }
+
+    let loginJson = {};
+    try {
+      loginJson = await loginRes.json();
+    } catch {
+      console.warn("⚠️ Login không trả JSON, bỏ qua parse");
+    }
+
+    // Lấy token từ response hoặc cookie
+    let tokenFromLogin = loginJson?.data?.accessToken || null;
+    if (!tokenFromLogin && cookieHeader.includes("fine_auth_token")) {
+      tokenFromLogin = cookieHeader.match(/fine_auth_token=([^;]+)/)?.[1] || null;
+    }
+
+    if (!tokenFromLogin) {
+      throw new Error("❌ Login không lấy được token!");
+    }
+
+    // --- Step 2: REFRESH ---
+    const refreshRes = await fetch(`${BASE_URL}/webroot/decision/token/refresh`, {
+      method: "POST",
+      headers: {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/json",
+        "authorization": `Bearer ${tokenFromLogin}`,
+        "cookie": cookieHeader,
+        "origin": BASE_URL,
+        "referer": `${BASE_URL}/webroot/decision`,
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body: JSON.stringify({
+        oldToken: tokenFromLogin,
+        tokenTimeOut: 1209600000,
+      }),
+    });
+
+    const refreshJson = await refreshRes.json();
+    const newToken = refreshJson?.data?.accessToken;
+
+    if (!newToken) {
+      throw new Error("❌ Refresh không trả về accessToken!");
+    }
+
+    // Cập nhật session toàn cục
+    session.fine_auth_token = newToken;
+    session.sessionid = cookieHeader.match(/sessionid=([^;]+)/)?.[1] || null;
+
+    console.log("✅ Login+Refresh thành công, token:", newToken.slice(0, 40) + "...");
+    return session;
+
+  } catch (err) {
+    console.error("❌ loginAndRefresh error:", err.message);
+    return null;
   }
-
-  // Step 2: REFRESH TOKEN
-  const refreshRes = await fetch("https://report.wowbuy.ai/webroot/decision/token/refresh", {
-    method: "POST",
-    headers: {
-      "accept": "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/json",
-      "authorization": cookieHeader.includes("fine_auth_token")
-        ? "Bearer " + cookieHeader.match(/fine_auth_token=([^;]+)/)[1]
-        : "",
-      "cookie": cookieHeader,
-      "origin": "https://report.wowbuy.ai",
-      "referer": "https://report.wowbuy.ai/webroot/decision",
-      "x-requested-with": "XMLHttpRequest",
-    },
-    body: JSON.stringify({
-      oldToken: cookieHeader.includes("fine_auth_token")
-        ? cookieHeader.match(/fine_auth_token=([^;]+)/)[1]
-        : "",
-      tokenTimeOut: 1209600000,
-    }),
-  });
-
-  const refreshJson = await refreshRes.json();
-  console.log("🔑 AccessToken:", refreshJson?.data?.accessToken);
-
-  return {
-    cookie: cookieHeader,
-    token: refreshJson?.data?.accessToken || null,
-  };
 }
 
 // ==================== Fetch WOWBUY Data ====================
 async function fetchPageContent() {
-  if (!session.fine_auth_token || !session.sessionid) {
+  if (!session.fine_auth_token) {
     await loginAndRefresh();
   }
 
@@ -971,7 +994,7 @@ async function fetchPageContent() {
     headers: {
       "accept": "text/html, */*; q=0.01",
       "authorization": `Bearer ${session.fine_auth_token}`,
-      "cookie": `fine_auth_token=${session.fine_auth_token}; sessionid=${session.sessionid}`,
+      "cookie": `fine_auth_token=${session.fine_auth_token}; ${session.sessionid ? "sessionid=" + session.sessionid : ""}`,
       "x-requested-with": "XMLHttpRequest",
       "user-agent": "Mozilla/5.0",
     },
@@ -999,17 +1022,6 @@ async function fetchPageContent() {
   console.log("📊 Tổng số dòng:", rows.length);
   console.log("🔎 5 dòng đầu:", rows.slice(0, 5));
   return rows;
-}
-
-async function fetchWOWBUY() {
-  try {
-    console.log("🔐 Dùng token/sessionid hiện tại...");
-    const tableData = await fetchPageContent();
-    return tableData || [];
-  } catch (err) {
-    console.error("❌ fetchWOWBUY error:", err.message);
-    return [];
-  }
 }
 
 // ==================== Lark Sheet ====================
