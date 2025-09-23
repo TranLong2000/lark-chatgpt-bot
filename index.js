@@ -873,6 +873,9 @@ let session = {
   fine_auth_token: null,
   sessionid: null,
 };
+let currentToken = process.env.WOWBUY_TOKEN || null;
+let currentCookie = process.env.WOWBUY_COOKIE || null;
+let currentSessionId = null;
 
 // ==================== Helpers ====================
 async function safeFetch(url, options = {}, stepName = "Unknown") {
@@ -913,17 +916,14 @@ async function loginWOWBUY() {
   await page.setDefaultNavigationTimeout(0);
 
   try {
-    // Mở trang login
     await page.goto("https://report.wowbuy.ai/webroot/decision/login", {
       waitUntil: "domcontentloaded",
       timeout: 60000,
     });
 
-    // Gõ username + password
     await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
     await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
 
-    // Lắng nghe response của API login/info
     let tokenFromResponse = null;
     page.on("response", async (response) => {
       try {
@@ -937,18 +937,16 @@ async function loginWOWBUY() {
       } catch (e) {}
     });
 
-    // Click login
     await page.waitForSelector(".login-button", { timeout: 15000 });
     await page.click(".login-button");
 
-    // Chờ cho backend xử lý
     await sleep(10000);
 
-    // Lấy cookie từ trình duyệt
     const cookies = await page.cookies();
     const fineAuth = cookies.find(c => c.name === "fine_auth_token");
     const sessionId = cookies.find(c => c.name === "sessionid");
 
+    // Gán giá trị cho biến toàn cục
     if (!fineAuth && tokenFromResponse) {
       currentToken = tokenFromResponse;
     } else if (fineAuth) {
@@ -956,10 +954,11 @@ async function loginWOWBUY() {
     }
 
     currentCookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+    currentSessionId = sessionId ? sessionId.value : null;
 
     console.log("🍪 Cookie:", currentCookie);
     console.log("🔑 Token:", currentToken);
-    console.log("🆔 SessionID:", sessionId ? sessionId.value : null);
+    console.log("🆔 SessionID:", currentSessionId);
 
     await browser.close();
 
@@ -967,7 +966,7 @@ async function loginWOWBUY() {
       throw new Error("❌ Login không lấy được token!");
     }
 
-    return { token: currentToken, sessionid: sessionId ? sessionId.value : null };
+    return { token: currentToken, sessionid: currentSessionId };
   } catch (err) {
     await browser.close();
     console.error("❌ Login thất bại:", err.message);
