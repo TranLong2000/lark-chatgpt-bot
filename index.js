@@ -906,13 +906,13 @@ async function loginWOWBUY() {
   });
 
   const page = await browser.newPage();
-  await page.setDefaultNavigationTimeout(0); // không giới hạn timeout cho toàn bộ page
+  await page.setDefaultNavigationTimeout(0);
 
   try {
     // Mở trang login
     await page.goto("https://report.wowbuy.ai/webroot/decision/login", {
-      waitUntil: "domcontentloaded", // chỉ cần DOM load xong
-      timeout: 60000, // tăng lên 60 giây
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
     });
 
     // Gõ username + password
@@ -923,23 +923,27 @@ async function loginWOWBUY() {
     await page.waitForSelector(".login-button", { timeout: 15000 });
     await page.click(".login-button");
 
-    // Chờ chuyển trang sau khi login
-    await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 60000 });
+    // ✅ Chờ cookie xuất hiện thay vì chờ navigation
+    let fineAuth = null;
+    let sessionId = null;
+    for (let i = 0; i < 30; i++) { // thử 30 lần (30 giây)
+      const cookies = await page.cookies();
+      fineAuth = cookies.find(c => c.name === "fine_auth_token");
+      sessionId = cookies.find(c => c.name === "sessionid");
 
-    // Lấy cookie
-    const cookies = await page.cookies();
-    const fineAuth = cookies.find(c => c.name === "fine_auth_token");
-    const sessionId = cookies.find(c => c.name === "sessionid");
-
-    currentCookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
-    currentToken = fineAuth ? fineAuth.value : null;
-
-    console.log("🍪 fine_auth_token:", currentToken);
-    console.log("🆔 sessionid:", sessionId ? sessionId.value : null);
+      if (fineAuth && sessionId) {
+        currentCookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+        currentToken = fineAuth.value;
+        console.log("🍪 fine_auth_token:", currentToken);
+        console.log("🆔 sessionid:", sessionId.value);
+        break;
+      }
+      await new Promise(r => setTimeout(r, 1000)); // đợi 1s rồi thử lại
+    }
 
     await browser.close();
 
-    if (!currentToken || !sessionId) {
+    if (!fineAuth || !sessionId) {
       throw new Error("❌ Login không lấy được token hoặc sessionid!");
     }
 
