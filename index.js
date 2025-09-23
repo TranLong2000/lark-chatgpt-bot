@@ -892,6 +892,10 @@ async function safeFetch(url, options = {}, stepName = "Unknown") {
 }
 
 // ================== LOGIN WOWBUY ==================
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 async function loginWOWBUY() {
   console.log("🔐 Puppeteer: mở trang login WOWBUY...");
 
@@ -930,17 +934,15 @@ async function loginWOWBUY() {
             console.log("🔑 Token lấy từ login/info:", tokenFromResponse);
           }
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) {}
     });
 
     // Click login
     await page.waitForSelector(".login-button", { timeout: 15000 });
     await page.click(".login-button");
 
-    // Đợi 10s để API trả về token + cookie
-    await page.waitForTimeout(10000);
+    // Chờ cho backend xử lý
+    await sleep(10000);
 
     // Lấy cookie từ trình duyệt
     const cookies = await page.cookies();
@@ -948,7 +950,6 @@ async function loginWOWBUY() {
     const sessionId = cookies.find(c => c.name === "sessionid");
 
     if (!fineAuth && tokenFromResponse) {
-      // Nếu cookie chưa set mà API trả token → dùng token đó
       currentToken = tokenFromResponse;
     } else if (fineAuth) {
       currentToken = fineAuth.value;
@@ -973,7 +974,6 @@ async function loginWOWBUY() {
     throw err;
   }
 }
-
 
 // ==================== Fetch WOWBUY Data ====================
 async function fetchPageContent() {
