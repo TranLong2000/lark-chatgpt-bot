@@ -872,12 +872,10 @@ const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
 let session = {
   token: null,
   cookie: null,
+  lastLogin: 0,
 };
 
-// ================== LOGIN + REFRESH ==================
-
 // ================== LOGIN WOWBUY ==================
-
 async function loginWOWBUY() {
   console.log("🔐 API login WOWBUY...");
 
@@ -932,6 +930,7 @@ async function loginWOWBUY() {
     console.log("🔑 AccessToken (from body):", json.data.accessToken);
     session.token = json.data.accessToken;
     session.cookie = cookieHeader || `fine_auth_token=${json.data.accessToken}`;
+    session.lastLogin = Date.now();
     return session;
   }
 
@@ -941,11 +940,22 @@ async function loginWOWBUY() {
     console.log("🔑 AccessToken (from cookie):", tokenFromCookie);
     session.token = tokenFromCookie;
     session.cookie = cookieHeader;
+    session.lastLogin = Date.now();
     return session;
   }
 
   console.error("❌ Login không lấy được accessToken!");
   return null;
+}
+
+// ================== Ensure Session ==================
+async function ensureSession() {
+  if (!session.token) {
+    console.log("⚠️ Chưa có token, tiến hành login...");
+    await loginWOWBUY();
+  } else {
+    console.log("✅ Dùng lại token hiện tại...");
+  }
 }
 
 // ==================== Fetch WOWBUY Data ====================
