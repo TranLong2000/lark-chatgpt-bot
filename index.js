@@ -915,47 +915,45 @@ async function loginWOWBUY() {
   const page = await browser.newPage();
   await page.setDefaultNavigationTimeout(0);
 
+  let tokenFromResponse = null;
+
+  // Lắng nghe response để lấy token
+  page.on("response", async (response) => {
+    try {
+      const url = response.url();
+      if (url.includes("/webroot/decision/login/info")) {
+        const data = await response.json();
+        if (data && data.authorization) {
+          tokenFromResponse = data.authorization;
+          console.log("🔑 Token lấy từ login/info:", tokenFromResponse);
+        }
+      }
+    } catch (e) {}
+  });
+
   try {
     await page.goto("https://report.wowbuy.ai/webroot/decision/login", {
       waitUntil: "domcontentloaded",
       timeout: 60000,
     });
 
-    // Điền username & password
+    // Gõ username & password
     await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
     await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
 
-    // Lắng nghe response từ login/info
-    let tokenFromResponse = null;
-    page.on("response", async (response) => {
-      try {
-        if (response.url().includes("/webroot/decision/login/info")) {
-          const data = await response.json();
-          if (data && data.authorization) {
-            tokenFromResponse = data.authorization;
-            console.log("🔑 Token lấy từ login/info:", tokenFromResponse);
-          }
-        }
-      } catch (e) {
-        // ignore
-      }
-    });
-
-    // Click nút Login
+    // Click nút login
     await page.waitForSelector(".login-button", { timeout: 15000 });
     await page.click(".login-button");
 
-    // Chờ trang redirect hoặc fallback sleep
-    try {
-      await page.waitForNavigation({ waitUntil: "networkidle0", timeout: 30000 });
-    } catch {
-      console.warn("⚠️ Không thấy redirect sau login, dùng sleep(10s) fallback...");
-      await sleep(10000);
-    }
+    // Chờ redirect sau login
+    await Promise.race([
+      page.waitForNavigation({ waitUntil: "networkidle0", timeout: 60000 }),
+      sleep(15000), // fallback
+    ]);
 
-    // Lấy cookies
+    // Lấy cookies sau khi redirect
     const cookies = await page.cookies();
-    console.log("🍪 All cookies:", cookies);
+    console.log("🍪 All cookies after login:", cookies);
 
     const fineAuth = cookies.find(c => c.name === "fine_auth_token");
     const sessionId = cookies.find(c => c.name === "sessionid");
@@ -970,9 +968,100 @@ async function loginWOWBUY() {
     currentCookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
     currentSessionId = sessionId ? sessionId.value : null;
 
-    console.log("🍪 Cookie:", currentCookie);
-    console.log("🔑 Token:", currentToken);
-    console.log("🆔 SessionID:", currentSessionId);
+    console.log("🍪 Cookie:", currentCookie || "null");
+    console.log("🔑 Token:", currentToken || "null");
+    console.log("🆔 SessionID:", currentSessionId || "null");
+
+    await browser.close();
+
+    if (!currentToken) {
+      throw new Error("❌ Login không lấy được token!");
+    }
+
+    return { token: currentToken, sessionid: currentSessionId };
+  } catch (err) {
+    await browser.close();
+    console.error("❌ Login thất bại:", err.message);
+    throw err;
+  }
+}
+// ================== LOGIN WOWBUY ==================
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function loginWOWBUY() {
+  console.log("🔐 Puppeteer: mở trang login WOWBUY...");
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ],
+  });
+
+  const page = await browser.newPage();
+  await page.setDefaultNavigationTimeout(0);
+
+  let tokenFromResponse = null;
+
+  // Lắng nghe response để lấy token
+  page.on("response", async (response) => {
+    try {
+      const url = response.url();
+      if (url.includes("/webroot/decision/login/info")) {
+        const data = await response.json();
+        if (data && data.authorization) {
+          tokenFromResponse = data.authorization;
+          console.log("🔑 Token lấy từ login/info:", tokenFromResponse);
+        }
+      }
+    } catch (e) {}
+  });
+
+  try {
+    await page.goto("https://report.wowbuy.ai/webroot/decision/login", {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+
+    // Gõ username & password
+    await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
+    await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
+
+    // Click nút login
+    await page.waitForSelector(".login-button", { timeout: 15000 });
+    await page.click(".login-button");
+
+    // Chờ redirect sau login
+    await Promise.race([
+      page.waitForNavigation({ waitUntil: "networkidle0", timeout: 60000 }),
+      sleep(15000), // fallback
+    ]);
+
+    // Lấy cookies sau khi redirect
+    const cookies = await page.cookies();
+    console.log("🍪 All cookies after login:", cookies);
+
+    const fineAuth = cookies.find(c => c.name === "fine_auth_token");
+    const sessionId = cookies.find(c => c.name === "sessionid");
+
+    // Gán giá trị cho biến toàn cục
+    if (!fineAuth && tokenFromResponse) {
+      currentToken = tokenFromResponse;
+    } else if (fineAuth) {
+      currentToken = fineAuth.value;
+    }
+
+    currentCookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+    currentSessionId = sessionId ? sessionId.value : null;
+
+    console.log("🍪 Cookie:", currentCookie || "null");
+    console.log("🔑 Token:", currentToken || "null");
+    console.log("🆔 SessionID:", currentSessionId || "null");
 
     await browser.close();
 
