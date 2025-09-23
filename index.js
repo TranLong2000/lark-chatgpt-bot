@@ -897,51 +897,30 @@ async function loginWOWBUY() {
     }),
   });
 
-  const rawCookie = loginRes.headers.get("set-cookie");
+  const rawCookie = loginRes.headers.get("set-cookie") || "";
   console.log("🍪 Raw Set-Cookie:", rawCookie);
 
   const cookieHeader = rawCookie
     ? rawCookie.split(",").map((c) => c.split(";")[0]).join("; ")
     : "";
 
-  // ngay sau login → gọi refresh để lấy token
-  return await refreshWOWBUY(cookieHeader);
-}
-
-async function refreshWOWBUY(cookieHeader) {
-  console.log("🔄 Refresh WOWBUY token...");
-
-  const oldTokenMatch = cookieHeader.match(/fine_auth_token=([^;]+)/);
-  const oldToken = oldTokenMatch ? oldTokenMatch[1] : "";
-
-  const refreshRes = await fetch(`${BASE_URL}/webroot/decision/token/refresh`, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/json",
-      authorization: oldToken ? `Bearer ${oldToken}` : "",
-      cookie: cookieHeader,
-      origin: BASE_URL,
-      referer: `${BASE_URL}/webroot/decision`,
-      "x-requested-with": "XMLHttpRequest",
-    },
-    body: JSON.stringify({
-      oldToken,
-      tokenTimeOut: 1209600000,
-    }),
-  });
-
-  const json = await refreshRes.json().catch(() => null);
-  if (!json?.data?.accessToken) {
-    console.error("❌ Refresh thất bại:", json);
-    throw new Error("Refresh token failed");
+  // thử parse JSON luôn (vì có thể trả về accessToken trong body)
+  let json = null;
+  try {
+    json = await loginRes.json();
+  } catch (e) {
+    console.warn("⚠️ Login response không phải JSON");
   }
 
-  console.log("🔑 AccessToken:", json.data.accessToken);
+  if (json?.data?.accessToken) {
+    console.log("🔑 AccessToken (from login):", json.data.accessToken);
+    session.token = json.data.accessToken;
+    session.cookie = cookieHeader || `fine_auth_token=${json.data.accessToken}`;
+    return session;
+  }
 
-  session.token = json.data.accessToken;
-  session.cookie = cookieHeader || `fine_auth_token=${json.data.accessToken}`;
-  return session;
+  // nếu không có accessToken trong body → thử refresh
+  return await refreshWOWBUY(cookieHeader);
 }
 
 async function ensureSession() {
