@@ -962,7 +962,7 @@ async function loginAndRefresh() {
 // ==================== Fetch WOWBUY Data ====================
 async function fetchPageContent() {
   if (!session.fine_auth_token || !session.sessionid) {
-    await loginWOWBUY();
+    await loginAndRefresh();
   }
 
   const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1`;
