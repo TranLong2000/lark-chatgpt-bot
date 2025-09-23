@@ -875,6 +875,9 @@ let session = {
 };
 
 // ================== LOGIN + REFRESH ==================
+
+// ================== LOGIN WOWBUY ==================
+
 async function loginWOWBUY() {
   console.log("🔐 API login WOWBUY...");
 
@@ -897,41 +900,52 @@ async function loginWOWBUY() {
     }),
   });
 
+  // ---- Log chi tiết ----
+  console.log("📡 Status:", loginRes.status, loginRes.statusText);
+
+  console.log("📥 Response headers:");
+  loginRes.headers.forEach((v, k) => {
+    console.log("   ", k, ":", v);
+  });
+
   const rawCookie = loginRes.headers.get("set-cookie") || "";
   console.log("🍪 Raw Set-Cookie:", rawCookie);
 
+  // Chuẩn hóa cookie
   const cookieHeader = rawCookie
     ? rawCookie.split(",").map((c) => c.split(";")[0]).join("; ")
     : "";
 
-  // thử parse JSON luôn (vì có thể trả về accessToken trong body)
+  // Đọc body
+  let rawText = "";
   let json = null;
   try {
-    json = await loginRes.json();
+    rawText = await loginRes.text();
+    console.log("📄 Raw login response (first 500 chars):", rawText.slice(0, 500));
+    json = JSON.parse(rawText);
   } catch (e) {
-    console.warn("⚠️ Login response không phải JSON");
+    console.warn("⚠️ Không parse được JSON từ login, giữ nguyên raw text");
   }
 
+  // Nếu có accessToken trong body
   if (json?.data?.accessToken) {
-    console.log("🔑 AccessToken (from login):", json.data.accessToken);
+    console.log("🔑 AccessToken (from body):", json.data.accessToken);
     session.token = json.data.accessToken;
     session.cookie = cookieHeader || `fine_auth_token=${json.data.accessToken}`;
     return session;
   }
 
-  // nếu không có accessToken trong body → thử refresh
-  return await refreshWOWBUY(cookieHeader);
-}
+  // Nếu không có thì kiểm tra trong cookie
+  if (/fine_auth_token=([^;]+)/.test(cookieHeader)) {
+    const tokenFromCookie = cookieHeader.match(/fine_auth_token=([^;]+)/)[1];
+    console.log("🔑 AccessToken (from cookie):", tokenFromCookie);
+    session.token = tokenFromCookie;
+    session.cookie = cookieHeader;
+    return session;
+  }
 
-async function ensureSession() {
-  if (!session.token) {
-    return await loginWOWBUY();
-  }
-  try {
-    return await refreshWOWBUY(session.cookie);
-  } catch {
-    return await loginWOWBUY();
-  }
+  console.error("❌ Login không lấy được accessToken!");
+  return null;
 }
 
 // ==================== Fetch WOWBUY Data ====================
