@@ -900,25 +900,25 @@ async function loginWOWBUY() {
   console.log("🔐 API login WOWBUY...");
 
   const res = await fetch("https://report.wowbuy.ai/webroot/decision/login", {
-    method: "POST",
-    headers: {
-      "accept": "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/json",
-      "origin": "https://report.wowbuy.ai",
-      "referer": "https://report.wowbuy.ai/webroot/decision/login",
-      "x-requested-with": "XMLHttpRequest",
-      "user-agent": "Mozilla/5.0",
-      "cookie": "tenantId=default; fine_remember_login=-2",
-    },
-    body: JSON.stringify({
-      username: process.env.WOWBUY_USERNAME,
-      password: process.env.WOWBUY_PASSWORD, // phải encrypt nếu cần
-      validity: -2,
-      sliderToken: "",
-      origin: "",
-      encrypted: true
-    }),
-  });
+  method: "POST",
+  headers: {
+    "accept": "application/json, text/javascript, */*; q=0.01",
+    "content-type": "application/json",
+    "origin": "https://report.wowbuy.ai",
+    "referer": "https://report.wowbuy.ai/webroot/decision/login",
+    "x-requested-with": "XMLHttpRequest",
+    "user-agent": "Mozilla/5.0",
+    "cookie": "tenantId=default; fine_remember_login=-2",
+  },
+  body: JSON.stringify({
+    username: process.env.WOWBUY_USERNAME,
+    password: "c7aJ7Z03ClxqPy9ds/RjOw==", // ⚡ thử hardcode password encrypt
+    validity: -2,
+    sliderToken: "",
+    origin: "",
+    encrypted: true
+  }),
+});
 
   const data = await res.json();
 
