@@ -25,6 +25,7 @@
     "cheerio": "^1.0.0-rc.12",
     "formdata-node": "^6.0.0",
     "crypto-js": "^4.2.0",
+    "uuid": "^9.0.1",
     "puppeteer": "^22.0.0"
   }
 }
