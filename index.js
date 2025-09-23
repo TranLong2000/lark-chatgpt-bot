@@ -919,41 +919,61 @@ async function loginWOWBUY() {
     await page.type('input[placeholder="Username"]', process.env.WOWBUY_USERNAME, { delay: 50 });
     await page.type('input[placeholder="Password"]', process.env.WOWBUY_PASSWORD, { delay: 50 });
 
-    // Click nút login
+    // Lắng nghe response của API login/info
+    let tokenFromResponse = null;
+    page.on("response", async (response) => {
+      try {
+        if (response.url().includes("/webroot/decision/login/info")) {
+          const data = await response.json();
+          if (data && data.authorization) {
+            tokenFromResponse = data.authorization;
+            console.log("🔑 Token lấy từ login/info:", tokenFromResponse);
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    });
+
+    // Click login
     await page.waitForSelector(".login-button", { timeout: 15000 });
     await page.click(".login-button");
 
-    // ✅ Chờ cookie xuất hiện thay vì chờ navigation
-    let fineAuth = null;
-    let sessionId = null;
-    for (let i = 0; i < 30; i++) { // thử 30 lần (30 giây)
-      const cookies = await page.cookies();
-      fineAuth = cookies.find(c => c.name === "fine_auth_token");
-      sessionId = cookies.find(c => c.name === "sessionid");
+    // Đợi 10s để API trả về token + cookie
+    await page.waitForTimeout(10000);
 
-      if (fineAuth && sessionId) {
-        currentCookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
-        currentToken = fineAuth.value;
-        console.log("🍪 fine_auth_token:", currentToken);
-        console.log("🆔 sessionid:", sessionId.value);
-        break;
-      }
-      await new Promise(r => setTimeout(r, 1000)); // đợi 1s rồi thử lại
+    // Lấy cookie từ trình duyệt
+    const cookies = await page.cookies();
+    const fineAuth = cookies.find(c => c.name === "fine_auth_token");
+    const sessionId = cookies.find(c => c.name === "sessionid");
+
+    if (!fineAuth && tokenFromResponse) {
+      // Nếu cookie chưa set mà API trả token → dùng token đó
+      currentToken = tokenFromResponse;
+    } else if (fineAuth) {
+      currentToken = fineAuth.value;
     }
+
+    currentCookie = cookies.map(c => `${c.name}=${c.value}`).join("; ");
+
+    console.log("🍪 Cookie:", currentCookie);
+    console.log("🔑 Token:", currentToken);
+    console.log("🆔 SessionID:", sessionId ? sessionId.value : null);
 
     await browser.close();
 
-    if (!fineAuth || !sessionId) {
-      throw new Error("❌ Login không lấy được token hoặc sessionid!");
+    if (!currentToken) {
+      throw new Error("❌ Login không lấy được token!");
     }
 
-    return { token: currentToken, sessionid: sessionId.value };
+    return { token: currentToken, sessionid: sessionId ? sessionId.value : null };
   } catch (err) {
     await browser.close();
     console.error("❌ Login thất bại:", err.message);
     throw err;
   }
 }
+
 
 // ==================== Fetch WOWBUY Data ====================
 async function fetchPageContent() {
