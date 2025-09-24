@@ -1021,41 +1021,45 @@ async function loginWOWBUY() {
 
     session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || "");
     if (loginResp.json?.data?.accessToken) session.token = loginResp.json.data.accessToken;
+    else throw new Error("No accessToken in LOGIN response");
 
     if (session.token) await doTokenRefresh(session.token, session.cookie);
 
     // Lấy danh sách báo cáo để tìm UUID
     await getReportId();
 
-    if (session.entryUrl) {
-      console.log("📡 ENTRY ACCESS to fetch sessionID...");
-      const entryResp = await safeFetchVerbose(session.entryUrl, {
-        method: "GET",
-        headers: {
-          cookie: session.cookie,
-          authorization: `Bearer ${session.token}`,
-          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-          "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
-          referer: `${BASE_URL}/webroot/decision`,
-          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-        },
-      }, "ENTRY_ACCESS");
-
-      if (entryResp.text) {
-        const sid = extractSessionIDFromHtml(entryResp.text);
-        if (sid) {
-          session.sessionid = sid;
-          console.log("🆔 sessionID extracted:", session.sessionid);
-        } else {
-          console.warn("⚠️ Failed to extract sessionID from HTML. Checking HTML:", truncate(entryResp.text, 200));
-        }
-      } else {
-        console.warn("⚠️ No response text available to extract sessionID");
-      }
-
-      session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(entryResp.setCookieArray));
+    if (!session.entryUrl) {
+      console.warn("⚠️ entryUrl not set, using default Purchase Plan UUID");
+      session.entryUrl = `${BASE_URL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
     }
 
+    console.log("📥 entryUrl:", session.entryUrl);
+    console.log("📡 ENTRY ACCESS to fetch sessionID...");
+    const entryResp = await safeFetchVerbose(session.entryUrl, {
+      method: "GET",
+      headers: {
+        cookie: session.cookie,
+        authorization: `Bearer ${session.token}`,
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+        referer: `${BASE_URL}/webroot/decision`,
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      },
+    }, "ENTRY_ACCESS");
+
+    if (entryResp.text) {
+      const sid = extractSessionIDFromHtml(entryResp.text);
+      if (sid) {
+        session.sessionid = sid;
+        console.log("🆔 sessionID extracted:", session.sessionid);
+      } else {
+        console.warn("⚠️ Failed to extract sessionID from HTML. Checking HTML:", truncate(entryResp.text, 500));
+      }
+    } else {
+      console.warn("⚠️ No response text available to extract sessionID");
+    }
+
+    session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(entryResp.setCookieArray));
     session.lastLogin = Date.now();
     return session;
   } catch (err) {
@@ -1180,6 +1184,7 @@ async function getReportId() {
   }, "GET_REPORTS");
 
   if (resp.json?.data) {
+    console.log("📋 Available reports:", resp.json.data.map(item => `${item.text} (${item.id})`));
     const report = resp.json.data.find(item => item.text === TARGET_REPORT);
     if (report) {
       session.entryUrl = `${BASE_URL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
@@ -1201,8 +1206,8 @@ cron.schedule("*/1 * * * *", async () => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("Server running on port 3000");
+app.listen(8080, () => {
+  console.log("Server running on port 8080");
   fetchWOWBUY();
 });
 
