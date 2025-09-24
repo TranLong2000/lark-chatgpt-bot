@@ -1196,69 +1196,55 @@ async function ensureSession() {
   }
 }
 
+// ================== FETCH DATA ==================
+
 async function fetchPageContent() {
+  await ensureSession();
+  await initWOWBUYSession();
+  await fetchEntryAccess();
+
+  const query = `_= ${Date.now()}&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+  const url = `${BASE_URL}/webroot/decision/view/report?${query}`;
+
+  console.log("📡 Fetching page_content (GET):", url);
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      cookie: session.cookie || "",
+      authorization: session.token ? `Bearer ${session.token}` : "",
+      sessionid: session.sessionid || "",
+      "x-requested-with": "XMLHttpRequest",
+      referer: session.entryUrl,
+      "user-agent": "Mozilla/5.0 (Node)",
+    },
+  });
+
+  console.log("📡 page_content status:", res.status);
+  const raw = await res.text();
+
+  let parsed;
   try {
-    await ensureSession();
-    await initWOWBUYSession();
-    await fetchEntryAccess();   // 🔑 thêm bước này
-
-    const url = `${BASE_URL}/webroot/decision/view/report`;
-    const formBody = new URLSearchParams({
-      _: Date.now().toString(),
-      __boxModel__: "true",
-      op: "page_content",
-      pn: "1",
-      __webpage__: "true",
-      _paperWidth: "309",
-      _paperHeight: "510",
-      __fit__: "false",
-    }).toString();
-
-    console.log("📡 Fetching page_content (POST):", url);
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        cookie: session.cookie || "",
-        authorization: session.token ? `Bearer ${session.token}` : "",
-        sessionid: session.sessionid || "",
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "x-requested-with": "XMLHttpRequest",
-        referer: session.entryUrl,
-        "user-agent": "Mozilla/5.0 (Node)",
-      },
-      body: formBody,
-    });
-
-    console.log("📡 page_content status:", res.status);
-    const raw = await res.text();
-
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      console.error("❌ page_content did not return JSON:", e.message);
-      console.log("📄 Raw preview:\n", raw.slice(0, 500));
-      return [];
-    }
-
-    const html = parsed.html || "";
-    console.log("✅ page_content html length:", html.length);
-
-    const $ = cheerio.load(html);
-    const rows = [];
-    $("table tr").each((i, tr) => {
-      const cols = $(tr).find("td").map((j, td) => $(td).text().trim()).get();
-      if (cols.length > 0) rows.push(cols);
-    });
-
-    console.log("📊 Rows parsed:", rows.length);
-    if (rows.length > 0) console.log("🔎 sample row[0]:", rows[0].slice(0,6));
-    return rows;
-  } catch (err) {
-    console.error("❌ fetchPageContent error:", err.message);
-    throw err;
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.error("❌ page_content not JSON:", e.message);
+    console.log("📄 Raw preview:\n", raw.slice(0, 500));
+    return [];
   }
+
+  const html = parsed.html || "";
+  console.log("✅ html length:", html.length);
+
+  const $ = cheerio.load(html);
+  const rows = [];
+  $("table tr").each((i, tr) => {
+    const cols = $(tr).find("td").map((j, td) => $(td).text().trim()).get();
+    if (cols.length > 0) rows.push(cols);
+  });
+
+  console.log("📊 Rows parsed:", rows.length);
+  if (rows.length > 0) console.log("🔎 sample row:", rows[0]);
+  return rows;
 }
 
 // ==================== Lark Sheet (unchanged) ====================
