@@ -872,28 +872,23 @@ const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
 let session = {
   token: null,
   cookie: "",
-  entryUrl: `${BASE_URL}/webroot/decision`,
+  entryUrl: "",
   sessionid: "",
   lastLogin: 0,
 };
 
 // ======= Debug / Cookie helpers =======
-const UNMASK_ENTRY = false;
-
 function truncate(str = "", len = 40) {
-  if (!str) return "(null)";
   return str.length > len ? str.slice(0, len) + "..." : str;
 }
 
 function maskValue(v) {
   if (!v) return v;
   const s = String(v);
-  if (s.length <= 24) return s;
-  return s.slice(0, 8) + "..." + s.slice(-6);
+  return s.length <= 24 ? s : s.slice(0, 8) + "..." + s.slice(-6);
 }
 
 function maskCookieString(cookieStr = "") {
-  if (!cookieStr) return cookieStr;
   return cookieStr
     .split(";")
     .map(p => {
@@ -914,22 +909,16 @@ function maskCookieString(cookieStr = "") {
 
 function buildCookieHeaderFromSetCookieArray(setCookieArray) {
   if (!setCookieArray) return "";
-  const arr = Array.isArray(setCookieArray) ? setCookieArray : [setCookieArray];
-  return arr.map(c => c.split(";")[0].trim()).filter(Boolean).join("; ");
+  return Array.isArray(setCookieArray) ? setCookieArray.map(c => c.split(";")[0].trim()).filter(Boolean).join("; ") : "";
 }
 
 function parseSetCookieArrayToObj(setCookieArray) {
   const out = {};
   if (!setCookieArray) return out;
-  const arr = Array.isArray(setCookieArray) ? setCookieArray : [setCookieArray];
-  arr.forEach(c => {
+  Array.isArray(setCookieArray) ? setCookieArray : [setCookieArray].forEach(c => {
     const first = String(c).split(";")[0].trim();
     const eq = first.indexOf("=");
-    if (eq > -1) {
-      const name = first.slice(0, eq).trim();
-      const val = first.slice(eq + 1);
-      out[name] = val;
-    }
+    if (eq > -1) out[first.slice(0, eq).trim()] = first.slice(eq + 1);
   });
   return out;
 }
@@ -940,10 +929,7 @@ function cookieStringToObj(cookieStr = "") {
   cookieStr.split(";").map(p => p.trim()).forEach(pair => {
     if (!pair) return;
     const eq = pair.indexOf("=");
-    if (eq === -1) return;
-    const k = pair.slice(0, eq);
-    const v = pair.slice(eq + 1);
-    out[k] = v;
+    if (eq !== -1) out[pair.slice(0, eq)] = pair.slice(eq + 1);
   });
   return out;
 }
@@ -954,7 +940,6 @@ function mergeCookieStringWithObj(cookieStr = "", cookieObj = {}) {
   return Object.keys(base).map(k => `${k}=${base[k]}`).join("; ");
 }
 
-// ======= Helper: parse sessionID từ entry HTML =======
 function extractSessionIDFromHtml(html) {
   const regex = /FR\.SessionMgr\.register\('([^']+)'/;
   const match = html.match(regex);
@@ -967,101 +952,51 @@ function extractSessionIDFromHtml(html) {
   return null;
 }
 
-// ======= Verbose fetch helper =======
 async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
-  opts = Object.assign({}, opts);
   opts.headers = opts.headers || {};
   const method = (opts.method || "GET").toUpperCase();
 
-  console.log(`\n[${stepName}] --> ${method} ${url}`);
   const headersMasked = {};
-  Object.keys(opts.headers || {}).forEach(k => {
+  Object.keys(opts.headers).forEach(k => {
     const v = opts.headers[k];
     if (/cookie|authorization|set-cookie|token|password/i.test(k)) {
-      headersMasked[k] = Array.isArray(v) ? v.map(x => maskCookieString(String(x))) : maskCookieString(String(v));
+      headersMasked[k] = maskCookieString(String(v));
     } else {
       headersMasked[k] = String(v);
     }
   });
-  console.log(`[${stepName}] Request headers:`, headersMasked);
-  if (opts.body) {
-    if (typeof opts.body === "string") {
-      console.log(`[${stepName}] Request body (first 1000 chars):`, opts.body.slice(0, 1000));
-    } else {
-      console.log(`[${stepName}] Request body (object):`, opts.body);
-    }
-  }
 
   let res;
   try {
     res = await fetch(url, opts);
   } catch (err) {
-    console.error(`[${stepName}] ❌ fetch error:`, err && err.message ? err.message : err);
     throw err;
   }
 
-  console.log(`[${stepName}] <= status:`, res.status);
-
   const respHeaders = {};
-  try {
-    res.headers.forEach((v, k) => (respHeaders[k] = v));
-  } catch (e) {
-    try {
-      const raw = typeof res.headers.raw === "function" ? res.headers.raw() : {};
-      Object.keys(raw).forEach(k => (respHeaders[k] = raw[k]));
-    } catch (_) {}
-  }
+  res.headers.forEach((v, k) => (respHeaders[k] = v));
 
   let setCookieArray = [];
-  try {
-    if (typeof res.headers.raw === "function") {
-      const raw = res.headers.raw();
-      setCookieArray = raw["set-cookie"] || [];
-    } else {
-      const single = res.headers.get("set-cookie");
-      if (single) setCookieArray = [single];
-    }
-  } catch (e) {}
+  const single = res.headers.get("set-cookie");
+  if (single) setCookieArray = [single];
 
   const respMasked = {};
   Object.keys(respHeaders).forEach(k => {
     const v = respHeaders[k];
     if (/set-cookie|cookie|authorization|token/i.test(k)) {
-      respMasked[k] = Array.isArray(v) ? v.map(x => maskCookieString(String(x))) : maskCookieString(String(v));
+      respMasked[k] = maskCookieString(String(v));
     } else {
       respMasked[k] = String(v);
     }
   });
 
-  console.log(`[${stepName}] Response headers (masked):`, respMasked);
-  console.log(`[${stepName}] Response set-cookie count:`, setCookieArray.length);
-  if (setCookieArray.length > 0) {
-    if (UNMASK_ENTRY) {
-      console.log(`[${stepName}] Response set-cookie (RAW):`, setCookieArray);
-    } else {
-      console.log(`[${stepName}] Response set-cookie (masked):`, setCookieArray.map(s => maskCookieString(String(s))));
-    }
-  }
-
-  const text = await res.text().catch(e => {
-    console.warn(`[${stepName}] unable to read response text:`, e && e.message ? e.message : e);
-    return "";
-  });
-
-  console.log(`[${stepName}] Response body length:`, text.length);
-  console.log(`[${stepName}] Response preview (first 1000 chars):\n`, text.slice(0, 1000));
-  if (text.length > 1000) console.log(`[${stepName}] Response preview (last 200 chars):\n`, text.slice(-200));
-
+  const text = await res.text().catch(() => "");
   let parsed = null;
-  try {
-    parsed = JSON.parse(text);
-    console.log(`[${stepName}] Response is valid JSON (top-level keys):`, Object.keys(parsed).slice(0, 10));
-  } catch (_) {}
+  try { parsed = JSON.parse(text); } catch (_) {}
 
   return { res, status: res.status, headers: respHeaders, setCookieArray, text, json: parsed };
 }
 
-// ======= LOGIN & REFRESH =======
 async function loginWOWBUY() {
   console.log("🔐 Login WOWBUY...");
   try {
@@ -1081,21 +1016,12 @@ async function loginWOWBUY() {
       body: JSON.stringify(bodyObj),
     }, "LOGIN");
 
-    session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || []);
-    console.log("🍪 cookie after login (masked):", maskCookieString(session.cookie || ""));
-
-    if (loginResp.json?.data?.accessToken) {
-      session.token = loginResp.json.data.accessToken;
-      console.log("🔑 accessToken (masked):", maskValue(session.token));
-    }
-    if (loginResp.json?.data?.url) {
-      session.entryUrl = `${BASE_URL}${loginResp.json.data.url}`;
-      console.log("📥 entryUrl from login:", session.entryUrl);
-    }
+    session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || "");
+    if (loginResp.json?.data?.accessToken) session.token = loginResp.json.data.accessToken;
+    if (loginResp.json?.data?.url) session.entryUrl = `${BASE_URL}${loginResp.json.data.url}`;
 
     if (session.token) await doTokenRefresh(session.token, session.cookie);
 
-    // ENTRY ACCESS
     if (session.entryUrl) {
       console.log("📡 ENTRY ACCESS to fetch sessionID...");
       const entryResp = await safeFetchVerbose(session.entryUrl, {
@@ -1105,21 +1031,11 @@ async function loginWOWBUY() {
           authorization: `Bearer ${session.token}`,
           accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
           "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
-          "priority": "u=0, i",
           referer: `${BASE_URL}/webroot/decision`,
-          "sec-ch-ua": '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
-          "sec-ch-ua-mobile": "?0",
-          "sec-ch-ua-platform": '"Windows"',
-          "sec-fetch-dest": "iframe",
-          "sec-fetch-mode": "navigate",
-          "sec-fetch-site": "same-origin",
-          "sec-fetch-user": "?1",
-          "upgrade-insecure-requests": "1",
           "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
         },
       }, "ENTRY_ACCESS");
 
-      // Trích xuất sessionID từ HTML
       if (entryResp.text) {
         const sid = extractSessionIDFromHtml(entryResp.text);
         if (sid) {
@@ -1132,24 +1048,10 @@ async function loginWOWBUY() {
         console.warn("⚠️ No response text available to extract sessionID");
       }
 
-      // Kiểm tra set-cookie để lấy JSESSIONID (nếu có)
-      if (entryResp.setCookieArray?.length > 0) {
-        const entryCookiesObj = parseSetCookieArrayToObj(entryResp.setCookieArray);
-        if (entryCookiesObj["JSESSIONID"]) {
-          session.sessionid = entryCookiesObj["JSESSIONID"];
-          console.log("🆔 JSESSIONID from set-cookie:", session.sessionid);
-        }
-      } else {
-        console.log("ℹ️ No set-cookie found in ENTRY_ACCESS response");
-      }
-
-      // Cập nhật cookie
-      session.cookie = mergeCookieStringWithObj(session.cookie || "", parseSetCookieArrayToObj(entryResp.setCookieArray));
-      console.log("🍪 cookie after ENTRY (masked):", maskCookieString(session.cookie || ""));
+      session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(entryResp.setCookieArray));
     }
 
     session.lastLogin = Date.now();
-    console.log("✅ Login OK (verbose)");
     return session;
   } catch (err) {
     console.error("❌ login error:", err.message);
@@ -1158,47 +1060,32 @@ async function loginWOWBUY() {
 }
 
 async function doTokenRefresh(token, cookieHeader) {
-  try {
-    console.log("🔄 Calling token/refresh...");
-    const url = `${BASE_URL}/webroot/decision/token/refresh`;
-    const body = { oldToken: token, tokenTimeOut: 1209600000 };
+  const url = `${BASE_URL}/webroot/decision/token/refresh`;
+  const body = { oldToken: token, tokenTimeOut: 1209600000 };
 
-    const refreshResp = await safeFetchVerbose(url, {
-      method: "POST",
-      headers: {
-        accept: "application/json, text/javascript, */*; q=0.01",
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
-        cookie: cookieHeader || "",
-        origin: BASE_URL,
-        referer: session.entryUrl || `${BASE_URL}/webroot/decision`,
-        "x-requested-with": "XMLHttpRequest",
-        "user-agent": "Mozilla/5.0 (Node)",
-      },
-      body: JSON.stringify(body),
-    }, "TOKEN_REFRESH");
+  const refreshResp = await safeFetchVerbose(url, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      cookie: cookieHeader,
+      origin: BASE_URL,
+      referer: session.entryUrl,
+      "x-requested-with": "XMLHttpRequest",
+      "user-agent": "Mozilla/5.0 (Node)",
+    },
+    body: JSON.stringify(body),
+  }, "TOKEN_REFRESH");
 
-    if (refreshResp.setCookieArray?.length > 0) {
-      const obj = parseSetCookieArrayToObj(refreshResp.setCookieArray);
-      session.cookie = mergeCookieStringWithObj(session.cookie || "", obj);
-      console.log("🍪 merged cookie after refresh (masked):", maskCookieString(session.cookie || ""));
-    }
-    if (refreshResp.json?.data?.accessToken) {
-      session.token = refreshResp.json.data.accessToken;
-      console.log("🔑 got new token (masked):", maskValue(session.token));
-      session.lastLogin = Date.now();
-    }
-    return true;
-  } catch (err) {
-    console.error("❌ refresh error:", err.message);
-    return false;
+  if (refreshResp.json?.data?.accessToken) {
+    session.token = refreshResp.json.data.accessToken;
+    session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(refreshResp.setCookieArray));
   }
+  return true;
 }
 
-// ======= INIT =======
 async function initWOWBUYSession() {
-  console.log("⚙️ Init WOWBUY session (resource -> fr_paramstpl -> fr_dialog -> collect)");
-
   const steps = [
     { name: "resource", url: `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
     { name: "fr_paramstpl", url: `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
@@ -1207,23 +1094,16 @@ async function initWOWBUYSession() {
   ];
 
   for (const step of steps) {
-    const resp = await safeFetchVerbose(step.url, {
+    await safeFetchVerbose(step.url, {
       method: step.method || "GET",
-      headers: { authorization: session.token || "", cookie: session.cookie, ...(step.headers || {}) },
+      headers: { authorization: session.token, cookie: session.cookie, ...(step.headers || {}) },
       body: step.body,
     }, `INIT:${step.name}`);
-    console.log(`   [${step.name}] status:`, resp.status);
   }
 }
 
-// ======= FETCH PAGE_CONTENT =======
 async function fetchPageContent() {
-  const url =
-    `${BASE_URL}/webroot/decision/view/report?` +
-    `op=page_content&pn=1&__webpage__=true&__boxModel__=true` +
-    `&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}` +
-    (session.sessionid ? `&sessionID=${session.sessionid}` : "");
-
+  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
   const resp = await safeFetchVerbose(url, {
     method: "GET",
     headers: {
@@ -1232,33 +1112,24 @@ async function fetchPageContent() {
       authorization: session.token,
       cookie: session.cookie,
       referer: session.entryUrl,
-      sessionid: session.sessionid,
       "user-agent": "Mozilla/5.0",
       "x-requested-with": "XMLHttpRequest",
     },
   }, "PAGE_CONTENT");
 
-  console.log("📡 page_content status:", resp.status);
   const raw = resp.text || "";
   let html = raw;
-  if (resp.json?.html) {
-    html = resp.json.html;
-    console.log("✅ JSON parsed, html length:", html.length);
-  }
+  if (resp.json?.html) html = resp.json.html;
 
-  const $ = cheerio.load(html || "");
-  console.log("🔍 Tables found:", $("table").length);
+  const $ = cheerio.load(html);
   const rows = [];
   $("table tr").each((i, tr) => {
     const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
     if (cols.length > 0) rows.push(cols);
   });
-  console.log("📊 Tổng số dòng parsed:", rows.length);
-  console.log("🔎 5 dòng đầu:", rows.slice(0, 5));
   return rows;
 }
 
-// ======= Main flow =======
 async function fetchWOWBUY() {
   const s = await loginWOWBUY();
   if (!s) {
@@ -1269,7 +1140,6 @@ async function fetchWOWBUY() {
   return await fetchPageContent();
 }
 
-// ========= Lark =========
 async function getTenantAccessToken() {
   const resp = await axios.post(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
@@ -1280,20 +1150,15 @@ async function getTenantAccessToken() {
 
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) {
-    console.warn("⚠️ Không có dữ liệu để ghi");
+    console.warn("⚠️ No data to write");
     return;
   }
   const token = await getTenantAccessToken();
-  const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
-  const body = { valueRange: { range: `${LARK_TABLE_ID}!J1`, values: tableData } };
-
-  await axios.put(url, body, {
+  await axios.put(`https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`, { valueRange: { range: `${LARK_TABLE_ID}!J1`, values: tableData } }, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
-  console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
 }
 
-// ========= Cron =========
 cron.schedule("*/1 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
