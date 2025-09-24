@@ -856,14 +856,6 @@ cron.schedule(
    BOT WOWBUY → Lark Sheet (Auto login, no hardcode)
    ================================================== */
 
-import express from "express";
-import bodyParser from "body-parser";
-import fetch from "node-fetch";
-import axios from "axios";
-import cheerio from "cheerio";
-import cron from "node-cron";
-
-const app = express();
 app.use(bodyParser.json());
 
 // ========= CONFIG =========
