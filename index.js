@@ -1161,7 +1161,6 @@ async function fetchPageContent() {
     }).toString();
 
     console.log("📡 Fetching page_content (POST):", url);
-    // console.log("   payload:", formBody); // Uncomment if you want full payload in logs
 
     const res = await fetch(url, {
       method: "POST",
@@ -1170,7 +1169,9 @@ async function fetchPageContent() {
         authorization: session.token ? `Bearer ${session.token}` : "",
         sessionid: session.sessionid || "",
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "accept": "application/json, text/javascript, */*; q=0.01",
         "x-requested-with": "XMLHttpRequest",
+        origin: BASE_URL,
         referer: session.entryUrl,
         "user-agent": "Mozilla/5.0 (Node)",
       },
@@ -1180,19 +1181,23 @@ async function fetchPageContent() {
     console.log("📡 page_content status:", res.status);
     const raw = await res.text();
 
-    // server should return JSON with field html
+    // thử parse JSON, nếu fail thì in raw HTML
     let parsed;
     try {
       parsed = JSON.parse(raw);
     } catch (e) {
       console.error("❌ page_content did not return JSON:", e.message);
       console.log("📄 Raw (first 500):", raw.slice(0, 500));
+      if (raw.includes("<title>登录</title>") || raw.includes("login")) {
+        console.warn("⚠️ Server trả trang login → nghĩa là cookie/token không hợp lệ");
+      }
       return [];
     }
 
     const html = parsed.html || "";
     console.log("✅ page_content html length:", html.length);
 
+    // parse bảng
     const $ = cheerio.load(html);
     const rows = [];
     $("table tr").each((i, tr) => {
@@ -1201,10 +1206,10 @@ async function fetchPageContent() {
     });
 
     console.log("📊 Rows parsed:", rows.length);
-    if (rows.length > 0) console.log("🔎 sample row[0]:", rows[0].slice(0,6));
+    if (rows.length > 0) console.log("🔎 sample row[0]:", rows[0].slice(0, 6));
     return rows;
   } catch (err) {
-    console.error("❌ fetchPageContent error:", err && err.message ? err.message : err);
+    console.error("❌ fetchPageContent error:", err.message);
     throw err;
   }
 }
