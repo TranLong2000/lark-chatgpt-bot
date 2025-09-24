@@ -854,7 +854,7 @@ cron.schedule(
 
 /* ==================================================
    BOT WOWBUY → Lark Sheet
-   Flow: LOGIN -> REFRESH -> GET_TREE -> ENTRY(JSESSIONID) -> INIT -> FETCH -> WRITE
+   Flow: LOGIN -> REFRESH -> GET_TREE -> ENTRY(JSESSIONID) -> INIT -> SUBMIT_FORM -> FETCH -> WRITE
    ================================================== */
 
 app.use(bodyParser.json());
@@ -869,7 +869,7 @@ const BASE_URL = "https://report.wowbuy.ai";
 const WOWBUY_USERNAME = process.env.WOWBUY_USERNAME;
 const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
 
-// Chọn báo cáo mong muốn (có thể thay đổi)
+// Chọn báo cáo mong muốn (có thể thay đổi nếu cần báo cáo khác)
 const TARGET_REPORT = "Purchase Plan";
 
 let session = {
@@ -1111,7 +1111,46 @@ async function initWOWBUYSession() {
   }
 }
 
+async function submitReportForm() {
+  console.log("📤 Submitting report form...");
+  const formUrl = `${BASE_URL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
+  const today = new Date();
+  const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+  const endDate = today.toISOString().split('T')[0];
+  const formData = {
+    SD: startDate,
+    ED: endDate,
+    SALE_STATUS: "On sale",
+    WH: "",
+    SKUSN: "",
+    KS: "",
+    SN: "",
+  };
+
+  const resp = await safeFetchVerbose(formUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      referer: session.entryUrl,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body: new URLSearchParams(formData).toString(),
+  }, "SUBMIT_FORM");
+
+  if (resp.status === 200) {
+    console.log("✅ Form submitted successfully");
+  } else {
+    console.warn("⚠️ Form submit failed with status:", resp.status);
+  }
+  return resp;
+}
+
 async function fetchPageContent() {
+  console.log("📡 Fetching page content...");
   const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
   const resp = await safeFetchVerbose(url, {
     method: "GET",
@@ -1136,6 +1175,8 @@ async function fetchPageContent() {
     const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
     if (cols.length > 0) rows.push(cols);
   });
+  console.log("📊 Parsed rows:", rows.length);
+  if (rows.length > 0) console.log("🔎 First 5 rows:", rows.slice(0, 5));
   return rows;
 }
 
@@ -1147,6 +1188,7 @@ async function fetchWOWBUY() {
     return [];
   }
   await initWOWBUYSession();
+  await submitReportForm(); // Kích hoạt báo cáo trước khi lấy dữ liệu
   return await fetchPageContent();
 }
 
@@ -1184,7 +1226,7 @@ async function getReportId() {
   }, "GET_REPORTS");
 
   if (resp.json?.data) {
-    console.log("📋 Available reports:", resp.json.data.map(item => `${item.text} (${item.id})`));
+    console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
     const report = resp.json.data.find(item => item.text === TARGET_REPORT);
     if (report) {
       session.entryUrl = `${BASE_URL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
@@ -1207,7 +1249,7 @@ cron.schedule("*/1 * * * *", async () => {
 });
 
 app.listen(3000, () => {
-  console.log("Server running on port 3000");
+  console.log("🚀 Bot running on port 3000");
   fetchWOWBUY();
 });
 
