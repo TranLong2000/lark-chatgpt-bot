@@ -854,7 +854,7 @@ cron.schedule(
 
 /* ==================================================
    BOT WOWBUY → Lark Sheet
-   Flow: LOGIN -> REFRESH -> INIT -> FETCH -> WRITE
+   Flow: LOGIN -> REFRESH -> ENTRY(JSESSIONID) -> INIT -> FETCH -> WRITE
    ================================================== */
 
 app.use(bodyParser.json());
@@ -867,7 +867,7 @@ const LARK_TABLE_ID = "EmjelX";
 
 const BASE_URL = "https://report.wowbuy.ai";
 const WOWBUY_USERNAME = process.env.WOWBUY_USERNAME;
-const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD; // TODO: thay bằng pass thật
+const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
 
 let session = {
   token: null,
@@ -946,28 +946,22 @@ async function loginWOWBUY() {
       if (single) setCookieArray = [single];
     }
 
-    const initialCookie = buildCookieHeaderFromSetCookieArray(setCookieArray);
+    session.cookie = buildCookieHeaderFromSetCookieArray(setCookieArray);
 
     // parse body
     const loginText = await loginRes.text();
     let loginJson = null;
     try {
       loginJson = JSON.parse(loginText);
-    } catch {
-      loginJson = null;
-    }
+    } catch {}
 
-    const accessToken = loginJson?.data?.accessToken || null;
-    session.token = accessToken;
-    session.cookie = initialCookie;
+    session.token = loginJson?.data?.accessToken || null;
     session.entryUrl = loginJson?.data?.url
       ? `${BASE_URL}${loginJson.data.url}`
-      : "";
+      : session.entryUrl;
 
     console.log("🔑 accessToken:", truncate(session.token));
     console.log("🍪 initial cookie:", session.cookie || "(none)");
-
-    // ⚠️ KHÔNG lấy JSESSIONID ở đây nữa
     console.log("⚠️ JSESSIONID chưa có (sẽ lấy sau entry access)");
 
     // refresh để lấy fine_auth_token
@@ -975,7 +969,7 @@ async function loginWOWBUY() {
       await doTokenRefresh(session.token, session.cookie);
     }
 
-    // gọi entry access để server set JSESSIONID
+    // entry access để server set JSESSIONID
     if (session.entryUrl) {
       console.log("📡 entry access to fetch JSESSIONID...");
       const entryRes = await fetch(session.entryUrl, {
@@ -1016,6 +1010,58 @@ async function loginWOWBUY() {
   } catch (err) {
     console.error("❌ login error:", err.message);
     return null;
+  }
+}
+
+async function doTokenRefresh(token, cookieHeader) {
+  try {
+    console.log("🔄 Calling token/refresh...");
+    const res = await fetch(`${BASE_URL}/webroot/decision/token/refresh`, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+        cookie: cookieHeader || "",
+        origin: BASE_URL,
+        referer: session.entryUrl,
+        "x-requested-with": "XMLHttpRequest",
+        "user-agent": "Mozilla/5.0 (Node)",
+      },
+      body: JSON.stringify({ oldToken: token, tokenTimeOut: 1209600000 }),
+    });
+
+    console.log("📡 refresh status:", res.status);
+
+    // merge cookies
+    let setCookieArray = [];
+    if (typeof res.headers.raw === "function") {
+      setCookieArray = res.headers.raw()["set-cookie"] || [];
+    } else {
+      const single = res.headers.get("set-cookie");
+      if (single) setCookieArray = [single];
+    }
+
+    if (setCookieArray.length > 0) {
+      const newCookiesObj = parseSetCookieArrayToObj(setCookieArray);
+      session.cookie = mergeCookieStringWithObj(session.cookie, newCookiesObj);
+      console.log("🍪 merged cookie after refresh:", session.cookie);
+    }
+
+    const txt = await res.text();
+    let j = null;
+    try {
+      j = JSON.parse(txt);
+    } catch {}
+    if (j?.data?.accessToken) {
+      session.token = j.data.accessToken;
+      console.log("🔑 got new token:", truncate(session.token));
+    }
+
+    return true;
+  } catch (e) {
+    console.error("❌ refresh error:", e.message);
+    return false;
   }
 }
 
@@ -1062,7 +1108,7 @@ async function initWOWBUYSession() {
     console.log(`   [${step.name}] status:`, res.status);
   }
 
-  console.log("📡 entry access (again, keepalive)...");
+  console.log("📡 entry access (keepalive)...");
   const entry = await fetch(session.entryUrl, {
     headers: {
       authorization: `Bearer ${session.token}`,
@@ -1088,7 +1134,7 @@ async function fetchPageContent() {
       authorization: `Bearer ${session.token}`,
       cookie: session.cookie,
       referer: session.entryUrl,
-      sessionid: session.sessionid, // cái này đã lấy từ entry access
+      sessionid: session.sessionid,
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       "x-requested-with": "XMLHttpRequest",
@@ -1127,7 +1173,7 @@ async function fetchPageContent() {
 // ========= WOWBUY Main Flow =========
 async function fetchWOWBUY() {
   await loginWOWBUY();
-  await initWOWBUYSession();  // 🔥 thêm bước này
+  await initWOWBUYSession();
   const rows = await fetchPageContent();
   return rows;
 }
