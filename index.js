@@ -1041,13 +1041,11 @@ async function initWOWBUYSession() {
 async function fetchPageContent() {
   try {
     await ensureSession();
-
-    // init session steps để server tạo session context
     await initWOWBUYSession();
 
-    // build payload như DevTools
-    const params = new URLSearchParams({
-      _: Date.now(),
+    const url = `${BASE_URL}/webroot/decision/view/report`;
+    const formBody = new URLSearchParams({
+      _: Date.now().toString(),
       __boxModel__: "true",
       op: "page_content",
       pn: "1",
@@ -1057,17 +1055,19 @@ async function fetchPageContent() {
       __fit__: "false",
     });
 
-    const url = `${BASE_URL}/webroot/decision/view/report?${params.toString()}`;
     console.log("📡 Fetching:", url);
 
     const res = await fetch(url, {
+      method: "POST",
       headers: {
         cookie: session.cookie,
         authorization: `Bearer ${session.token}`,
         sessionid: session.sessionid,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
         "x-requested-with": "XMLHttpRequest",
         "user-agent": "Mozilla/5.0 (Node)",
       },
+      body: formBody.toString(),
     });
 
     console.log("📡 page_content status:", res.status);
@@ -1085,14 +1085,11 @@ async function fetchPageContent() {
       return [];
     }
 
-    // Parse bảng từ html
+    // Parse bảng
     const $ = cheerio.load(html);
     const rows = [];
     $("table tr").each((i, tr) => {
-      const cols = $(tr)
-        .find("td")
-        .map((j, td) => $(td).text().trim())
-        .get();
+      const cols = $(tr).find("td").map((j, td) => $(td).text().trim()).get();
       if (cols.length > 0) rows.push(cols);
     });
 
