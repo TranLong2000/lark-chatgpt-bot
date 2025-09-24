@@ -1148,56 +1148,52 @@ async function fetchPageContent() {
     await ensureSession();
     await initWOWBUYSession();
 
-    const url = `${BASE_URL}/webroot/decision/view/report`;
-    const formBody = new URLSearchParams({
-      _: Date.now().toString(),
-      __boxModel__: "true",
-      op: "page_content",
-      pn: "1",
-      __webpage__: "true",
-      _paperWidth: "309",
-      _paperHeight: "510",
-      __fit__: "false",
-    }).toString();
+    const url = `${BASE_URL}/webroot/decision/view/report?_= ${Date.now()}&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
 
-    console.log("📡 Fetching page_content (POST):", url);
+    console.log("📡 Fetching page_content (GET):", url);
 
     const res = await fetch(url, {
-      method: "POST",
+      method: "GET",
       headers: {
-        cookie: session.cookie || "",
-        authorization: session.token ? `Bearer ${session.token}` : "",
-        sessionid: session.sessionid || "",
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "accept": "application/json, text/javascript, */*; q=0.01",
+        "accept": "text/html, */*; q=0.01",
+        "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+        "authorization": session.token ? `Bearer ${session.token}` : "",
+        "cookie": session.cookie || "",
+        "priority": "u=1, i",
+        "referer": session.entryUrl || `${BASE_URL}/webroot/decision/v10/entry/access/`,
+        "sec-ch-ua": `"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"`,
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": `"Windows"`,
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "sessionid": session.sessionid || "",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
         "x-requested-with": "XMLHttpRequest",
-        origin: BASE_URL,
-        referer: session.entryUrl,
-        "user-agent": "Mozilla/5.0 (Node)",
       },
-      body: formBody,
     });
 
     console.log("📡 page_content status:", res.status);
-    const raw = await res.text();
 
-    // thử parse JSON, nếu fail thì in raw HTML
-    let parsed;
+    const raw = await res.text();
+    console.log("📄 Raw length:", raw.length);
+    console.log("🔎 Raw preview (300):\n", raw.slice(0, 300));
+
+    let html = "";
     try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      console.error("❌ page_content did not return JSON:", e.message);
-      console.log("📄 Raw (first 500):", raw.slice(0, 500));
-      if (raw.includes("<title>登录</title>") || raw.includes("login")) {
-        console.warn("⚠️ Server trả trang login → nghĩa là cookie/token không hợp lệ");
-      }
-      return [];
+      const data = JSON.parse(raw);
+      html = data.html || "";
+      console.log("✅ JSON parsed, html length:", html.length);
+    } catch {
+      console.warn("⚠️ Không parse được JSON, coi như HTML");
+      html = raw;
     }
 
-    const html = parsed.html || "";
-    console.log("✅ page_content html length:", html.length);
+    if (!html.includes("<table")) {
+      console.log("🔎 Last 1000 chars:\n", html.slice(-1000));
+    }
 
-    // parse bảng
+    // parse bảng bằng cheerio
     const $ = cheerio.load(html);
     const rows = [];
     $("table tr").each((i, tr) => {
@@ -1205,12 +1201,15 @@ async function fetchPageContent() {
       if (cols.length > 0) rows.push(cols);
     });
 
-    console.log("📊 Rows parsed:", rows.length);
-    if (rows.length > 0) console.log("🔎 sample row[0]:", rows[0].slice(0, 6));
+    console.log("📊 Tổng số dòng:", rows.length);
+    if (rows.length > 0) {
+      console.log("🔎 Sample row:", rows[0]);
+    }
+
     return rows;
   } catch (err) {
     console.error("❌ fetchPageContent error:", err.message);
-    throw err;
+    return [];
   }
 }
 
