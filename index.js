@@ -1039,42 +1039,73 @@ async function initWOWBUYSession() {
 
 // ================== FETCH DATA ==================
 async function fetchPageContent() {
-  await ensureSession();
-  await initWOWBUYSession();
-
-  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1`;
-  console.log("📡 Fetching:", url);
-
-  const res = await fetch(url, {
-    headers: {
-      cookie: session.cookie,
-      authorization: `Bearer ${session.token}`,
-      sessionid: session.sessionid,
-      "x-requested-with": "XMLHttpRequest",
-    },
-  });
-
-  console.log("📡 page_content status:", res.status);
-
-  const raw = await res.text();
-  let html = raw;
   try {
-    const data = JSON.parse(raw);
-    html = data.html || "";
-  } catch {}
+    await ensureSession();
 
-  const $ = cheerio.load(html);
-  const rows = [];
-  $("table tr").each((i, tr) => {
-    const cols = $(tr)
-      .find("td")
-      .map((j, td) => $(td).text().trim())
-      .get();
-    if (cols.length > 0) rows.push(cols);
-  });
+    // init session steps để server tạo session context
+    await initWOWBUYSession();
 
-  console.log("📊 Rows:", rows.length);
-  return rows;
+    // build payload như DevTools
+    const params = new URLSearchParams({
+      _: Date.now(),
+      __boxModel__: "true",
+      op: "page_content",
+      pn: "1",
+      __webpage__: "true",
+      _paperWidth: "309",
+      _paperHeight: "510",
+      __fit__: "false",
+    });
+
+    const url = `${BASE_URL}/webroot/decision/view/report?${params.toString()}`;
+    console.log("📡 Fetching:", url);
+
+    const res = await fetch(url, {
+      headers: {
+        cookie: session.cookie,
+        authorization: `Bearer ${session.token}`,
+        sessionid: session.sessionid,
+        "x-requested-with": "XMLHttpRequest",
+        "user-agent": "Mozilla/5.0 (Node)",
+      },
+    });
+
+    console.log("📡 page_content status:", res.status);
+    if (!res.ok) throw new Error("page_content failed: " + res.status);
+
+    const raw = await res.text();
+    let html = "";
+    try {
+      const data = JSON.parse(raw);
+      html = data.html || "";
+      console.log("✅ JSON parsed, html length:", html.length);
+    } catch (e) {
+      console.error("❌ Không parse được JSON:", e.message);
+      console.log("📄 Raw (first 1000):", truncate(raw, 1000));
+      return [];
+    }
+
+    // Parse bảng từ html
+    const $ = cheerio.load(html);
+    const rows = [];
+    $("table tr").each((i, tr) => {
+      const cols = $(tr)
+        .find("td")
+        .map((j, td) => $(td).text().trim())
+        .get();
+      if (cols.length > 0) rows.push(cols);
+    });
+
+    console.log("📊 Rows:", rows.length);
+    if (rows.length > 0) {
+      console.log("🔎 First 3 rows:", JSON.stringify(rows.slice(0, 3)));
+    }
+
+    return rows;
+  } catch (err) {
+    console.error("❌ fetchPageContent error:", err.message);
+    throw err;
+  }
 }
 
 // ==================== Lark Sheet ====================
