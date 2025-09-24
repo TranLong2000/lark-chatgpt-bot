@@ -1128,10 +1128,13 @@ async function fetchPageContent() {
   console.log("📡 Fetching page_content:", url);
 
   const res = await fetch(url, {
+    method: "GET",
     headers: {
       accept: "text/html, */*; q=0.01",
-      "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
-      authorization: `Bearer ${session.token}`,
+      "accept-language":
+        "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+      // ❌ bỏ "Bearer", chỉ để token trần
+      authorization: session.token,
       cookie: session.cookie,
       referer: session.entryUrl,
       sessionid: session.sessionid,
@@ -1152,14 +1155,19 @@ async function fetchPageContent() {
     html = data.html || "";
     console.log("✅ JSON parsed, html length:", html.length);
   } catch {
+    console.warn("⚠️ Không parse được JSON, coi như HTML thẳng");
     html = raw;
+  }
+
+  if (!html.includes("<table")) {
+    console.log("🔎 1000 ký tự cuối:\n", html.slice(-1000));
   }
 
   const $ = cheerio.load(html);
   const rows = [];
   $("table tr").each((i, tr) => {
     const cols = $(tr)
-      .find("td")
+      .find("td,th")
       .map((j, td) => $(td).text().trim())
       .get();
     if (cols.length > 0) rows.push(cols);
