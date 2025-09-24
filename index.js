@@ -854,7 +854,7 @@ cron.schedule(
 
 /* ==================================================
    BOT WOWBUY → Lark Sheet
-   Flow: LOGIN -> REFRESH -> ENTRY(JSESSIONID) -> INIT -> FETCH -> WRITE
+   Flow: LOGIN -> REFRESH -> GET_TREE -> ENTRY(JSESSIONID) -> INIT -> FETCH -> WRITE
    ================================================== */
 
 app.use(bodyParser.json());
@@ -868,6 +868,9 @@ const LARK_TABLE_ID = "EmjelX";
 const BASE_URL = "https://report.wowbuy.ai";
 const WOWBUY_USERNAME = process.env.WOWBUY_USERNAME;
 const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
+
+// Chọn báo cáo mong muốn (có thể thay đổi)
+const TARGET_REPORT = "Purchase Plan";
 
 let session = {
   token: null,
@@ -915,7 +918,7 @@ function buildCookieHeaderFromSetCookieArray(setCookieArray) {
 function parseSetCookieArrayToObj(setCookieArray) {
   const out = {};
   if (!setCookieArray) return out;
-  Array.isArray(setCookieArray) ? setCookieArray : [setCookieArray].forEach(c => {
+  (Array.isArray(setCookieArray) ? setCookieArray : [setCookieArray]).forEach(c => {
     const first = String(c).split(";")[0].trim();
     const eq = first.indexOf("=");
     if (eq > -1) out[first.slice(0, eq).trim()] = first.slice(eq + 1);
@@ -941,7 +944,7 @@ function mergeCookieStringWithObj(cookieStr = "", cookieObj = {}) {
 }
 
 function extractSessionIDFromHtml(html) {
-  const regex = /FR\.SessionMgr\.register\('([^']+)'/;
+  const regex = /FR\.SessionMgr\.register\('([^']+)'\)/;
   const match = html.match(regex);
   if (match && match[1]) return match[1];
 
@@ -1018,9 +1021,11 @@ async function loginWOWBUY() {
 
     session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || "");
     if (loginResp.json?.data?.accessToken) session.token = loginResp.json.data.accessToken;
-    if (loginResp.json?.data?.url) session.entryUrl = `${BASE_URL}${loginResp.json.data.url}`;
 
     if (session.token) await doTokenRefresh(session.token, session.cookie);
+
+    // Lấy danh sách báo cáo để tìm UUID
+    await getReportId();
 
     if (session.entryUrl) {
       console.log("📡 ENTRY ACCESS to fetch sessionID...");
@@ -1042,7 +1047,7 @@ async function loginWOWBUY() {
           session.sessionid = sid;
           console.log("🆔 sessionID extracted:", session.sessionid);
         } else {
-          console.warn("⚠️ Failed to extract sessionID from HTML");
+          console.warn("⚠️ Failed to extract sessionID from HTML. Checking HTML:", truncate(entryResp.text, 200));
         }
       } else {
         console.warn("⚠️ No response text available to extract sessionID");
@@ -1131,6 +1136,7 @@ async function fetchPageContent() {
 }
 
 async function fetchWOWBUY() {
+  console.log("📥 Đang lấy dữ liệu Stock (lần 1/3)...");
   const s = await loginWOWBUY();
   if (!s) {
     console.error("❌ Aborting: login failed");
@@ -1159,6 +1165,33 @@ async function writeToLark(tableData) {
   });
 }
 
+async function getReportId() {
+  console.log("📡 GETTING REPORT TREE...");
+  const url = `${BASE_URL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
+  const resp = await safeFetchVerbose(url, {
+    method: "GET",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  }, "GET_REPORTS");
+
+  if (resp.json?.data) {
+    const report = resp.json.data.find(item => item.text === TARGET_REPORT);
+    if (report) {
+      session.entryUrl = `${BASE_URL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
+      console.log("📋 Selected entryUrl:", session.entryUrl);
+    } else {
+      console.warn("⚠️ No report found with text:", TARGET_REPORT);
+    }
+  } else {
+    console.warn("⚠️ No data in report tree response");
+  }
+}
+
 cron.schedule("*/1 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
@@ -1169,7 +1202,7 @@ cron.schedule("*/1 * * * *", async () => {
 });
 
 app.listen(3000, () => {
-  console.log("🚀 Bot running on port 3000");
+  console.log("Server running on port 3000");
   fetchWOWBUY();
 });
 
