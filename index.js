@@ -1044,6 +1044,8 @@ async function fetchPageContent() {
     await initWOWBUYSession();
 
     const url = `${BASE_URL}/webroot/decision/view/report`;
+
+    // 📝 payload chính xác như bạn thấy trong DevTools
     const formBody = new URLSearchParams({
       _: Date.now().toString(),
       __boxModel__: "true",
@@ -1056,6 +1058,7 @@ async function fetchPageContent() {
     });
 
     console.log("📡 Fetching:", url);
+    console.log("📝 Payload:", formBody.toString());
 
     const res = await fetch(url, {
       method: "POST",
@@ -1074,6 +1077,8 @@ async function fetchPageContent() {
     if (!res.ok) throw new Error("page_content failed: " + res.status);
 
     const raw = await res.text();
+    console.log("📄 Raw (first 500):", raw.slice(0, 500));
+
     let html = "";
     try {
       const data = JSON.parse(raw);
@@ -1081,11 +1086,10 @@ async function fetchPageContent() {
       console.log("✅ JSON parsed, html length:", html.length);
     } catch (e) {
       console.error("❌ Không parse được JSON:", e.message);
-      console.log("📄 Raw (first 1000):", truncate(raw, 1000));
       return [];
     }
 
-    // Parse bảng
+    // 🔎 Parse bảng
     const $ = cheerio.load(html);
     const rows = [];
     $("table tr").each((i, tr) => {
@@ -1096,6 +1100,8 @@ async function fetchPageContent() {
     console.log("📊 Rows:", rows.length);
     if (rows.length > 0) {
       console.log("🔎 First 3 rows:", JSON.stringify(rows.slice(0, 3)));
+    } else {
+      console.warn("⚠️ Không có dữ liệu để ghi");
     }
 
     return rows;
