@@ -1198,6 +1198,93 @@ async function ensureSession() {
 
 // ================== FETCH DATA ==================
 
+// === 1. ParamTemplate (GET) ===
+async function fetchParamsTemplate() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`;
+  return await safeFetch(
+    url,
+    {
+      method: "GET",
+      headers: {
+        "accept": "application/javascript, */*;q=0.01",
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${sessionId}?width=309&height=667`,
+        "sessionid": sessionId,
+      },
+    },
+    "ParamTemplate"
+  );
+}
+
+// === 2. Favorite Params (POST) ===
+async function fetchFavoriteParams() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`;
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "authorization": `Bearer ${currentToken}`,
+        "cookie": currentCookie,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "x-requested-with": "XMLHttpRequest",
+        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${sessionId}?width=309&height=667`,
+        "sessionid": sessionId,
+      },
+      body: "cmd=query_favorite_params", // HAR có body thì giữ nguyên
+    },
+    "FavoriteParams"
+  );
+}
+
+// === 3. Dialog Parameters (POST) ===
+async function fetchDialogParameters() {
+  const url = `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`;
+  const body = "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D";
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "authorization": `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${sessionId}?width=309&height=667`,
+        "sessionid": sessionId,
+      },
+      body,
+    },
+    "DialogParameters"
+  );
+}
+
+// === 4. Collect Info (POST) ===
+async function fetchCollectInfo() {
+  const url = `${BASE_URL}/webroot/decision/preview/info/collect`;
+  const body = "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D";
+  return await safeFetch(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "accept": "application/json, text/javascript, */*; q=0.01",
+        "authorization": `Bearer ${currentToken}`,
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "cookie": currentCookie,
+        "x-requested-with": "XMLHttpRequest",
+        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${sessionId}?width=309&height=667`,
+        "sessionid": sessionId,
+      },
+      body,
+    },
+    "CollectInfo"
+  );
+}
+
 async function fetchPageContent() {
   await ensureSession();
   await initWOWBUYSession();
