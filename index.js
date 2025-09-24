@@ -877,14 +877,21 @@ let session = {
   lastLogin: 0,
 };
 
-// ---------- Debug helpers (thay thế/đặt ở trên các hàm) ----------
+// ======= Debug / Cookie helpers (paste vào file, trước khi dùng) =======
+const UNMASK_ENTRY = false; // set true nếu muốn in Set-Cookie raw (dev only!)
+
+function truncate(str = "", len = 40) {
+  if (!str) return "(null)";
+  return str.length > len ? str.slice(0, len) + "..." : str;
+}
+
 function maskValue(v) {
   if (!v) return v;
   const s = String(v);
   if (s.length <= 24) return s;
   return s.slice(0, 8) + "..." + s.slice(-6);
 }
-function maskCookieString(cookieStr) {
+function maskCookieString(cookieStr = "") {
   if (!cookieStr) return cookieStr;
   return cookieStr
     .split(";")
@@ -895,7 +902,6 @@ function maskCookieString(cookieStr) {
       if (eq === -1) return pair;
       const k = pair.slice(0, eq);
       const v = pair.slice(eq + 1);
-      // mask tokens but show JSESSIONID in full (we may want to see it)
       if (/fine_auth_token|accessToken|Authorization|auth_token|token|password|fineMarkId|last_login_info/i.test(k)) {
         return `${k}=${maskValue(v)}`;
       }
@@ -904,38 +910,74 @@ function maskCookieString(cookieStr) {
     .filter(Boolean)
     .join("; ");
 }
-function maskHeadersObj(h) {
+
+// build cookie header from set-cookie array (safe)
+function buildCookieHeaderFromSetCookieArray(setCookieArray) {
+  if (!setCookieArray) return "";
+  const arr = Array.isArray(setCookieArray) ? setCookieArray : [setCookieArray];
+  return arr.map(c => c.split(";")[0].trim()).filter(Boolean).join("; ");
+}
+
+// parse Set-Cookie array into { name: value }
+function parseSetCookieArrayToObj(setCookieArray) {
   const out = {};
-  if (!h) return out;
-  Object.keys(h).forEach(k => {
-    const v = h[k];
-    if (/authorization|cookie|set-cookie|x-auth-token|token|password/i.test(k)) {
-      if (Array.isArray(v)) {
-        out[k] = v.map(item => maskCookieString(String(item)));
-      } else {
-        out[k] = maskCookieString(String(v));
-      }
-    } else {
-      out[k] = String(v);
+  if (!setCookieArray) return out;
+  const arr = Array.isArray(setCookieArray) ? setCookieArray : [setCookieArray];
+  arr.forEach(c => {
+    const first = String(c).split(";")[0].trim();
+    const eq = first.indexOf("=");
+    if (eq > -1) {
+      const name = first.slice(0, eq).trim();
+      const val = first.slice(eq + 1);
+      out[name] = val;
     }
   });
   return out;
 }
 
-async function safeFetchVerbose(url, opts = {}, name = "STEP") {
-  // Normalize headers
+function cookieStringToObj(cookieStr = "") {
+  const out = {};
+  if (!cookieStr) return out;
+  cookieStr.split(";").map(p => p.trim()).forEach(pair => {
+    if (!pair) return;
+    const eq = pair.indexOf("=");
+    if (eq === -1) return;
+    const k = pair.slice(0, eq);
+    const v = pair.slice(eq + 1);
+    out[k] = v;
+  });
+  return out;
+}
+
+function mergeCookieStringWithObj(cookieStr = "", cookieObj = {}) {
+  const base = cookieStringToObj(cookieStr);
+  Object.keys(cookieObj).forEach(k => base[k] = cookieObj[k]);
+  return Object.keys(base).map(k => `${k}=${base[k]}`).join("; ");
+}
+
+// ======= Verbose fetch helper (prints req/resp headers + set-cookie + body preview) =======
+async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
   opts = Object.assign({}, opts);
   opts.headers = opts.headers || {};
-
   const method = (opts.method || "GET").toUpperCase();
 
-  console.log(`\n[${name}] --> ${method} ${url}`);
-  console.log(`[${name}] Request headers:`, maskHeadersObj(opts.headers));
+  console.log(`\n[${stepName}] --> ${method} ${url}`);
+  // mask headers for logging
+  const headersMasked = {};
+  Object.keys(opts.headers || {}).forEach(k => {
+    const v = opts.headers[k];
+    if (/cookie|authorization|set-cookie|token|password/i.test(k)) {
+      headersMasked[k] = Array.isArray(v) ? v.map(x => maskCookieString(String(x))) : maskCookieString(String(v));
+    } else {
+      headersMasked[k] = String(v);
+    }
+  });
+  console.log(`[${stepName}] Request headers:`, headersMasked);
   if (opts.body) {
     if (typeof opts.body === "string") {
-      console.log(`[${name}] Request body (first 1000 chars):`, opts.body.slice(0, 1000));
+      console.log(`[${stepName}] Request body (first 1000 chars):`, opts.body.slice(0, 1000));
     } else {
-      console.log(`[${name}] Request body (object):`, opts.body);
+      console.log(`[${stepName}] Request body (object):`, opts.body);
     }
   }
 
@@ -943,28 +985,24 @@ async function safeFetchVerbose(url, opts = {}, name = "STEP") {
   try {
     res = await fetch(url, opts);
   } catch (err) {
-    console.error(`[${name}] ❌ fetch error:`, err && err.message ? err.message : err);
+    console.error(`[${stepName}] ❌ fetch error:`, err && err.message ? err.message : err);
     throw err;
   }
 
-  console.log(`[${name}] <= status:`, res.status);
+  console.log(`[${stepName}] <= status:`, res.status);
 
-  // collect response headers (to object)
+  // collect response headers & set-cookie
   const respHeaders = {};
   try {
-    // node-fetch supports headers.forEach
     res.headers.forEach((v, k) => (respHeaders[k] = v));
   } catch (e) {
-    // fallback - attempt .raw()
     try {
       const raw = typeof res.headers.raw === "function" ? res.headers.raw() : {};
-      Object.keys(raw).forEach(k => {
-        respHeaders[k] = raw[k];
-      });
+      Object.keys(raw).forEach(k => (respHeaders[k] = raw[k]));
     } catch (_) {}
   }
 
-  // Try to get set-cookie array
+  // set-cookie array
   let setCookieArray = [];
   try {
     if (typeof res.headers.raw === "function") {
@@ -976,43 +1014,46 @@ async function safeFetchVerbose(url, opts = {}, name = "STEP") {
     }
   } catch (e) {}
 
-  console.log(`[${name}] Response headers (masked):`, maskHeadersObj(respHeaders));
-  console.log(`[${name}] Response set-cookie count:`, setCookieArray.length);
+  // mask resp headers for log
+  const respMasked = {};
+  Object.keys(respHeaders).forEach(k => {
+    const v = respHeaders[k];
+    if (/set-cookie|cookie|authorization|token/i.test(k)) {
+      respMasked[k] = Array.isArray(v) ? v.map(x => maskCookieString(String(x))) : maskCookieString(String(v));
+    } else {
+      respMasked[k] = String(v);
+    }
+  });
+
+  console.log(`[${stepName}] Response headers (masked):`, respMasked);
+  console.log(`[${stepName}] Response set-cookie count:`, setCookieArray.length);
   if (setCookieArray.length > 0) {
-    console.log(`[${name}] Response set-cookie (masked):`, setCookieArray.map(s => maskCookieString(String(s))));
+    if (UNMASK_ENTRY) {
+      console.log(`[${stepName}] Response set-cookie (RAW):`, setCookieArray);
+    } else {
+      console.log(`[${stepName}] Response set-cookie (masked):`, setCookieArray.map(s => maskCookieString(String(s))));
+    }
   }
 
-  // read body
   const text = await res.text().catch(e => {
-    console.warn(`[${name}] unable to read response text:`, e && e.message ? e.message : e);
+    console.warn(`[${stepName}] unable to read response text:`, e && e.message ? e.message : e);
     return "";
   });
-  console.log(`[${name}] Response body length:`, text.length);
-  console.log(`[${name}] Response preview (first 1000 chars):\n`, text.slice(0, 1000));
-  if (text.length > 1000) {
-    console.log(`[${name}] Response preview (last 200 chars):\n`, text.slice(-200));
-  }
 
-  // Attempt parse JSON (safe)
+  console.log(`[${stepName}] Response body length:`, text.length);
+  console.log(`[${stepName}] Response preview (first 1000 chars):\n`, text.slice(0, 1000));
+  if (text.length > 1000) console.log(`[${stepName}] Response preview (last 200 chars):\n`, text.slice(-200));
+
   let parsed = null;
   try {
     parsed = JSON.parse(text);
-    console.log(`[${name}] Response is valid JSON (top-level keys):`, Object.keys(parsed).slice(0, 10));
-  } catch (_) {
-    // not JSON
-  }
+    console.log(`[${stepName}] Response is valid JSON (top-level keys):`, Object.keys(parsed).slice(0, 10));
+  } catch (_) { /* not json */ }
 
-  return {
-    res,
-    status: res.status,
-    headers: respHeaders,
-    setCookieArray,
-    text,
-    json: parsed,
-  };
+  return { res, status: res.status, headers: respHeaders, setCookieArray, text, json: parsed };
 }
 
-// ---------- Replace loginWOWBUY & doTokenRefresh with verbose versions ----------
+// ======= LOGIN & REFRESH (verbose, robust) =======
 async function loginWOWBUY() {
   console.log("🔐 Login WOWBUY...");
   try {
@@ -1026,94 +1067,75 @@ async function loginWOWBUY() {
       encrypted: true,
     };
 
-    const loginResp = await safeFetchVerbose(
-      url,
-      {
-        method: "POST",
-        headers: {
-          accept: "application/json, text/javascript, */*; q=0.01",
-          "content-type": "application/json",
-          origin: BASE_URL,
-          referer: `${BASE_URL}/webroot/decision/login`,
-          "x-requested-with": "XMLHttpRequest",
-          "user-agent": "Mozilla/5.0 (Node)",
-        },
-        body: JSON.stringify(bodyObj),
+    const loginResp = await safeFetchVerbose(url, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/json",
+        origin: BASE_URL,
+        referer: `${BASE_URL}/webroot/decision/login`,
+        "x-requested-with": "XMLHttpRequest",
+        "user-agent": "Mozilla/5.0 (Node)",
       },
-      "LOGIN"
-    );
+      body: JSON.stringify(bodyObj),
+    }, "LOGIN");
 
-    console.log("📡 login status:", loginResp.status);
+    if (!loginResp) throw new Error("LOGIN no response");
 
-    // build cookie from set-cookie returned by login (may not contain JSESSIONID)
+    // build cookie header from set-cookie
     session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || []);
     console.log("🍪 cookie after login (masked):", maskCookieString(session.cookie || ""));
 
-    // parse body for accessToken
-    const loginJson = loginResp.json || null;
-    if (loginJson) {
-      // print limited info
-      if (loginJson.data) {
-        console.log("🔑 login response data keys:", Object.keys(loginJson.data));
-        // mask accessToken if present
-        if (loginJson.data.accessToken) {
-          console.log("🔑 accessToken (masked):", maskValue(loginJson.data.accessToken));
-          session.token = loginJson.data.accessToken;
-        }
-        if (loginJson.data.url) {
-          session.entryUrl = `${BASE_URL}${loginJson.data.url}`;
-          console.log("📥 entryUrl from login:", session.entryUrl);
-        }
-      } else {
-        console.warn("⚠️ login JSON has no data object");
+    // parse body json
+    if (loginResp.json && loginResp.json.data) {
+      if (loginResp.json.data.accessToken) {
+        session.token = loginResp.json.data.accessToken;
+        console.log("🔑 accessToken (masked):", maskValue(session.token));
+      }
+      if (loginResp.json.data.url) {
+        session.entryUrl = `${BASE_URL}${loginResp.json.data.url}`;
+        console.log("📥 entryUrl from login:", session.entryUrl);
       }
     } else {
-      console.warn("⚠️ login response is not JSON (raw preview shown above)");
+      console.warn("⚠️ login response JSON missing data; check preview above");
     }
 
-    console.log("⚠️ JSESSIONID chưa có sau login (sẽ lấy từ entry access)");
-
-    // call refresh to get fine_auth_token (and maybe new token)
+    // refresh to get fine_auth_token and possible new token
     if (session.token) {
-      await doTokenRefresh(session.token, session.cookie);
+      const ok = await doTokenRefresh(session.token, session.cookie);
+      if (!ok) console.warn("⚠️ refresh returned false");
     } else {
-      console.warn("⚠️ No token after login, cannot refresh");
+      console.warn("⚠️ no accessToken after login; cannot refresh");
     }
 
-    // entry access to obtain JSESSIONID
+    // ENTRY ACCESS to get JSESSIONID
     if (session.entryUrl) {
-      console.log("📡 ENTRY ACCESS to obtain JSESSIONID...");
-      const entryResp = await safeFetchVerbose(
-        session.entryUrl,
-        {
-          method: "GET",
-          headers: {
-            cookie: session.cookie, // cookie with fine_auth_token if refresh worked
-            referer: `${BASE_URL}/webroot/decision`,
-            "user-agent": "Mozilla/5.0 (Node)",
-          },
+      console.log("📡 ENTRY ACCESS to fetch JSESSIONID...");
+      const entryResp = await safeFetchVerbose(session.entryUrl, {
+        method: "GET",
+        headers: {
+          cookie: session.cookie,
+          referer: `${BASE_URL}/webroot/decision`,
+          "user-agent": "Mozilla/5.0 (Node)",
         },
-        "ENTRY_ACCESS"
-      );
+      }, "ENTRY_ACCESS");
 
-      console.log("📡 entry status:", entryResp.status);
-      // parse set-cookie from entryResp to find JSESSIONID
       if (entryResp.setCookieArray && entryResp.setCookieArray.length > 0) {
         const entryCookiesObj = parseSetCookieArrayToObj(entryResp.setCookieArray);
         if (entryCookiesObj["JSESSIONID"]) {
           session.sessionid = entryCookiesObj["JSESSIONID"];
           console.log("🆔 JSESSIONID obtained:", session.sessionid);
         } else {
-          console.warn("⚠️ ENTRY response did not include JSESSIONID in set-cookie");
+          console.warn("⚠️ ENTRY returned Set-Cookie but no JSESSIONID. Set-Cookie keys:", Object.keys(entryCookiesObj));
+          if (UNMASK_ENTRY) console.log("ENTRY set-cookie raw:", entryResp.setCookieArray);
         }
-        // merge cookies (so session.cookie contains fine_auth_token + JSESSIONID + others)
         session.cookie = mergeCookieStringWithObj(session.cookie || "", entryCookiesObj);
         console.log("🍪 cookie after ENTRY (masked):", maskCookieString(session.cookie || ""));
       } else {
-        console.warn("⚠️ No Set-Cookie from ENTRY response");
+        console.warn("⚠️ ENTRY did not return any Set-Cookie");
       }
     } else {
-      console.warn("⚠️ No entryUrl available to fetch JSESSIONID");
+      console.warn("⚠️ No entryUrl to call after login");
     }
 
     session.lastLogin = Date.now();
@@ -1131,28 +1153,21 @@ async function doTokenRefresh(token, cookieHeader) {
     const url = `${BASE_URL}/webroot/decision/token/refresh`;
     const body = { oldToken: token, tokenTimeOut: 1209600000 };
 
-    const refreshResp = await safeFetchVerbose(
-      url,
-      {
-        method: "POST",
-        headers: {
-          accept: "application/json, text/javascript, */*; q=0.01",
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-          cookie: cookieHeader || "",
-          origin: BASE_URL,
-          referer: session.entryUrl || `${BASE_URL}/webroot/decision`,
-          "x-requested-with": "XMLHttpRequest",
-          "user-agent": "Mozilla/5.0 (Node)",
-        },
-        body: JSON.stringify(body),
+    const refreshResp = await safeFetchVerbose(url, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+        cookie: cookieHeader || "",
+        origin: BASE_URL,
+        referer: session.entryUrl || `${BASE_URL}/webroot/decision`,
+        "x-requested-with": "XMLHttpRequest",
+        "user-agent": "Mozilla/5.0 (Node)",
       },
-      "TOKEN_REFRESH"
-    );
+      body: JSON.stringify(body),
+    }, "TOKEN_REFRESH");
 
-    console.log("📡 refresh status:", refreshResp.status);
-
-    // Merge Set-Cookie from refresh
     if (refreshResp.setCookieArray && refreshResp.setCookieArray.length > 0) {
       const obj = parseSetCookieArrayToObj(refreshResp.setCookieArray);
       session.cookie = mergeCookieStringWithObj(session.cookie || "", obj);
@@ -1161,7 +1176,6 @@ async function doTokenRefresh(token, cookieHeader) {
       console.log("⚠️ refresh did not return Set-Cookie");
     }
 
-    // update token if returned
     if (refreshResp.json && refreshResp.json.data && refreshResp.json.data.accessToken) {
       session.token = refreshResp.json.data.accessToken;
       console.log("🔑 got new token (masked):", maskValue(session.token));
@@ -1175,67 +1189,48 @@ async function doTokenRefresh(token, cookieHeader) {
   }
 }
 
-// ---------- Verbose init & page content (use safeFetchVerbose) ----------
+// ======= INIT & PAGE_CONTENT (verbose) =======
 async function initWOWBUYSession() {
   console.log("⚙️ Init WOWBUY session (resource -> fr_paramstpl -> fr_dialog -> collect)");
 
   const steps = [
     { name: "resource", url: `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
     { name: "fr_paramstpl", url: `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
-    {
-      name: "fr_dialog",
-      url: `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`,
-      method: "POST",
-      body: "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-    },
-    {
-      name: "collect",
-      url: `${BASE_URL}/webroot/decision/preview/info/collect`,
-      method: "POST",
-      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-    },
+    { name: "fr_dialog", url: `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, method: "POST", body: "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
+    { name: "collect", url: `${BASE_URL}/webroot/decision/preview/info/collect`, method: "POST", body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
   ];
 
   for (const step of steps) {
-    const resp = await safeFetchVerbose(
-      step.url,
-      {
-        method: step.method || "GET",
-        headers: {
-          authorization: session.token ? session.token : "",
-          cookie: session.cookie,
-          ...(step.headers || {}),
-        },
-        body: step.body,
+    const resp = await safeFetchVerbose(step.url, {
+      method: step.method || "GET",
+      headers: {
+        // NOTE: some endpoints expect token as raw string, not "Bearer ..."
+        authorization: session.token ? session.token : "",
+        cookie: session.cookie,
+        ...(step.headers || {}),
       },
-      `INIT:${step.name}`
-    );
+      body: step.body,
+    }, `INIT:${step.name}`);
+
     console.log(`   [${step.name}] status:`, resp.status);
   }
 
-  // keepalive entry access
   console.log("📡 entry access (keepalive)...");
   if (session.entryUrl) {
-    const entry = await safeFetchVerbose(
-      session.entryUrl,
-      { headers: { authorization: session.token ? session.token : "", cookie: session.cookie } },
-      "INIT:entry"
-    );
+    const entry = await safeFetchVerbose(session.entryUrl, {
+      headers: { authorization: session.token ? session.token : "", cookie: session.cookie },
+    }, "INIT:entry");
+
     console.log("   [entry] status:", entry.status);
-    // merge possible set-cookie from keepalive
     if (entry.setCookieArray && entry.setCookieArray.length > 0) {
       const obj = parseSetCookieArrayToObj(entry.setCookieArray);
       session.cookie = mergeCookieStringWithObj(session.cookie || "", obj);
       if (obj["JSESSIONID"]) {
         session.sessionid = obj["JSESSIONID"];
-        console.log("🆔 JSESSIONID refreshed/confirmed:", session.sessionid);
+        console.log("🆔 JSESSIONID refreshed:", session.sessionid);
       }
       console.log("🍪 cookie after keepalive (masked):", maskCookieString(session.cookie));
     }
-  } else {
-    console.warn("⚠️ No entryUrl to keepalive");
   }
 }
 
@@ -1245,41 +1240,32 @@ async function fetchPageContent() {
     `op=page_content&pn=1&__webpage__=true&__boxModel__=true` +
     `&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}`;
 
-  const resp = await safeFetchVerbose(
-    url,
-    {
-      method: "GET",
-      headers: {
-        accept: "text/html, */*; q=0.01",
-        "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
-        // IMPORTANT: WOWBUY historically expects the token as raw string (no Bearer)
-        authorization: session.token,
-        cookie: session.cookie,
-        referer: session.entryUrl,
-        sessionid: session.sessionid,
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-        "x-requested-with": "XMLHttpRequest",
-      },
+  const resp = await safeFetchVerbose(url, {
+    method: "GET",
+    headers: {
+      accept: "text/html, */*; q=0.01",
+      "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
+      authorization: session.token, // raw token
+      cookie: session.cookie,
+      referer: session.entryUrl,
+      sessionid: session.sessionid,
+      "user-agent": "Mozilla/5.0",
+      "x-requested-with": "XMLHttpRequest",
     },
-    "PAGE_CONTENT"
-  );
+  }, "PAGE_CONTENT");
 
   console.log("📡 page_content status:", resp.status);
   const raw = resp.text || "";
-  if (!raw) {
-    console.warn("⚠️ page_content returned empty body");
-  }
+  if (!raw) console.warn("⚠️ page_content returned empty body");
 
-  // debug: check if any table or other container present
   let html = raw;
   try {
-    const parsed = JSON.parse(raw);
-    html = parsed.html || raw;
-    console.log("✅ JSON parsed, html length:", (html || "").length);
-  } catch (_) {
-    // raw is likely HTML
-  }
+    const parsed = resp.json;
+    if (parsed && parsed.html) {
+      html = parsed.html;
+      console.log("✅ JSON parsed, html length:", html.length);
+    }
+  } catch (_) {}
 
   const $ = cheerio.load(html || "");
   console.log("🔍 Tables found:", $("table").length);
@@ -1288,10 +1274,7 @@ async function fetchPageContent() {
 
   const rows = [];
   $("table tr").each((i, tr) => {
-    const cols = $(tr)
-      .find("td,th")
-      .map((j, td) => $(td).text().trim())
-      .get();
+    const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
     if (cols.length > 0) rows.push(cols);
   });
 
@@ -1300,9 +1283,13 @@ async function fetchPageContent() {
   return rows;
 }
 
-// ========= WOWBUY Main Flow =========
+// ======= Main flow (safe check) =======
 async function fetchWOWBUY() {
-  await loginWOWBUY();
+  const s = await loginWOWBUY();
+  if (!s) {
+    console.error("❌ Aborting: login failed");
+    return [];
+  }
   await initWOWBUYSession();
   const rows = await fetchPageContent();
   return rows;
