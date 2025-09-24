@@ -967,18 +967,47 @@ async function loginWOWBUY() {
     console.log("🔑 accessToken:", truncate(session.token));
     console.log("🍪 initial cookie:", session.cookie || "(none)");
 
-    // lấy JSESSIONID từ cookie
-    const jsMatch = session.cookie.match(/JSESSIONID=([^;]+)/);
-    if (jsMatch) {
-      session.sessionid = jsMatch[1];
-      console.log("🆔 JSESSIONID:", session.sessionid);
-    } else {
-      console.warn("⚠️ Không thấy JSESSIONID trong cookie login");
-    }
+    // ⚠️ KHÔNG lấy JSESSIONID ở đây nữa
+    console.log("⚠️ JSESSIONID chưa có (sẽ lấy sau entry access)");
 
     // refresh để lấy fine_auth_token
     if (session.token) {
       await doTokenRefresh(session.token, session.cookie);
+    }
+
+    // gọi entry access để server set JSESSIONID
+    if (session.entryUrl) {
+      console.log("📡 entry access to fetch JSESSIONID...");
+      const entryRes = await fetch(session.entryUrl, {
+        method: "GET",
+        headers: {
+          cookie: session.cookie,
+          referer: `${BASE_URL}/webroot/decision`,
+          "user-agent": "Mozilla/5.0 (Node)",
+        },
+      });
+
+      console.log("📡 entry status:", entryRes.status);
+
+      let entrySetCookie = [];
+      if (typeof entryRes.headers.raw === "function") {
+        entrySetCookie = entryRes.headers.raw()["set-cookie"] || [];
+      } else {
+        const single = entryRes.headers.get("set-cookie");
+        if (single) entrySetCookie = [single];
+      }
+
+      if (entrySetCookie.length > 0) {
+        const entryCookies = parseSetCookieArrayToObj(entrySetCookie);
+        if (entryCookies["JSESSIONID"]) {
+          session.sessionid = entryCookies["JSESSIONID"];
+          session.cookie = mergeCookieStringWithObj(
+            session.cookie,
+            entryCookies
+          );
+          console.log("🆔 JSESSIONID:", session.sessionid);
+        }
+      }
     }
 
     session.lastLogin = Date.now();
@@ -990,65 +1019,20 @@ async function loginWOWBUY() {
   }
 }
 
-async function doTokenRefresh(token, cookieHeader) {
-  try {
-    console.log("🔄 Calling token/refresh...");
-    const res = await fetch(`${BASE_URL}/webroot/decision/token/refresh`, {
-      method: "POST",
-      headers: {
-        accept: "application/json, text/javascript, */*; q=0.01",
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
-        cookie: cookieHeader || "",
-        origin: BASE_URL,
-        referer: session.entryUrl,
-        "x-requested-with": "XMLHttpRequest",
-        "user-agent": "Mozilla/5.0 (Node)",
-      },
-      body: JSON.stringify({ oldToken: token, tokenTimeOut: 1209600000 }),
-    });
-
-    console.log("📡 refresh status:", res.status);
-
-    // merge cookies
-    let setCookieArray = [];
-    if (typeof res.headers.raw === "function") {
-      const raw = res.headers.raw();
-      setCookieArray = raw["set-cookie"] || [];
-    } else {
-      const single = res.headers.get("set-cookie");
-      if (single) setCookieArray = [single];
-    }
-    if (setCookieArray.length > 0) {
-      const newCookiesObj = parseSetCookieArrayToObj(setCookieArray);
-      session.cookie = mergeCookieStringWithObj(session.cookie, newCookiesObj);
-      console.log("🍪 merged cookie after refresh:", session.cookie);
-    }
-
-    const txt = await res.text();
-    let j = null;
-    try {
-      j = JSON.parse(txt);
-    } catch {}
-    if (j?.data?.accessToken) {
-      session.token = j.data.accessToken;
-      console.log("🔑 got new token:", truncate(session.token));
-    }
-
-    return true;
-  } catch (e) {
-    console.error("❌ refresh error:", e.message);
-    return false;
-  }
-}
-
 // ========= INIT SESSION =========
 async function initWOWBUYSession() {
   console.log("⚙️ Init WOWBUY session (resource -> fr_paramstpl -> fr_dialog -> collect)");
 
   const steps = [
-    { name: "resource", url: `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
-    { name: "fr_paramstpl", url: `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
+    {
+      name: "resource",
+      url: `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`,
+    },
+    {
+      name: "fr_paramstpl",
+      url: `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`,
+      method: "POST",
+    },
     {
       name: "fr_dialog",
       url: `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`,
@@ -1078,9 +1062,12 @@ async function initWOWBUYSession() {
     console.log(`   [${step.name}] status:`, res.status);
   }
 
-  console.log("📡 entry access...");
+  console.log("📡 entry access (again, keepalive)...");
   const entry = await fetch(session.entryUrl, {
-    headers: { authorization: `Bearer ${session.token}`, cookie: session.cookie },
+    headers: {
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+    },
   });
   console.log("   [entry] status:", entry.status);
 }
@@ -1101,7 +1088,7 @@ async function fetchPageContent() {
       authorization: `Bearer ${session.token}`,
       cookie: session.cookie,
       referer: session.entryUrl,
-      sessionid: session.sessionid,
+      sessionid: session.sessionid, // cái này đã lấy từ entry access
       "user-agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       "x-requested-with": "XMLHttpRequest",
@@ -1140,6 +1127,7 @@ async function fetchPageContent() {
 // ========= WOWBUY Main Flow =========
 async function fetchWOWBUY() {
   await loginWOWBUY();
+  await initWOWBUYSession();  // 🔥 thêm bước này
   const rows = await fetchPageContent();
   return rows;
 }
