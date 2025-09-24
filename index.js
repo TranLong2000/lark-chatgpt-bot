@@ -852,7 +852,6 @@ cron.schedule(
   }
 );
 
-// full-wowbuy-lark.js
 /* ==================================================
    FULL BOT — Lấy dữ liệu WOWBUY → Lark Sheet
    Flow: login -> token/refresh (set-cookie) -> init (resource/fr_paramstpl/fr_dialog) -> page_content (POST)
@@ -892,7 +891,10 @@ function buildCookieHeaderFromSetCookieArray(setCookieArray) {
     return setCookieArray.map((c) => c.split(";")[0].trim()).join("; ");
   }
   // fallback single string
-  return String(setCookieArray || "").split(",").map((c) => c.split(";")[0].trim()).join("; ");
+  return String(setCookieArray || "")
+    .split(",")
+    .map((c) => c.split(";")[0].trim())
+    .join("; ");
 }
 
 function parseSetCookieArrayToObj(setCookieArray) {
@@ -930,6 +932,37 @@ function mergeCookieStringWithObj(cookieStr, cookieObj) {
   const base = cookieStringToObj(cookieStr);
   Object.keys(cookieObj).forEach(k => base[k] = cookieObj[k]);
   return Object.keys(base).map(k => `${k}=${base[k]}`).join("; ");
+}
+
+// ============ safeFetch wrapper ============
+async function safeFetch(url, opts = {}, label = "") {
+  try {
+    const res = await fetch(url, opts);
+    const text = await res.text();
+
+    // collect set-cookie if present and merge into session.cookie
+    try {
+      let setCookieArray = [];
+      if (typeof res.headers.raw === "function") {
+        const raw = res.headers.raw();
+        setCookieArray = raw["set-cookie"] || [];
+      } else {
+        const single = res.headers.get("set-cookie");
+        if (single) setCookieArray = [single];
+      }
+      if (setCookieArray && setCookieArray.length > 0) {
+        const newCookiesObj = parseSetCookieArrayToObj(setCookieArray);
+        session.cookie = mergeCookieStringWithObj(session.cookie || "", newCookiesObj);
+      }
+    } catch (_) {
+      // ignore header read errors
+    }
+
+    return { status: res.status, text, headers: res.headers };
+  } catch (err) {
+    console.error(`❌ safeFetch ${label} error:`, err && err.message ? err.message : err);
+    throw err;
+  }
 }
 
 // ================== LOGIN -> REFRESH ==================
@@ -1049,7 +1082,7 @@ async function doTokenRefresh(token, cookieHeader) {
 
     if (setCookieArray.length > 0) {
       const newCookiesObj = parseSetCookieArrayToObj(setCookieArray);
-      session.cookie = mergeCookieStringWithObj(session.cookie, newCookiesObj);
+      session.cookie = mergeCookieStringWithObj(session.cookie || "", newCookiesObj);
       console.log("🍪 merged cookie after refresh:", session.cookie);
     } else {
       console.log("⚠️ refresh did not return Set-Cookie headers");
@@ -1091,16 +1124,31 @@ async function initWOWBUYSession() {
   async function step(url, opts = {}, name) {
     const res = await fetch(url, Object.assign({ headers: commonHeaders }, opts));
     console.log(`   [${name}] status:`, res.status);
+    // merge any set-cookie
+    try {
+      let setCookieArray = [];
+      if (typeof res.headers.raw === "function") {
+        const raw = res.headers.raw();
+        setCookieArray = raw["set-cookie"] || [];
+      } else {
+        const single = res.headers.get("set-cookie");
+        if (single) setCookieArray = [single];
+      }
+      if (setCookieArray.length > 0) {
+        const newCookiesObj = parseSetCookieArrayToObj(setCookieArray);
+        session.cookie = mergeCookieStringWithObj(session.cookie || "", newCookiesObj);
+      }
+    } catch (e) {}
     return res;
   }
 
   try {
     await step(`${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js`, {}, "resource");
-  } catch (e) { console.warn("   resource err:", e.message); }
+  } catch (e) { console.warn("   resource err:", e.message || e); }
 
   try {
     await step(`${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, { method: "POST", body: "" }, "fr_paramstpl");
-  } catch (e) { console.warn("   fr_paramstpl err:", e.message); }
+  } catch (e) { console.warn("   fr_paramstpl err:", e.message || e); }
 
   try {
     const today = new Date();
@@ -1112,7 +1160,7 @@ async function initWOWBUYSession() {
       headers: { "content-type": "application/x-www-form-urlencoded; charset=UTF-8" },
       body: form
     }, "fr_dialog");
-  } catch (e) { console.warn("   fr_dialog err:", e.message); }
+  } catch (e) { console.warn("   fr_dialog err:", e.message || e); }
 
   console.log("🎉 WOWBUY session initialized");
 }
@@ -1149,13 +1197,13 @@ async function fetchEntryAccess() {
 
     if (setCookieArray.length > 0) {
       const newCookiesObj = parseSetCookieArrayToObj(setCookieArray);
-      session.cookie = mergeCookieStringWithObj(session.cookie, newCookiesObj);
+      session.cookie = mergeCookieStringWithObj(session.cookie || "", newCookiesObj);
       console.log("🍪 cookie merged after entry:", session.cookie);
     }
 
     // lấy sessionid từ cookie hoặc response HTML
     const body = await res.text();
-    const jsMatch = session.cookie.match(/JSESSIONID=([^;]+)/);
+    const jsMatch = (session.cookie || "").match(/JSESSIONID=([^;]+)/);
     if (jsMatch) {
       session.sessionid = jsMatch[1];
     } else {
@@ -1166,7 +1214,7 @@ async function fetchEntryAccess() {
 
     console.log("🆔 sessionid (from entry):", session.sessionid);
   } catch (err) {
-    console.error("❌ fetchEntryAccess error:", err.message);
+    console.error("❌ fetchEntryAccess error:", err.message || err);
     throw err;
   }
 }
@@ -1207,10 +1255,10 @@ async function fetchParamsTemplate() {
       method: "GET",
       headers: {
         "accept": "application/javascript, */*;q=0.01",
-        "cookie": currentCookie,
+        "cookie": session.cookie || "",
         "x-requested-with": "XMLHttpRequest",
-        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${sessionId}?width=309&height=667`,
-        "sessionid": sessionId,
+        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${session.sessionid || ""}?width=309&height=667`,
+        "sessionid": session.sessionid || "",
       },
     },
     "ParamTemplate"
@@ -1226,12 +1274,12 @@ async function fetchFavoriteParams() {
       method: "POST",
       headers: {
         "accept": "application/json, text/javascript, */*; q=0.01",
-        "authorization": `Bearer ${currentToken}`,
-        "cookie": currentCookie,
+        "authorization": `Bearer ${session.token || ""}`,
+        "cookie": session.cookie || "",
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
         "x-requested-with": "XMLHttpRequest",
-        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${sessionId}?width=309&height=667`,
-        "sessionid": sessionId,
+        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${session.sessionid || ""}?width=309&height=667`,
+        "sessionid": session.sessionid || "",
       },
       body: "cmd=query_favorite_params", // HAR có body thì giữ nguyên
     },
@@ -1249,12 +1297,12 @@ async function fetchDialogParameters() {
       method: "POST",
       headers: {
         "accept": "application/json, text/javascript, */*; q=0.01",
-        "authorization": `Bearer ${currentToken}`,
+        "authorization": `Bearer ${session.token || ""}`,
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "cookie": currentCookie,
+        "cookie": session.cookie || "",
         "x-requested-with": "XMLHttpRequest",
-        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${sessionId}?width=309&height=667`,
-        "sessionid": sessionId,
+        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${session.sessionid || ""}?width=309&height=667`,
+        "sessionid": session.sessionid || "",
       },
       body,
     },
@@ -1272,12 +1320,12 @@ async function fetchCollectInfo() {
       method: "POST",
       headers: {
         "accept": "application/json, text/javascript, */*; q=0.01",
-        "authorization": `Bearer ${currentToken}`,
+        "authorization": `Bearer ${session.token || ""}`,
         "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "cookie": currentCookie,
+        "cookie": session.cookie || "",
         "x-requested-with": "XMLHttpRequest",
-        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${sessionId}?width=309&height=667`,
-        "sessionid": sessionId,
+        "referer": `${BASE_URL}/webroot/decision/v10/entry/access/${session.sessionid || ""}?width=309&height=667`,
+        "sessionid": session.sessionid || "",
       },
       body,
     },
@@ -1290,7 +1338,8 @@ async function fetchPageContent() {
   await initWOWBUYSession();
   await fetchEntryAccess();
 
-  const query = `_= ${Date.now()}&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
+  // removed accidental space after "_=" which breaks the call
+  const query = `_= ${Date.now()}`.replace("_= ", "_=") + `&__boxModel__=true&op=page_content&pn=1&__webpage__=true&_paperWidth=309&_paperHeight=510&__fit__=false`;
   const url = `${BASE_URL}/webroot/decision/view/report?${query}`;
 
   console.log("📡 Fetching page_content (GET):", url);
@@ -1300,7 +1349,7 @@ async function fetchPageContent() {
     headers: {
       "accept": "text/html, */*; q=0.01",
       "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
-      // ❗ KHÔNG thêm "Bearer "
+      // ❗ KHÔNG thêm "Bearer " (server expects raw token?)
       "authorization": session.token || "",
       // phải nối cookie giống browser
       "cookie": session.cookie || "",
