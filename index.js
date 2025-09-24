@@ -877,8 +877,8 @@ let session = {
   lastLogin: 0,
 };
 
-// ======= Debug / Cookie helpers (paste vào file, trước khi dùng) =======
-const UNMASK_ENTRY = false; // set true nếu muốn in Set-Cookie raw (dev only!)
+// ======= Debug / Cookie helpers =======
+const UNMASK_ENTRY = false;
 
 function truncate(str = "", len = 40) {
   if (!str) return "(null)";
@@ -891,6 +891,7 @@ function maskValue(v) {
   if (s.length <= 24) return s;
   return s.slice(0, 8) + "..." + s.slice(-6);
 }
+
 function maskCookieString(cookieStr = "") {
   if (!cookieStr) return cookieStr;
   return cookieStr
@@ -911,14 +912,12 @@ function maskCookieString(cookieStr = "") {
     .join("; ");
 }
 
-// build cookie header from set-cookie array (safe)
 function buildCookieHeaderFromSetCookieArray(setCookieArray) {
   if (!setCookieArray) return "";
   const arr = Array.isArray(setCookieArray) ? setCookieArray : [setCookieArray];
   return arr.map(c => c.split(";")[0].trim()).filter(Boolean).join("; ");
 }
 
-// parse Set-Cookie array into { name: value }
 function parseSetCookieArrayToObj(setCookieArray) {
   const out = {};
   if (!setCookieArray) return out;
@@ -955,14 +954,26 @@ function mergeCookieStringWithObj(cookieStr = "", cookieObj = {}) {
   return Object.keys(base).map(k => `${k}=${base[k]}`).join("; ");
 }
 
-// ======= Verbose fetch helper (prints req/resp headers + set-cookie + body preview) =======
+// ======= Helper: parse sessionID từ entry HTML =======
+function extractSessionIDFromHtml(html) {
+  const regex = /FR\.SessionMgr\.register\('([^']+)'/;
+  const match = html.match(regex);
+  if (match && match[1]) return match[1];
+
+  const regex2 = /currentSessionID\s*=\s*'([^']+)'/;
+  const match2 = html.match(regex2);
+  if (match2 && match2[1]) return match2[1];
+
+  return null;
+}
+
+// ======= Verbose fetch helper =======
 async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
   opts = Object.assign({}, opts);
   opts.headers = opts.headers || {};
   const method = (opts.method || "GET").toUpperCase();
 
   console.log(`\n[${stepName}] --> ${method} ${url}`);
-  // mask headers for logging
   const headersMasked = {};
   Object.keys(opts.headers || {}).forEach(k => {
     const v = opts.headers[k];
@@ -991,7 +1002,6 @@ async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
 
   console.log(`[${stepName}] <= status:`, res.status);
 
-  // collect response headers & set-cookie
   const respHeaders = {};
   try {
     res.headers.forEach((v, k) => (respHeaders[k] = v));
@@ -1002,7 +1012,6 @@ async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
     } catch (_) {}
   }
 
-  // set-cookie array
   let setCookieArray = [];
   try {
     if (typeof res.headers.raw === "function") {
@@ -1014,7 +1023,6 @@ async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
     }
   } catch (e) {}
 
-  // mask resp headers for log
   const respMasked = {};
   Object.keys(respHeaders).forEach(k => {
     const v = respHeaders[k];
@@ -1048,24 +1056,17 @@ async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
   try {
     parsed = JSON.parse(text);
     console.log(`[${stepName}] Response is valid JSON (top-level keys):`, Object.keys(parsed).slice(0, 10));
-  } catch (_) { /* not json */ }
+  } catch (_) {}
 
   return { res, status: res.status, headers: respHeaders, setCookieArray, text, json: parsed };
 }
 
-// ======= LOGIN & REFRESH (verbose, robust) =======
+// ======= LOGIN & REFRESH =======
 async function loginWOWBUY() {
   console.log("🔐 Login WOWBUY...");
   try {
     const url = `${BASE_URL}/webroot/decision/login`;
-    const bodyObj = {
-      username: WOWBUY_USERNAME,
-      password: WOWBUY_PASSWORD,
-      validity: -2,
-      sliderToken: "",
-      origin: "",
-      encrypted: true,
-    };
+    const bodyObj = { username: WOWBUY_USERNAME, password: WOWBUY_PASSWORD, validity: -2, sliderToken: "", origin: "", encrypted: true };
 
     const loginResp = await safeFetchVerbose(url, {
       method: "POST",
@@ -1080,69 +1081,54 @@ async function loginWOWBUY() {
       body: JSON.stringify(bodyObj),
     }, "LOGIN");
 
-    if (!loginResp) throw new Error("LOGIN no response");
-
-    // build cookie header from set-cookie
     session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || []);
     console.log("🍪 cookie after login (masked):", maskCookieString(session.cookie || ""));
 
-    // parse body json
-    if (loginResp.json && loginResp.json.data) {
-      if (loginResp.json.data.accessToken) {
-        session.token = loginResp.json.data.accessToken;
-        console.log("🔑 accessToken (masked):", maskValue(session.token));
-      }
-      if (loginResp.json.data.url) {
-        session.entryUrl = `${BASE_URL}${loginResp.json.data.url}`;
-        console.log("📥 entryUrl from login:", session.entryUrl);
-      }
-    } else {
-      console.warn("⚠️ login response JSON missing data; check preview above");
+    if (loginResp.json?.data?.accessToken) {
+      session.token = loginResp.json.data.accessToken;
+      console.log("🔑 accessToken (masked):", maskValue(session.token));
+    }
+    if (loginResp.json?.data?.url) {
+      session.entryUrl = `${BASE_URL}${loginResp.json.data.url}`;
+      console.log("📥 entryUrl from login:", session.entryUrl);
     }
 
-    // refresh to get fine_auth_token and possible new token
-    if (session.token) {
-      const ok = await doTokenRefresh(session.token, session.cookie);
-      if (!ok) console.warn("⚠️ refresh returned false");
-    } else {
-      console.warn("⚠️ no accessToken after login; cannot refresh");
-    }
+    if (session.token) await doTokenRefresh(session.token, session.cookie);
 
-    // ENTRY ACCESS to get JSESSIONID
+    // ENTRY ACCESS
     if (session.entryUrl) {
       console.log("📡 ENTRY ACCESS to fetch JSESSIONID...");
       const entryResp = await safeFetchVerbose(session.entryUrl, {
         method: "GET",
-        headers: {
-          cookie: session.cookie,
-          referer: `${BASE_URL}/webroot/decision`,
-          "user-agent": "Mozilla/5.0 (Node)",
-        },
+        headers: { cookie: session.cookie, referer: `${BASE_URL}/webroot/decision`, "user-agent": "Mozilla/5.0 (Node)" },
       }, "ENTRY_ACCESS");
 
-      if (entryResp.setCookieArray && entryResp.setCookieArray.length > 0) {
+      if (entryResp.setCookieArray?.length > 0) {
         const entryCookiesObj = parseSetCookieArrayToObj(entryResp.setCookieArray);
         if (entryCookiesObj["JSESSIONID"]) {
           session.sessionid = entryCookiesObj["JSESSIONID"];
           console.log("🆔 JSESSIONID obtained:", session.sessionid);
-        } else {
-          console.warn("⚠️ ENTRY returned Set-Cookie but no JSESSIONID. Set-Cookie keys:", Object.keys(entryCookiesObj));
-          if (UNMASK_ENTRY) console.log("ENTRY set-cookie raw:", entryResp.setCookieArray);
         }
         session.cookie = mergeCookieStringWithObj(session.cookie || "", entryCookiesObj);
         console.log("🍪 cookie after ENTRY (masked):", maskCookieString(session.cookie || ""));
-      } else {
-        console.warn("⚠️ ENTRY did not return any Set-Cookie");
       }
-    } else {
-      console.warn("⚠️ No entryUrl to call after login");
+
+      if (!session.sessionid && entryResp.text) {
+        const sid = extractSessionIDFromHtml(entryResp.text);
+        if (sid) {
+          session.sessionid = sid;
+          console.log("🆔 sessionID parsed from HTML:", session.sessionid);
+        } else {
+          console.warn("⚠️ Không tìm thấy sessionID trong entry HTML");
+        }
+      }
     }
 
     session.lastLogin = Date.now();
     console.log("✅ Login OK (verbose)");
     return session;
   } catch (err) {
-    console.error("❌ login error:", err && err.message ? err.message : err);
+    console.error("❌ login error:", err.message);
     return null;
   }
 }
@@ -1168,28 +1154,24 @@ async function doTokenRefresh(token, cookieHeader) {
       body: JSON.stringify(body),
     }, "TOKEN_REFRESH");
 
-    if (refreshResp.setCookieArray && refreshResp.setCookieArray.length > 0) {
+    if (refreshResp.setCookieArray?.length > 0) {
       const obj = parseSetCookieArrayToObj(refreshResp.setCookieArray);
       session.cookie = mergeCookieStringWithObj(session.cookie || "", obj);
       console.log("🍪 merged cookie after refresh (masked):", maskCookieString(session.cookie || ""));
-    } else {
-      console.log("⚠️ refresh did not return Set-Cookie");
     }
-
-    if (refreshResp.json && refreshResp.json.data && refreshResp.json.data.accessToken) {
+    if (refreshResp.json?.data?.accessToken) {
       session.token = refreshResp.json.data.accessToken;
       console.log("🔑 got new token (masked):", maskValue(session.token));
       session.lastLogin = Date.now();
     }
-
     return true;
   } catch (err) {
-    console.error("❌ refresh error:", err && err.message ? err.message : err);
+    console.error("❌ refresh error:", err.message);
     return false;
   }
 }
 
-// ======= INIT & PAGE_CONTENT (verbose) =======
+// ======= INIT =======
 async function initWOWBUYSession() {
   console.log("⚙️ Init WOWBUY session (resource -> fr_paramstpl -> fr_dialog -> collect)");
 
@@ -1203,49 +1185,27 @@ async function initWOWBUYSession() {
   for (const step of steps) {
     const resp = await safeFetchVerbose(step.url, {
       method: step.method || "GET",
-      headers: {
-        // NOTE: some endpoints expect token as raw string, not "Bearer ..."
-        authorization: session.token ? session.token : "",
-        cookie: session.cookie,
-        ...(step.headers || {}),
-      },
+      headers: { authorization: session.token || "", cookie: session.cookie, ...(step.headers || {}) },
       body: step.body,
     }, `INIT:${step.name}`);
-
     console.log(`   [${step.name}] status:`, resp.status);
-  }
-
-  console.log("📡 entry access (keepalive)...");
-  if (session.entryUrl) {
-    const entry = await safeFetchVerbose(session.entryUrl, {
-      headers: { authorization: session.token ? session.token : "", cookie: session.cookie },
-    }, "INIT:entry");
-
-    console.log("   [entry] status:", entry.status);
-    if (entry.setCookieArray && entry.setCookieArray.length > 0) {
-      const obj = parseSetCookieArrayToObj(entry.setCookieArray);
-      session.cookie = mergeCookieStringWithObj(session.cookie || "", obj);
-      if (obj["JSESSIONID"]) {
-        session.sessionid = obj["JSESSIONID"];
-        console.log("🆔 JSESSIONID refreshed:", session.sessionid);
-      }
-      console.log("🍪 cookie after keepalive (masked):", maskCookieString(session.cookie));
-    }
   }
 }
 
+// ======= FETCH PAGE_CONTENT =======
 async function fetchPageContent() {
   const url =
     `${BASE_URL}/webroot/decision/view/report?` +
     `op=page_content&pn=1&__webpage__=true&__boxModel__=true` +
-    `&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}`;
+    `&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}` +
+    (session.sessionid ? `&sessionID=${session.sessionid}` : "");
 
   const resp = await safeFetchVerbose(url, {
     method: "GET",
     headers: {
       accept: "text/html, */*; q=0.01",
       "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
-      authorization: session.token, // raw token
+      authorization: session.token,
       cookie: session.cookie,
       referer: session.entryUrl,
       sessionid: session.sessionid,
@@ -1256,34 +1216,25 @@ async function fetchPageContent() {
 
   console.log("📡 page_content status:", resp.status);
   const raw = resp.text || "";
-  if (!raw) console.warn("⚠️ page_content returned empty body");
-
   let html = raw;
-  try {
-    const parsed = resp.json;
-    if (parsed && parsed.html) {
-      html = parsed.html;
-      console.log("✅ JSON parsed, html length:", html.length);
-    }
-  } catch (_) {}
+  if (resp.json?.html) {
+    html = resp.json.html;
+    console.log("✅ JSON parsed, html length:", html.length);
+  }
 
   const $ = cheerio.load(html || "");
   console.log("🔍 Tables found:", $("table").length);
-  console.log("🔍 Divs found:", $("div").length);
-  console.log("🔍 Body first 500 chars:\n", $("body").html() ? $("body").html().slice(0, 500) : "(empty)");
-
   const rows = [];
   $("table tr").each((i, tr) => {
     const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
     if (cols.length > 0) rows.push(cols);
   });
-
-  console.log("📊 Tổng số dòng parsed from <table>:", rows.length);
+  console.log("📊 Tổng số dòng parsed:", rows.length);
   console.log("🔎 5 dòng đầu:", rows.slice(0, 5));
   return rows;
 }
 
-// ======= Main flow (safe check) =======
+// ======= Main flow =======
 async function fetchWOWBUY() {
   const s = await loginWOWBUY();
   if (!s) {
@@ -1291,8 +1242,7 @@ async function fetchWOWBUY() {
     return [];
   }
   await initWOWBUYSession();
-  const rows = await fetchPageContent();
-  return rows;
+  return await fetchPageContent();
 }
 
 // ========= Lark =========
