@@ -1097,31 +1097,55 @@ async function loginWOWBUY() {
 
     // ENTRY ACCESS
     if (session.entryUrl) {
-      console.log("📡 ENTRY ACCESS to fetch JSESSIONID...");
+      console.log("📡 ENTRY ACCESS to fetch sessionID...");
       const entryResp = await safeFetchVerbose(session.entryUrl, {
         method: "GET",
-        headers: { cookie: session.cookie, referer: `${BASE_URL}/webroot/decision`, "user-agent": "Mozilla/5.0 (Node)" },
+        headers: {
+          cookie: session.cookie,
+          authorization: `Bearer ${session.token}`,
+          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+          "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+          "priority": "u=0, i",
+          referer: `${BASE_URL}/webroot/decision`,
+          "sec-ch-ua": '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+          "sec-ch-ua-mobile": "?0",
+          "sec-ch-ua-platform": '"Windows"',
+          "sec-fetch-dest": "iframe",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-site": "same-origin",
+          "sec-fetch-user": "?1",
+          "upgrade-insecure-requests": "1",
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        },
       }, "ENTRY_ACCESS");
 
+      // Trích xuất sessionID từ HTML
+      if (entryResp.text) {
+        const sid = extractSessionIDFromHtml(entryResp.text);
+        if (sid) {
+          session.sessionid = sid;
+          console.log("🆔 sessionID extracted:", session.sessionid);
+        } else {
+          console.warn("⚠️ Failed to extract sessionID from HTML");
+        }
+      } else {
+        console.warn("⚠️ No response text available to extract sessionID");
+      }
+
+      // Kiểm tra set-cookie để lấy JSESSIONID (nếu có)
       if (entryResp.setCookieArray?.length > 0) {
         const entryCookiesObj = parseSetCookieArrayToObj(entryResp.setCookieArray);
         if (entryCookiesObj["JSESSIONID"]) {
           session.sessionid = entryCookiesObj["JSESSIONID"];
-          console.log("🆔 JSESSIONID obtained:", session.sessionid);
+          console.log("🆔 JSESSIONID from set-cookie:", session.sessionid);
         }
-        session.cookie = mergeCookieStringWithObj(session.cookie || "", entryCookiesObj);
-        console.log("🍪 cookie after ENTRY (masked):", maskCookieString(session.cookie || ""));
+      } else {
+        console.log("ℹ️ No set-cookie found in ENTRY_ACCESS response");
       }
 
-      if (!session.sessionid && entryResp.text) {
-        const sid = extractSessionIDFromHtml(entryResp.text);
-        if (sid) {
-          session.sessionid = sid;
-          console.log("🆔 sessionID parsed from HTML:", session.sessionid);
-        } else {
-          console.warn("⚠️ Không tìm thấy sessionID trong entry HTML");
-        }
-      }
+      // Cập nhật cookie
+      session.cookie = mergeCookieStringWithObj(session.cookie || "", parseSetCookieArrayToObj(entryResp.setCookieArray));
+      console.log("🍪 cookie after ENTRY (masked):", maskCookieString(session.cookie || ""));
     }
 
     session.lastLogin = Date.now();
