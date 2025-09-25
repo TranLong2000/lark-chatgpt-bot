@@ -1319,7 +1319,7 @@ async function writeToLark(tableData) {
 
     const body = {
       valueRange: {
-        range: `${targetTitle}!A1`, // bắt đầu từ A1, có thể đổi thành J1 nếu muốn
+        range: `${targetTitle}!J1`, // bắt đầu từ A1, có thể đổi thành J1 nếu muốn
         values: tableData,
       },
     };
