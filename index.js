@@ -853,6 +853,75 @@ cron.schedule(
 );
 
 /* ==================================================
+   CRON: Gửi hình Sheet (B1:H đến dòng cuối của cột D)
+   mỗi 2 phút, giờ VN
+   ================================================== */
+
+// ===== Helper: Lấy range động theo cột D =====
+async function getDynamicRange(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN, SHEET_ID) {
+  const RANGE = `${SHEET_ID}!D:D`;
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(RANGE)}?valueRenderOption=FormattedValue`;
+  const res = await axios.get(url, {
+    headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
+  });
+
+  const values = res.data?.data?.valueRange?.values || [];
+  let lastRow = 0;
+  values.forEach((row, idx) => {
+    if (row[0] !== undefined && row[0] !== "") {
+      lastRow = idx + 1;
+    }
+  });
+
+  if (lastRow === 0) throw new Error("Cột D không có dữ liệu");
+  return `B1:H${lastRow}`;
+}
+
+// ===== Lấy values theo range động =====
+async function getSheetValuesDynamic(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN, SHEET_ID) {
+  const RANGE = await getDynamicRange(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN, SHEET_ID);
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(RANGE)}?valueRenderOption=FormattedValue`;
+
+  const res = await axios.get(url, {
+    headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
+  });
+
+  if (!res.data?.data?.valueRange?.values) {
+    throw new Error("Không lấy được values từ Sheet API");
+  }
+  return res.data.data.valueRange.values;
+}
+
+// ===== Hàm tổng hợp cho sheet dynamic =====
+async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
+  const SPREADSHEET_TOKEN = "LYYqsXmnPhwwGHtKP00lZ1IWgDb";
+  const SHEET_ID = "3UQxbQ";
+
+  const values = await getSheetValuesDynamic(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN, SHEET_ID);
+  const buffer = renderTableToImage(values); // dùng lại hàm renderTableToImage đã có
+  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer); // dùng lại hàm uploadImageFromBuffer đã có
+  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey); // dùng lại hàm sendImageToGroup + group cũ
+}
+
+// ===== Cron Job mỗi 2 phút =====
+cron.schedule(
+  "*/2 * * * *",
+  async () => {
+    try {
+      const APP_ACCESS_TOKEN = await getAppAccessToken(); // đã có sẵn
+      await sendDynamicSheetAsImage(APP_ACCESS_TOKEN);
+      console.log("✅ [Cron] Đã gửi hình (B1:H tới dòng cuối cột D)!");
+    } catch (err) {
+      console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
+    }
+  },
+  {
+    scheduled: true,
+    timezone: "Asia/Ho_Chi_Minh",
+  }
+);
+
+/* ==================================================
    BOT WOWBUY → Lark Sheet
    Flow: LOGIN -> REFRESH -> GET_TREE -> ENTRY(JSESSIONID) -> INIT -> SUBMIT_FORM -> FETCH -> WRITE
    ================================================== */
