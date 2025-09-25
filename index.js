@@ -717,12 +717,6 @@ async function sendRebateReport() {
    CRON JOBS — Gửi hình từ Google Sheet
    ================================================== */
 
-const path = require("path");
-const axios = require("axios");
-const cron = require("node-cron");
-const FormData = require("form-data");
-const { createCanvas, registerFont } = require("canvas");
-
 // ===== Đăng ký font (file nằm cùng cấp index.js) =====
 const fontPath = path.join(__dirname, "NotoSans-Regular.ttf");
 registerFont(fontPath, { family: "NotoSans" });
