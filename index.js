@@ -1254,17 +1254,20 @@ async function writeToLark(tableData) {
     // Lấy access token
     const token = await getTenantAccessToken();
 
-    // URL ghi dữ liệu
     const urlPut = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
 
     const body = {
       valueRange: {
-        range: `${SHEET_ID_TEST}!J1`, // ⚠️ SHEET_ID_TEST giờ là tên tab
+        range: `${SHEET_ID_TEST}!J1`, // ⚠️ SHEET_ID_TEST phải là tên tab
         values: tableData,
       },
     };
 
-    console.log(`📡 Sending ${tableData.length} rows to Lark Sheet (Tab: ${SHEET_ID_TEST})...`);
+    console.log("========== DEBUG LARK ==========");
+    console.log("🔗 URL:", urlPut);
+    console.log("📄 Body:", JSON.stringify(body, null, 2));
+    console.log("🔑 Token:", token.slice(0, 10) + "...");
+    console.log("================================");
 
     const respPut = await axios.put(urlPut, body, {
       headers: {
@@ -1273,13 +1276,18 @@ async function writeToLark(tableData) {
       },
     });
 
+    console.log("📥 Response:", respPut.data);
+
     if (respPut.data.code === 0) {
-      console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!", respPut.data);
+      console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
     } else {
       console.warn("⚠️ Lark Sheet API trả lỗi:", respPut.data);
     }
   } catch (err) {
-    console.error("❌ Lỗi ghi Lark Sheet:", err.message, " - Response:", err.response?.data || err.response);
+    console.error("❌ Lỗi ghi Lark Sheet:", err.message);
+    if (err.response) {
+      console.error("📥 Error response:", err.response.data);
+    }
   }
 }
 
