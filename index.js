@@ -1204,7 +1204,7 @@ async function fetchPageContent() {
     if (cols.length > 0) rows.push(cols);
   });
   console.log("📊 Parsed rows:", rows.length);
-  if (rows.length > 0) console.log("🔎 First 5 rows:", rows.slice(0, 5));
+  if (rows.length > 0) console.log("🔎 First 1 rows:", rows.slice(0, 1));
   return rows;
 }
 
@@ -1274,26 +1274,62 @@ async function writeToLark(tableData) {
     return;
   }
 
-  console.log("🚀 Bắt đầu ghi dữ liệu vào Lark...");
-
   try {
     // Lấy access token
     const token = await getTenantAccessToken();
 
+    // Query danh sách sheet/tab
+    const urlQuery = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
+    const respQuery = await axios.get(urlQuery, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const sheets = respQuery.data.data?.sheets || [];
+    if (sheets.length === 0) {
+      throw new Error("Không tìm thấy sheet nào trong spreadsheet");
+    }
+
+    // Tìm sheet cần ghi
+    let targetTitle = null;
+
+    // 1. Nếu SHEET_ID_TEST khớp title
+    const byTitle = sheets.find(s => s.title === SHEET_ID_TEST);
+    if (byTitle) {
+      targetTitle = byTitle.title;
+    }
+
+    // 2. Nếu SHEET_ID_TEST khớp sheet_id
+    if (!targetTitle) {
+      const byId = sheets.find(s => s.sheet_id === SHEET_ID_TEST);
+      if (byId) {
+        targetTitle = byId.title;
+      }
+    }
+
+    // 3. Nếu vẫn không khớp -> báo lỗi
+    if (!targetTitle) {
+      console.error("❌ Không tìm thấy sheet với SHEET_ID_TEST =", SHEET_ID_TEST);
+      console.log("📋 Available sheets:");
+      sheets.forEach(s => console.log(`- title: ${s.title} | id: ${s.sheet_id}`));
+      return;
+    }
+
+    // URL ghi dữ liệu
     const urlPut = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
 
     const body = {
       valueRange: {
-        range: `${SHEET_ID_TEST}!J1`, // ⚠️ SHEET_ID_TEST phải là tên tab
+        range: `${targetTitle}!A1`, // bắt đầu từ A1, có thể đổi thành J1 nếu muốn
         values: tableData,
       },
     };
 
-    console.log("========== DEBUG LARK REQUEST ==========");
+    console.log("========== DEBUG LARK ==========");
     console.log("🔗 URL:", urlPut);
+    console.log("📋 Target sheet:", targetTitle);
     console.log("📄 Body:", JSON.stringify(body, null, 2));
     console.log("🔑 Token:", token.slice(0, 10) + "...");
-    console.log("========================================");
+    console.log("================================");
 
     const respPut = await axios.put(urlPut, body, {
       headers: {
@@ -1302,7 +1338,7 @@ async function writeToLark(tableData) {
       },
     });
 
-    console.log("📥 Lark raw response:", JSON.stringify(respPut.data, null, 2));
+    console.log("📥 Lark raw response:", respPut.data);
 
     if (respPut.data.code === 0) {
       console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
@@ -1312,9 +1348,7 @@ async function writeToLark(tableData) {
   } catch (err) {
     console.error("❌ Lỗi ghi Lark Sheet:", err.message);
     if (err.response) {
-      console.error("📥 Error response:", JSON.stringify(err.response.data, null, 2));
-    } else {
-      console.error("❌ Không có response từ server:", err.stack);
+      console.error("📥 Error response:", err.response.data);
     }
   }
 }
