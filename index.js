@@ -1336,6 +1336,17 @@ async function listSheets() {
   });
 }
 
+// ===== Helper: Convert số cột thành tên cột Excel =====
+function columnNumberToName(n) {
+  let name = "";
+  while (n > 0) {
+    let r = (n - 1) % 26;
+    name = String.fromCharCode(65 + r) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name;
+}
+
 /**
  * Ghi dữ liệu vào Lark Sheet
  * tableData: mảng 2 chiều [[col1, col2, ...], [col1, col2, ...], ...]
