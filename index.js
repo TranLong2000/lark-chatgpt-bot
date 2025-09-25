@@ -763,19 +763,24 @@ function renderTableToImage(values) {
   return canvas.toBuffer("image/png");
 }
 
-// ===== Upload ảnh buffer lên Lark =====
+// ===== Upload ảnh buffer lên Lark (dùng formdata-node) =====
 async function uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer) {
   const form = new FormData();
-  form.append("image_type", "message");
-  form.append("image", buffer, {
-    filename: "sheet.png",
-    contentType: "image/png",
-  });
+  form.set("image_type", "message");
+  form.set(
+    "image",
+    new File([buffer], "sheet.png", { type: "image/png" })
+  );
 
   const res = await axios.post(
     `${process.env.LARK_DOMAIN}/open-apis/im/v1/images`,
     form,
-    { headers: { ...form.getHeaders(), Authorization: `Bearer ${APP_ACCESS_TOKEN}` } }
+    {
+      headers: {
+        ...form.headers, // 👈 formdata-node có headers riêng
+        Authorization: `Bearer ${APP_ACCESS_TOKEN}`,
+      },
+    }
   );
 
   return res.data.data.image_key;
