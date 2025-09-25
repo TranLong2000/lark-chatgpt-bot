@@ -714,27 +714,20 @@ async function sendRebateReport() {
 }
 
 /* ==================================================
-   SECTION TEST — Cron gửi hình vùng A1:H7 trong Sheet mỗi 5 phút
+   CRON JOBS — Gửi hình từ Google Sheet
    ================================================== */
 
-// Đăng ký font (file nằm cùng cấp index.js)
+const path = require("path");
+const axios = require("axios");
+const cron = require("node-cron");
+const FormData = require("form-data");
+const { createCanvas, registerFont } = require("canvas");
+
+// ===== Đăng ký font (file nằm cùng cấp index.js) =====
 const fontPath = path.join(__dirname, "NotoSans-Regular.ttf");
 registerFont(fontPath, { family: "NotoSans" });
 
-// ===== 1. Lấy values từ Sheet =====
-async function getSheetValues(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
-  const RANGE = `${SHEET_ID_TEST}!A1:H7`;
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values/${encodeURIComponent(RANGE)}?valueRenderOption=FormattedValue`;
-  const res = await axios.get(url, {
-    headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
-  });
-  if (!res.data?.data?.valueRange?.values) {
-    throw new Error("Không lấy được values từ Sheet API");
-  }
-  return res.data.data.valueRange.values;
-}
-
-// ===== 2. Render table thành ảnh (mock style + E2 màu xanh nhạt) =====
+// ===== Hàm render table thành ảnh (mock style + E2 màu xanh nhạt) =====
 function renderTableToImage(values) {
   const cellWidth = 120;
   const cellHeight = 40;
@@ -776,11 +769,14 @@ function renderTableToImage(values) {
   return canvas.toBuffer("image/png");
 }
 
-// ===== 3. Upload ảnh buffer lên Lark =====
+// ===== Upload ảnh buffer lên Lark =====
 async function uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer) {
   const form = new FormData();
   form.append("image_type", "message");
-  form.append("image", buffer, { filename: "sheet.png" });
+  form.append("image", buffer, {
+    filename: "sheet.png",
+    contentType: "image/png",
+  });
 
   const res = await axios.post(
     `${process.env.LARK_DOMAIN}/open-apis/im/v1/images`,
@@ -791,7 +787,7 @@ async function uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer) {
   return res.data.data.image_key;
 }
 
-// ===== 4. Gửi ảnh vào group (nhiều chatId) =====
+// ===== Gửi ảnh vào group (nhiều chatId) =====
 async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS, imageKey) {
   if (!Array.isArray(LARK_GROUP_CHAT_IDS)) return;
 
@@ -814,59 +810,61 @@ async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS, imageKey)
   }
 }
 
-// ===== 5. Hàm tổng hợp =====
-async function sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST) {
-  const values = await getSheetValues(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
-  const buffer = renderTableToImage(values);
-  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
-  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
+/* ==================================================
+   SECTION 1 — Cron gửi hình vùng A1:H7 (mock style, E2 xanh nhạt)
+   ================================================== */
+
+// Lấy values từ Sheet cố định
+async function getSheetValues(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN, SHEET_ID) {
+  const RANGE = `${SHEET_ID}!A1:H7`;
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(RANGE)}?valueRenderOption=FormattedValue`;
+  const res = await axios.get(url, {
+    headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
+  });
+  if (!res.data?.data?.valueRange?.values) {
+    throw new Error("Không lấy được values từ Sheet API");
+  }
+  return res.data.data.valueRange.values;
 }
 
-// ===== 6. Cron Job mỗi 18:00 (giờ VN) =====
+// Hàm tổng hợp gửi Sheet mock
+async function sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS, SPREADSHEET_TOKEN, SHEET_ID) {
+  const values = await getSheetValues(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN, SHEET_ID);
+  const buffer = renderTableToImage(values);
+  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
+  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS, imageKey);
+}
+
+// Cron mỗi 18:00 giờ VN
 cron.schedule(
   "0 18 * * *",
   async () => {
     try {
-      const APP_ACCESS_TOKEN = await getAppAccessToken(); // Section 1 đã có
-      const LARK_GROUP_CHAT_IDS_TEST =
-        process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
+      const APP_ACCESS_TOKEN = await getAppAccessToken();
+      const LARK_GROUP_CHAT_IDS_TEST = process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
       const SPREADSHEET_TOKEN_TEST = process.env.SPREADSHEET_TOKEN_TEST;
       const SHEET_ID_TEST = process.env.SHEET_ID_TEST;
 
-      await sendSheetAsImageWithMockStyle(
-        APP_ACCESS_TOKEN,
-        LARK_GROUP_CHAT_IDS_TEST,
-        SPREADSHEET_TOKEN_TEST,
-        SHEET_ID_TEST
-      );
-      console.log(
-        "✅ [Cron] Đã gửi hình (mock style, E2 xanh nhạt) từ Sheet vào group test!"
-      );
+      await sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, SPREADSHEET_TOKEN_TEST, SHEET_ID_TEST);
+      console.log("✅ [Cron] Đã gửi hình (mock style, E2 xanh nhạt) từ Sheet vào group test!");
     } catch (err) {
       console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
     }
   },
-  {
-    scheduled: true,
-    timezone: "Asia/Ho_Chi_Minh", // 👈 Thêm timezone để chạy đúng 18:00 giờ VN
-  }
+  { scheduled: true, timezone: "Asia/Ho_Chi_Minh" }
 );
 
 /* ==================================================
-   CRON: Gửi hình Sheet mới (B1:H đến dòng cuối cột D)
-   mỗi 2 phút, giờ VN
+   SECTION 2 — Cron gửi hình B1:H tới dòng cuối cột D
    ================================================== */
 
-// ===== Thông tin Sheet mới =====
 const SPREADSHEET_TOKEN_NEW = "LYYqsXmnPhwwGHtKP00lZ1IWgDb";
 const SHEET_ID_NEW = "3UQxbQ";
 
-// ===== 1. Lấy values động: đọc B1:H200, tìm lastRow theo cột D (index 2 trong B..H) =====
+// Lấy values động
 async function getSheetValuesDynamic(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN = SPREADSHEET_TOKEN_NEW, SHEET_ID = SHEET_ID_NEW) {
-  const CHECK_RANGE = `${SHEET_ID}!B1:H200`; // đủ rộng để cover hết dữ liệu
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(
-    CHECK_RANGE
-  )}?valueRenderOption=FormattedValue`;
+  const CHECK_RANGE = `${SHEET_ID}!B1:H200`;
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(CHECK_RANGE)}?valueRenderOption=FormattedValue`;
 
   const res = await axios.get(url, {
     headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
@@ -901,30 +899,28 @@ async function getSheetValuesDynamic(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN = SPREA
   return values;
 }
 
-// ===== 2. Hàm tổng hợp gửi ảnh =====
+// Hàm tổng hợp gửi Sheet dynamic
 async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
   const values = await getSheetValuesDynamic(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_NEW, SHEET_ID_NEW);
-  const buffer = renderTableToImage(values); // dùng lại hàm renderTableToImage đã có
-  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer); // dùng lại hàm uploadImageFromBuffer đã có
-  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey); // gửi group y chang code mẫu
+  const buffer = renderTableToImage(values);
+  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
+  const LARK_GROUP_CHAT_IDS_TEST = process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
+  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
 
-// ===== 3. Cron Job mỗi 2 phút =====
+// Cron mỗi 2 phút
 cron.schedule(
   "*/2 * * * *",
   async () => {
     try {
-      const APP_ACCESS_TOKEN = await getAppAccessToken(); // đã có trong code gốc
+      const APP_ACCESS_TOKEN = await getAppAccessToken();
       await sendDynamicSheetAsImage(APP_ACCESS_TOKEN);
       console.log("✅ [Cron] Đã gửi hình (B1:H tới dòng cuối cột D)!");
     } catch (err) {
       console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
     }
   },
-  {
-    scheduled: true,
-    timezone: "Asia/Ho_Chi_Minh",
-  }
+  { scheduled: true, timezone: "Asia/Ho_Chi_Minh" }
 );
 
 /* ==================================================
