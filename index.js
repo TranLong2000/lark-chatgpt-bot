@@ -1250,6 +1250,9 @@ async function getTenantAccessToken() {
   }
 }
 
+/**
+ * Debug: In ra danh sách các sheet trong file
+ */
 async function listSheets() {
   const token = await getTenantAccessToken();
   const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
@@ -1289,44 +1292,30 @@ async function writeToLark(tableData) {
       throw new Error("Không tìm thấy sheet nào trong spreadsheet");
     }
 
-    // Tìm sheet cần ghi
-    let targetTitle = null;
-
-    // 1. Nếu SHEET_ID_TEST khớp title
-    const byTitle = sheets.find(s => s.title === SHEET_ID_TEST);
-    if (byTitle) {
-      targetTitle = byTitle.title;
-    }
-
-    // 2. Nếu SHEET_ID_TEST khớp sheet_id
-    if (!targetTitle) {
-      const byId = sheets.find(s => s.sheet_id === SHEET_ID_TEST);
-      if (byId) {
-        targetTitle = byId.title;
-      }
-    }
-
-    // 3. Nếu vẫn không khớp -> báo lỗi
-    if (!targetTitle) {
+    // Map từ SHEET_ID_TEST (sheet_id trong URL) -> title
+    const match = sheets.find(s => s.sheet_id === SHEET_ID_TEST || s.title === SHEET_ID_TEST);
+    if (!match) {
       console.error("❌ Không tìm thấy sheet với SHEET_ID_TEST =", SHEET_ID_TEST);
       console.log("📋 Available sheets:");
       sheets.forEach(s => console.log(`- title: ${s.title} | id: ${s.sheet_id}`));
       return;
     }
 
+    const targetTitle = match.title;
+
     // URL ghi dữ liệu
     const urlPut = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
 
     const body = {
       valueRange: {
-        range: `${targetTitle}!J1`, // bắt đầu từ A1, có thể đổi thành J1 nếu muốn
+        range: `${targetTitle}!J1`, // bắt đầu ghi từ ô J1
         values: tableData,
       },
     };
 
     console.log("========== DEBUG LARK ==========");
     console.log("🔗 URL:", urlPut);
-    console.log("📋 Target sheet:", targetTitle);
+    console.log("📋 Target sheet:", targetTitle, "| From sheet_id:", SHEET_ID_TEST);
     console.log("📄 Body:", JSON.stringify(body, null, 2));
     console.log("🔑 Token:", token.slice(0, 10) + "...");
     console.log("================================");
