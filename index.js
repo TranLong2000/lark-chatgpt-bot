@@ -528,8 +528,8 @@ async function checkTotalStockChange() {
     ) {
       console.log(`🔄 TotalStock thay đổi: ${lastTotalStock} → ${currentTotalStock}`);
 
-      const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
-        ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
+      const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST)
+        ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))]
         : [];
 
       // 1️⃣ gửi message về stock
@@ -1350,12 +1350,22 @@ async function writeToLark(tableData) {
   try {
     const token = await getTenantAccessToken();
 
+    const rows = tableData.length;
+    const cols = tableData[0]?.length || 0;
+
+    // Cột bắt đầu = J (thứ 10), cột kết thúc = J + (cols - 1)
+    const startColIndex = 10;
+    const endColIndex = startColIndex + cols - 1;
+    const endColName = columnNumberToName(endColIndex);
+
+    const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
+
     const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
 
     const body = {
       valueRanges: [
         {
-          range: `${SHEET_ID_TEST}!J1:AZ5000`, // dùng sheet_id (ví dụ: EmjelX)
+          range,
           values: tableData,
         },
       ],
@@ -1364,8 +1374,8 @@ async function writeToLark(tableData) {
     // ==== LOG NGẮN GỌN ====
     console.log("========== DEBUG LARK ==========");
     console.log("🔗 URL:", url);
-    console.log("📋 Target range:", body.valueRanges[0].range);
-    console.log("📊 Data size:", tableData.length, "rows x", tableData[0]?.length || 0, "cols");
+    console.log("📋 Target range:", range);
+    console.log("📊 Data size:", rows, "rows x", cols, "cols");
     console.log("🔑 Token:", token.slice(0, 10) + "...");
     console.log("================================");
 
