@@ -1097,32 +1097,47 @@ async function getReportId() {
 }
 
 async function doTokenRefresh(token, cookieHeader) {
-  const url = `${WOWBUY_BASEURL}/webroot/decision/token/refresh`;
-  const body = { oldToken: token, tokenTimeOut: 1209600000 };
+  try {
+    console.log("🔄 Calling token/refresh...");
+    const url = `${WOWBUY_BASEURL}/webroot/decision/token/refresh`;
+    const body = { oldToken: token, tokenTimeOut: 1209600000 };
 
-  const refreshResp = await safeFetchVerbose(url, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      cookie: cookieHeader,
-      origin: WOWBUY_BASEURL,
-      referer: session.entryUrl,
-      "x-requested-with": "XMLHttpRequest",
-      "user-agent": "Mozilla/5.0 (Node)",
-    },
-    body: JSON.stringify(body),
-  }, "TOKEN_REFRESH");
+    const refreshResp = await safeFetchVerbose(url, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+        cookie: cookieHeader || "",
+        origin: WOWBUY_BASEURL,
+        referer: session.entryUrl || `${WOWBUY_BASEURL}/webroot/decision`,
+        "x-requested-with": "XMLHttpRequest",
+        "user-agent": "Mozilla/5.0 (Node)",
+      },
+      body: JSON.stringify(body),
+    }, "TOKEN_REFRESH");
 
-  if (refreshResp.json?.data?.accessToken) {
-    session.token = refreshResp.json.data.accessToken;
-    session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(refreshResp.setCookieArray));
+    if (refreshResp.setCookieArray?.length > 0) {
+      const obj = parseSetCookieArrayToObj(refreshResp.setCookieArray);
+      session.cookie = mergeCookieStringWithObj(session.cookie || "", obj);
+      console.log("🍪 merged cookie after refresh (masked):", maskCookieString(session.cookie || ""));
+    }
+    if (refreshResp.json?.data?.accessToken) {
+      session.token = refreshResp.json.data.accessToken;
+      console.log("🔑 got new token (masked):", maskValue(session.token));
+      session.lastLogin = Date.now();
+    }
+    return true;
+  } catch (err) {
+    console.error("❌ refresh error:", err.message);
+    return false;
   }
-  return true;
 }
 
+// ======= INIT =======
 async function initWOWBUYSession() {
+  console.log("⚙️ Init WOWBUY session (resource -> fr_paramstpl -> fr_dialog -> collect)");
+
   const steps = [
     { name: "resource", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
     { name: "fr_paramstpl", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
@@ -1131,55 +1146,23 @@ async function initWOWBUYSession() {
   ];
 
   for (const step of steps) {
-    await safeFetchVerbose(step.url, {
+    const resp = await safeFetchVerbose(step.url, {
       method: step.method || "GET",
-      headers: { authorization: session.token, cookie: session.cookie, ...(step.headers || {}) },
+      headers: { authorization: session.token || "", cookie: session.cookie, ...(step.headers || {}) },
       body: step.body,
     }, `INIT:${step.name}`);
+    console.log(`   [${step.name}] status:`, resp.status);
   }
 }
 
-async function submitReportForm() {
-  console.log("📤 Submitting report form...");
-  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
-  const today = new Date();
-  const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-  const endDate = today.toISOString().split('T')[0];
-  const formData = {
-    SD: startDate,
-    ED: endDate,
-    SALE_STATUS: "On sale",
-    WH: "",
-    SKUSN: "",
-    KS: "",
-    SN: "",
-  };
-
-  const resp = await safeFetchVerbose(formUrl, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/x-www-form-urlencoded",
-      authorization: `Bearer ${session.token}`,
-      cookie: session.cookie,
-      referer: session.entryUrl,
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "x-requested-with": "XMLHttpRequest",
-    },
-    body: new URLSearchParams(formData).toString(),
-  }, "SUBMIT_FORM");
-
-  if (resp.status === 200) {
-    console.log("✅ Form submitted successfully");
-  } else {
-    console.warn("⚠️ Form submit failed with status:", resp.status);
-  }
-  return resp;
-}
-
+// ======= FETCH PAGE_CONTENT =======
 async function fetchPageContent() {
-  console.log("📡 Fetching page content...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
+  const url =
+    `${WOWBUY_BASEURL}/webroot/decision/view/report?` +
+    `op=page_content&pn=1&__webpage__=true&__boxModel__=true` +
+    `&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}` +
+    (session.sessionid ? `&sessionID=${session.sessionid}` : "");
+
   const resp = await safeFetchVerbose(url, {
     method: "GET",
     headers: {
@@ -1188,27 +1171,33 @@ async function fetchPageContent() {
       authorization: session.token,
       cookie: session.cookie,
       referer: session.entryUrl,
+      sessionid: session.sessionid,
       "user-agent": "Mozilla/5.0",
       "x-requested-with": "XMLHttpRequest",
     },
   }, "PAGE_CONTENT");
 
+  console.log("📡 page_content status:", resp.status);
   const raw = resp.text || "";
   let html = raw;
-  if (resp.json?.html) html = resp.json.html;
+  if (resp.json?.html) {
+    html = resp.json.html;
+    console.log("✅ JSON parsed, html length:", html.length);
+  }
 
-  const $ = cheerio.load(html);
+  const $ = cheerio.load(html || "");
+  console.log("🔍 Tables found:", $("table").length);
   const rows = [];
   $("table tr").each((i, tr) => {
     const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
     if (cols.length > 0) rows.push(cols);
   });
-  console.log("📊 Parsed rows:", rows.length);
-  if (rows.length > 0) console.log("🔎 First 5 rows:", rows.slice(0, 5));
+  console.log("📊 Tổng số dòng parsed:", rows.length);
+  console.log("🔎 5 dòng đầu:", rows.slice(0, 5));
   return rows;
 }
 
-/ ======= Main flow =======
+// ======= Main flow =======
 async function fetchWOWBUY() {
   const s = await loginWOWBUY();
   if (!s) {
@@ -1229,14 +1218,18 @@ async function getTenantAccessToken() {
 }
 
 async function getSheetId(token) {
-  const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${LARK_SHEET_TOKEN}/sheets_query`;
+  const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
   const resp = await axios.get(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
   const sheets = resp.data.data.sheets;
   if (sheets && sheets.length > 0) {
-    // Lấy ID của sheet đầu tiên, hoặc tìm theo tên nếu cần
-    return sheets[0].sheet_id; // Hoặc tìm theo title: sheets.find(s => s.title === 'Tên tab').sheet_id
+    const targetSheet = sheets.find(s => s.title === 'Test');
+    if (targetSheet) {
+      console.log("📋 Found sheet ID for tab 'Test':", targetSheet.sheet_id);
+      return targetSheet.sheet_id;
+    }
+    throw new Error("No sheet found with title 'Test'");
   }
   throw new Error("No sheets found in spreadsheet");
 }
@@ -1249,7 +1242,7 @@ async function writeToLark(tableData) {
   try {
     const token = await getTenantAccessToken();
     const sheetId = await getSheetId(token);
-    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
+    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
     const body = { valueRange: { range: `${sheetId}!J1`, values: tableData } };
 
     const resp = await axios.put(url, body, {
@@ -1261,6 +1254,7 @@ async function writeToLark(tableData) {
   }
 }
 
+// ========= Cron =========
 cron.schedule("*/60 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
