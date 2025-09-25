@@ -861,9 +861,9 @@ cron.schedule(
 const SPREADSHEET_TOKEN_NEW = "LYYqsXmnPhwwGHtKP00lZ1IWgDb";
 const SHEET_ID_NEW = "3UQxbQ";
 
-// ===== 1. Lấy values động: đọc B1:H5000, tìm lastRow theo cột D (index 2 trong B..H) =====
+// ===== 1. Lấy values động: đọc B1:H200, tìm lastRow theo cột D (index 2 trong B..H) =====
 async function getSheetValuesDynamic(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN = SPREADSHEET_TOKEN_NEW, SHEET_ID = SHEET_ID_NEW) {
-  const CHECK_RANGE = `${SHEET_ID}!B1:H2000`; // đủ rộng để cover hết dữ liệu
+  const CHECK_RANGE = `${SHEET_ID}!B1:H200`; // đủ rộng để cover hết dữ liệu
   const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(
     CHECK_RANGE
   )}?valueRenderOption=FormattedValue`;
