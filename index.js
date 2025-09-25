@@ -1208,7 +1208,7 @@ async function fetchPageContent() {
   return rows;
 }
 
-======= Main flow =======
+// ======= Main flow =======
 async function fetchWOWBUY() {
   const s = await loginWOWBUY();
   if (!s) {
