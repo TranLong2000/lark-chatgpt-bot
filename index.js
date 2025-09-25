@@ -440,7 +440,7 @@ async function getBrandStockList(token) {
   try {
     const freshToken = await getAppAccessToken();
     // lấy đủ range tới AD (cột 30)
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_RAW}/values/${encodeURIComponent(`${SHEET_ID_RAW}!A:AD`)}`;
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_RAW}/values/${encodeURIComponent(`${SHEET_ID_RAW}!A:AM`)}`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${freshToken}` },
       timeout: 20000,
