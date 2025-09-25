@@ -786,6 +786,41 @@ async function uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer) {
   return res.data.data.image_key;
 }
 
+/* ==================================================
+   Debug: In ra toàn bộ group bot đang tham gia
+   ================================================== */
+
+async function listAllGroups(APP_ACCESS_TOKEN) {
+  try {
+    let pageToken = null;
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = new URL(`${process.env.LARK_DOMAIN}/open-apis/im/v1/chats`);
+      if (pageToken) url.searchParams.append("page_token", pageToken);
+      url.searchParams.append("page_size", "50");
+
+      const res = await axios.get(url.toString(), {
+        headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
+      });
+
+      const items = res.data?.data?.items || [];
+      for (const g of items) {
+        console.log(`📌 Group: ${g.name} | chat_id=${g.chat_id}`);
+      }
+
+      hasMore = res.data?.data?.has_more;
+      pageToken = res.data?.data?.page_token;
+    }
+  } catch (err) {
+    console.error("❌ [listAllGroups] Lỗi:", err?.response?.data || err.message);
+  }
+}
+
+// 👉 Gọi thử sau khi lấy được APP_ACCESS_TOKEN
+// const APP_ACCESS_TOKEN = await getAppAccessToken();
+// await listAllGroups(APP_ACCESS_TOKEN);
+
 // ===== Gửi ảnh vào group (nhiều chatId) =====
 async function sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS, imageKey) {
   if (!Array.isArray(LARK_GROUP_CHAT_IDS)) return;
