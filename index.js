@@ -436,10 +436,22 @@ async function getTotalStock(token) {
 }
 
 // ====================== GET WAREHOUSE STOCK FOR SPECIFIC BRANDS ======================
+
+// Hàm format ngày sang dd/mm/yyyy
+function formatDateVN(value) {
+  if (!value) return "-";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value; // nếu parse không được thì giữ nguyên
+  const day = d.getDate().toString().padStart(2, "0");
+  const month = (d.getMonth() + 1).toString().padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
 async function getBrandStockList(token) {
   try {
     const freshToken = await getAppAccessToken();
-    // lấy đủ range tới AD (cột 30)
+    // cần lấy tới cột AM (index 38)
     const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_RAW}/values/${encodeURIComponent(`${SHEET_ID_RAW}!A:AM`)}`;
     const resp = await axios.get(url, {
       headers: { Authorization: `Bearer ${freshToken}` },
@@ -479,14 +491,29 @@ async function getBrandStockList(token) {
 
     if (!filtered.length) return "⚠ Không có SKU nào match điều kiện.";
 
-    let msg = "📦 Danh sách tồn kho (Binh Tan Warehouse):\n";
+    // Gom nhóm theo brand
+    const grouped = {};
     filtered.forEach(r => {
-      const product = r[COL.F] || "(No name)";
-      const stock   = r[COL.H] || "0";
-      const poComing= r[COL.AC] || "0";
-      const dayComing = r[COL.AD] || "-";
-      msg += `- ${product}: ${stock} - ${poComing} - ${dayComing}\n`;
+      const brand = (r[COL.AM] || "").trim();
+      if (!grouped[brand]) grouped[brand] = [];
+      grouped[brand].push({
+        product: r[COL.F] || "(No name)",
+        stock: r[COL.H] || "0",
+        poComing: r[COL.AC] || "0",
+        dayComing: formatDateVN(r[COL.AD])
+      });
     });
+
+    // Format message
+    let msg = "📦 Danh sách tồn kho (Binh Tan Warehouse):\n";
+    for (const brand of brandList) {
+      if (grouped[brand] && grouped[brand].length) {
+        msg += `\n🔹 *${brand}*\n`;
+        grouped[brand].forEach(r => {
+          msg += `- ${r.product}: ${r.stock} + ${r.poComing} - ${r.dayComing}\n`;
+        });
+      }
+    }
 
     return msg;
   } catch (err) {
