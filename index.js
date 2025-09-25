@@ -862,12 +862,15 @@ app.use(bodyParser.json());
 // ========= CONFIG =========
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
-const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe"; // Spreadsheet token từ URL
-const LARK_TAB_TITLE = "Test"; // Tên tab cần ghi dữ liệu
+const SPREADSHEET_TOKEN_TEST = process.env.SPREADSHEET_TOKEN_TEST;
+const SHEET_ID_TEST = process.env.SHEET_ID_TEST;
 
-const BASE_URL = "https://report.wowbuy.ai";
+const WOWBUY_BASEURL = process.env.WOWBUY_BASEURL;
 const WOWBUY_USERNAME = process.env.WOWBUY_USERNAME;
 const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
+
+// Chọn báo cáo mong muốn (có thể thay đổi nếu cần báo cáo khác)
+const TARGET_REPORT = "Purchase Plan";
 
 let session = {
   token: null,
@@ -878,65 +881,364 @@ let session = {
 };
 
 // ======= Debug / Cookie helpers =======
-// (Giữ nguyên các hàm này từ code cũ của bạn)
+function truncate(str = "", len = 40) {
+  return str.length > len ? str.slice(0, len) + "..." : str;
+}
+
+function maskValue(v) {
+  if (!v) return v;
+  const s = String(v);
+  return s.length <= 24 ? s : s.slice(0, 8) + "..." + s.slice(-6);
+}
+
+function maskCookieString(cookieStr = "") {
+  return cookieStr
+    .split(";")
+    .map(p => {
+      const pair = p.trim();
+      if (!pair) return "";
+      const eq = pair.indexOf("=");
+      if (eq === -1) return pair;
+      const k = pair.slice(0, eq);
+      const v = pair.slice(eq + 1);
+      if (/fine_auth_token|accessToken|Authorization|auth_token|token|password|fineMarkId|last_login_info/i.test(k)) {
+        return `${k}=${maskValue(v)}`;
+      }
+      return `${k}=${v}`;
+    })
+    .filter(Boolean)
+    .join("; ");
+}
+
+function buildCookieHeaderFromSetCookieArray(setCookieArray) {
+  if (!setCookieArray) return "";
+  return Array.isArray(setCookieArray) ? setCookieArray.map(c => c.split(";")[0].trim()).filter(Boolean).join("; ") : "";
+}
+
+function parseSetCookieArrayToObj(setCookieArray) {
+  const out = {};
+  if (!setCookieArray) return out;
+  (Array.isArray(setCookieArray) ? setCookieArray : [setCookieArray]).forEach(c => {
+    const first = String(c).split(";")[0].trim();
+    const eq = first.indexOf("=");
+    if (eq > -1) out[first.slice(0, eq).trim()] = first.slice(eq + 1);
+  });
+  return out;
+}
+
+function cookieStringToObj(cookieStr = "") {
+  const out = {};
+  if (!cookieStr) return out;
+  cookieStr.split(";").map(p => p.trim()).forEach(pair => {
+    if (!pair) return;
+    const eq = pair.indexOf("=");
+    if (eq !== -1) out[pair.slice(0, eq)] = pair.slice(eq + 1);
+  });
+  return out;
+}
+
+function mergeCookieStringWithObj(cookieStr = "", cookieObj = {}) {
+  const base = cookieStringToObj(cookieStr);
+  Object.keys(cookieObj).forEach(k => base[k] = cookieObj[k]);
+  return Object.keys(base).map(k => `${k}=${base[k]}`).join("; ");
+}
 
 function extractSessionIDFromHtml(html) {
-  // (Giữ nguyên)
+  const regex = /FR\.SessionMgr\.register\('([^']+)'\)/;
+  const match = html.match(regex);
+  if (match && match[1]) return match[1];
+
+  const regex2 = /currentSessionID\s*=\s*'([^']+)'/;
+  const match2 = html.match(regex2);
+  if (match2 && match2[1]) return match2[1];
+
+  return null;
 }
 
 async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
-  // (Giữ nguyên)
+  opts.headers = opts.headers || {};
+  const method = (opts.method || "GET").toUpperCase();
+
+  const headersMasked = {};
+  Object.keys(opts.headers).forEach(k => {
+    const v = opts.headers[k];
+    if (/cookie|authorization|set-cookie|token|password/i.test(k)) {
+      headersMasked[k] = maskCookieString(String(v));
+    } else {
+      headersMasked[k] = String(v);
+    }
+  });
+
+  let res;
+  try {
+    res = await fetch(url, opts);
+  } catch (err) {
+    throw err;
+  }
+
+  const respHeaders = {};
+  res.headers.forEach((v, k) => (respHeaders[k] = v));
+
+  let setCookieArray = [];
+  const single = res.headers.get("set-cookie");
+  if (single) setCookieArray = [single];
+
+  const respMasked = {};
+  Object.keys(respHeaders).forEach(k => {
+    const v = respHeaders[k];
+    if (/set-cookie|cookie|authorization|token/i.test(k)) {
+      respMasked[k] = maskCookieString(String(v));
+    } else {
+      respMasked[k] = String(v);
+    }
+  });
+
+  const text = await res.text().catch(() => "");
+  let parsed = null;
+  try { parsed = JSON.parse(text); } catch (_) {}
+
+  return { res, status: res.status, headers: respHeaders, setCookieArray, text, json: parsed };
 }
 
-// ======= LOGIN & REFRESH =======
-// (Giữ nguyên loginWOWBUY, doTokenRefresh, getReportId, initWOWBUYSession, submitReportForm, fetchPageContent từ code cũ)
+async function loginWOWBUY() {
+  console.log("🔐 Login WOWBUY...");
+  try {
+    const url = `${WOWBUY_BASEURL}/webroot/decision/login`;
+    const bodyObj = { username: WOWBUY_USERNAME, password: WOWBUY_PASSWORD, validity: -2, sliderToken: "", origin: "", encrypted: true };
 
+    const loginResp = await safeFetchVerbose(url, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/json",
+        origin: WOWBUY_BASEURL,
+        referer: `${WOWBUY_BASEURL}/webroot/decision/login`,
+        "x-requested-with": "XMLHttpRequest",
+        "user-agent": "Mozilla/5.0 (Node)",
+      },
+      body: JSON.stringify(bodyObj),
+    }, "LOGIN");
+
+    session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || "");
+    if (loginResp.json?.data?.accessToken) session.token = loginResp.json.data.accessToken;
+    else throw new Error("No accessToken in LOGIN response");
+
+    if (session.token) await doTokenRefresh(session.token, session.cookie);
+
+    // Lấy danh sách báo cáo để tìm UUID
+    await getReportId();
+
+    if (!session.entryUrl) {
+      console.warn("⚠️ entryUrl not set, using default Purchase Plan UUID");
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
+    }
+
+    console.log("📥 entryUrl:", session.entryUrl);
+    console.log("📡 ENTRY ACCESS to fetch sessionID...");
+    const entryResp = await safeFetchVerbose(session.entryUrl, {
+      method: "GET",
+      headers: {
+        cookie: session.cookie,
+        authorization: `Bearer ${session.token}`,
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
+        referer: `${WOWBUY_BASEURL}/webroot/decision`,
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      },
+    }, "ENTRY_ACCESS");
+
+    if (entryResp.text) {
+      const sid = extractSessionIDFromHtml(entryResp.text);
+      if (sid) {
+        session.sessionid = sid;
+        console.log("🆔 sessionID extracted:", session.sessionid);
+      } else {
+        console.warn("⚠️ Failed to extract sessionID from HTML. Checking HTML:", truncate(entryResp.text, 500));
+      }
+    } else {
+      console.warn("⚠️ No response text available to extract sessionID");
+    }
+
+    session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(entryResp.setCookieArray));
+    session.lastLogin = Date.now();
+    return session;
+  } catch (err) {
+    console.error("❌ login error:", err.message);
+    return null;
+  }
+}
+
+async function getReportId() {
+  console.log("📡 GETTING REPORT TREE...");
+  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
+  const resp = await safeFetchVerbose(url, {
+    method: "GET",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  }, "GET_REPORTS");
+
+  if (resp.json?.data) {
+    console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
+    const report = resp.json.data.find(item => item.text === TARGET_REPORT);
+    if (report) {
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
+      console.log("📋 Selected entryUrl:", session.entryUrl);
+    } else {
+      console.warn("⚠️ No report found with text:", TARGET_REPORT);
+    }
+  } else {
+    console.warn("⚠️ No data in report tree response");
+  }
+}
+
+async function doTokenRefresh(token, cookieHeader) {
+  const url = `${WOWBUY_BASEURL}/webroot/decision/token/refresh`;
+  const body = { oldToken: token, tokenTimeOut: 1209600000 };
+
+  const refreshResp = await safeFetchVerbose(url, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      cookie: cookieHeader,
+      origin: WOWBUY_BASEURL,
+      referer: session.entryUrl,
+      "x-requested-with": "XMLHttpRequest",
+      "user-agent": "Mozilla/5.0 (Node)",
+    },
+    body: JSON.stringify(body),
+  }, "TOKEN_REFRESH");
+
+  if (refreshResp.json?.data?.accessToken) {
+    session.token = refreshResp.json.data.accessToken;
+    session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(refreshResp.setCookieArray));
+  }
+  return true;
+}
+
+async function initWOWBUYSession() {
+  const steps = [
+    { name: "resource", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
+    { name: "fr_paramstpl", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
+    { name: "fr_dialog", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, method: "POST", body: "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
+    { name: "collect", url: `${WOWBUY_BASEURL}/webroot/decision/preview/info/collect`, method: "POST", body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
+  ];
+
+  for (const step of steps) {
+    await safeFetchVerbose(step.url, {
+      method: step.method || "GET",
+      headers: { authorization: session.token, cookie: session.cookie, ...(step.headers || {}) },
+      body: step.body,
+    }, `INIT:${step.name}`);
+  }
+}
+
+async function submitReportForm() {
+  console.log("📤 Submitting report form...");
+  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
+  const today = new Date();
+  const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
+  const endDate = today.toISOString().split('T')[0];
+  const formData = {
+    SD: startDate,
+    ED: endDate,
+    SALE_STATUS: "On sale",
+    WH: "",
+    SKUSN: "",
+    KS: "",
+    SN: "",
+  };
+
+  const resp = await safeFetchVerbose(formUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      referer: session.entryUrl,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body: new URLSearchParams(formData).toString(),
+  }, "SUBMIT_FORM");
+
+  if (resp.status === 200) {
+    console.log("✅ Form submitted successfully");
+  } else {
+    console.warn("⚠️ Form submit failed with status:", resp.status);
+  }
+  return resp;
+}
+
+async function fetchPageContent() {
+  console.log("📡 Fetching page content...");
+  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
+  const resp = await safeFetchVerbose(url, {
+    method: "GET",
+    headers: {
+      accept: "text/html, */*; q=0.01",
+      "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
+      authorization: session.token,
+      cookie: session.cookie,
+      referer: session.entryUrl,
+      "user-agent": "Mozilla/5.0",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  }, "PAGE_CONTENT");
+
+  const raw = resp.text || "";
+  let html = raw;
+  if (resp.json?.html) html = resp.json.html;
+
+  const $ = cheerio.load(html);
+  const rows = [];
+  $("table tr").each((i, tr) => {
+    const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
+    if (cols.length > 0) rows.push(cols);
+  });
+  console.log("📊 Parsed rows:", rows.length);
+  if (rows.length > 0) console.log("🔎 First 5 rows:", rows.slice(0, 5));
+  return rows;
+}
+
+======= Main flow =======
 async function fetchWOWBUY() {
-  console.log("📥 Đang lấy dữ liệu Stock (lần 1/3)...");
   const s = await loginWOWBUY();
   if (!s) {
     console.error("❌ Aborting: login failed");
     return [];
   }
   await initWOWBUYSession();
-  await submitReportForm();
   return await fetchPageContent();
 }
 
-// ======= Lark =========
+// ========= Lark =========
 async function getTenantAccessToken() {
-  try {
-    const resp = await axios.post(
-      "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
-      { app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }
-    );
-    return resp.data.tenant_access_token;
-  } catch (err) {
-    console.error("❌ Lỗi lấy tenant_access_token:", err.message);
-    throw err;
-  }
+  const resp = await axios.post(
+    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
+    { app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }
+  );
+  return resp.data.tenant_access_token;
 }
 
 async function getSheetId(token) {
-  try {
-    const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${LARK_SHEET_TOKEN}/sheets_query`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const sheets = resp.data.data.sheets;
-    if (sheets && sheets.length > 0) {
-      const targetSheet = sheets.find(s => s.title === LARK_TAB_TITLE);
-      if (targetSheet) {
-        console.log("📋 Found sheet ID for tab 'Test':", targetSheet.sheet_id);
-        return targetSheet.sheet_id;
-      }
-      throw new Error(`No sheet found with title '${LARK_TAB_TITLE}'`);
-    }
-    throw new Error("No sheets found in spreadsheet");
-  } catch (err) {
-    console.error("❌ Lỗi lấy sheet ID:", err.message, " - Response:", err.response?.data);
-    throw err;
+  const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${LARK_SHEET_TOKEN}/sheets_query`;
+  const resp = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const sheets = resp.data.data.sheets;
+  if (sheets && sheets.length > 0) {
+    // Lấy ID của sheet đầu tiên, hoặc tìm theo tên nếu cần
+    return sheets[0].sheet_id; // Hoặc tìm theo title: sheets.find(s => s.title === 'Tên tab').sheet_id
   }
+  throw new Error("No sheets found in spreadsheet");
 }
 
 async function writeToLark(tableData) {
@@ -953,18 +1255,13 @@ async function writeToLark(tableData) {
     const resp = await axios.put(url, body, {
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     });
-    if (resp.data.code === 0) {
-      console.log("✅ Ghi dữ liệu vào Lark Sheet thành công! Status:", resp.status);
-    } else {
-      console.error("❌ Lỗi từ Lark API:", resp.data.code, " - Msg:", resp.data.msg);
-    }
+    console.log("✅ Ghi dữ liệu vào Lark Sheet thành công! Status:", resp.status);
   } catch (err) {
     console.error("❌ Lỗi ghi Lark Sheet:", err.message, " - Response:", err.response?.data);
   }
 }
 
-// ========= Cron =========
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("*/60 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
