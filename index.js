@@ -717,12 +717,6 @@ async function sendRebateReport() {
    SECTION: Cron gửi ảnh từ Sheet + Debug list groups
    ================================================== */
 
-const path = require("path");
-const axios = require("axios");
-const cron = require("node-cron");
-const { createCanvas, registerFont } = require("canvas");
-const { File, FormData, Blob } = require("formdata-node"); // dùng polyfill bạn đã có
-
 // Đăng ký font (file nằm cùng cấp index.js)
 const fontPath = path.join(__dirname, "NotoSans-Regular.ttf");
 registerFont(fontPath, { family: "NotoSans" });
@@ -749,7 +743,6 @@ function renderTableToImage(values) {
       const y = i * cellHeight;
 
       let bgColor = "#ffffff";
-      if (i === 1 && j === 4) bgColor = "#ccffcc"; // highlight E2
 
       ctx.fillStyle = bgColor;
       ctx.fillRect(x, y, cellWidth, cellHeight);
@@ -901,14 +894,14 @@ cron.schedule(
 );
 
 /* ==================================================
-   SECTION NEW — Cron gửi hình B1:H đến dòng cuối cột D
+   SECTION NEW — Cron gửi hình T1:Z đến dòng cuối cột V
    ================================================== */
 
 const SPREADSHEET_TOKEN_NEW = "LYYqsXmnPhwwGHtKP00lZ1IWgDb";
 const SHEET_ID_NEW = "3UQxbQ";
 
 async function getSheetValuesDynamic(APP_ACCESS_TOKEN) {
-  const CHECK_RANGE = `${SHEET_ID_NEW}!B1:H200`;
+  const CHECK_RANGE = `${SHEET_ID_NEW}!T1:Z200`;
   const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_NEW}/values/${encodeURIComponent(
     CHECK_RANGE
   )}?valueRenderOption=FormattedValue`;
@@ -924,15 +917,17 @@ async function getSheetValuesDynamic(APP_ACCESS_TOKEN) {
   const allValues = res.data.data.valueRange.values;
   let lastRow = 0;
 
+  // V nằm ở index 2 trong T..Z
   allValues.forEach((row, idx) => {
-    const cellD = row[2]; // D = index 2 trong B..H
-    if (cellD !== undefined && cellD !== "") {
+    const cellV = row[2]; 
+    if (cellV !== undefined && cellV !== "") {
       lastRow = idx + 1;
     }
   });
 
-  if (lastRow === 0) throw new Error("Cột D không có dữ liệu");
+  if (lastRow === 0) throw new Error("Cột V không có dữ liệu");
 
+  // Cắt từ T..Z (7 cột) đến dòng cuối
   return allValues.slice(0, lastRow).map((row) => {
     const out = [];
     for (let i = 0; i < 7; i++) {
@@ -960,7 +955,7 @@ cron.schedule(
       const APP_ACCESS_TOKEN = await getAppAccessToken();
       await listAllGroups(APP_ACCESS_TOKEN); // 👈 log ra group bot đang ở
       await sendDynamicSheetAsImage(APP_ACCESS_TOKEN);
-      console.log("✅ [Cron] Đã gửi hình (B1:H tới dòng cuối cột D)!");
+      console.log("✅ [Cron] Đã gửi hình (T1:Z tới dòng cuối cột V)!");
     } catch (err) {
       console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
     }
