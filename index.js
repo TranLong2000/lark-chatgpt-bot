@@ -1068,6 +1068,34 @@ async function loginWOWBUY() {
   }
 }
 
+async function getReportId() {
+  console.log("📡 GETTING REPORT TREE...");
+  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
+  const resp = await safeFetchVerbose(url, {
+    method: "GET",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  }, "GET_REPORTS");
+
+  if (resp.json?.data) {
+    console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
+    const report = resp.json.data.find(item => item.text === TARGET_REPORT);
+    if (report) {
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
+      console.log("📋 Selected entryUrl:", session.entryUrl);
+    } else {
+      console.warn("⚠️ No report found with text:", TARGET_REPORT);
+    }
+  } else {
+    console.warn("⚠️ No data in report tree response");
+  }
+}
+
 async function doTokenRefresh(token, cookieHeader) {
   const url = `${WOWBUY_BASEURL}/webroot/decision/token/refresh`;
   const body = { oldToken: token, tokenTimeOut: 1209600000 };
@@ -1180,18 +1208,18 @@ async function fetchPageContent() {
   return rows;
 }
 
+/ ======= Main flow =======
 async function fetchWOWBUY() {
-  console.log("📥 Đang lấy dữ liệu Stock (lần 1/3)...");
   const s = await loginWOWBUY();
   if (!s) {
     console.error("❌ Aborting: login failed");
     return [];
   }
   await initWOWBUYSession();
-  await submitReportForm(); // Kích hoạt báo cáo trước khi lấy dữ liệu
   return await fetchPageContent();
 }
 
+// ========= Lark =========
 async function getTenantAccessToken() {
   const resp = await axios.post(
     "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
@@ -1200,42 +1228,36 @@ async function getTenantAccessToken() {
   return resp.data.tenant_access_token;
 }
 
-async function writeToLark(tableData) {
-  if (!tableData || tableData.length === 0) {
-    console.warn("⚠️ No data to write");
-    return;
-  }
-  const token = await getTenantAccessToken();
-  await axios.put(`https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`, { valueRange: { range: `${SHEET_ID_TEST}!J1`, values: tableData } }, {
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+async function getSheetId(token) {
+  const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${LARK_SHEET_TOKEN}/sheets_query`;
+  const resp = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
   });
+  const sheets = resp.data.data.sheets;
+  if (sheets && sheets.length > 0) {
+    // Lấy ID của sheet đầu tiên, hoặc tìm theo tên nếu cần
+    return sheets[0].sheet_id; // Hoặc tìm theo title: sheets.find(s => s.title === 'Tên tab').sheet_id
+  }
+  throw new Error("No sheets found in spreadsheet");
 }
 
-async function getReportId() {
-  console.log("📡 GETTING REPORT TREE...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
-  const resp = await safeFetchVerbose(url, {
-    method: "GET",
-    headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      authorization: `Bearer ${session.token}`,
-      cookie: session.cookie,
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "x-requested-with": "XMLHttpRequest",
-    },
-  }, "GET_REPORTS");
+async function writeToLark(tableData) {
+  if (!tableData || tableData.length === 0) {
+    console.warn("⚠️ Không có dữ liệu để ghi");
+    return;
+  }
+  try {
+    const token = await getTenantAccessToken();
+    const sheetId = await getSheetId(token);
+    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
+    const body = { valueRange: { range: `${sheetId}!J1`, values: tableData } };
 
-  if (resp.json?.data) {
-    console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
-    const report = resp.json.data.find(item => item.text === TARGET_REPORT);
-    if (report) {
-      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
-      console.log("📋 Selected entryUrl:", session.entryUrl);
-    } else {
-      console.warn("⚠️ No report found with text:", TARGET_REPORT);
-    }
-  } else {
-    console.warn("⚠️ No data in report tree response");
+    const resp = await axios.put(url, body, {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+    console.log("✅ Ghi dữ liệu vào Lark Sheet thành công! Status:", resp.status);
+  } catch (err) {
+    console.error("❌ Lỗi ghi Lark Sheet:", err.message, " - Response:", err.response?.data);
   }
 }
 
