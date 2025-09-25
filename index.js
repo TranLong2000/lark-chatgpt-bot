@@ -1281,58 +1281,37 @@ async function writeToLark(tableData) {
     // Lấy access token
     const token = await getTenantAccessToken();
 
-    // Query danh sách sheet/tab
-    const urlQuery = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
-    const respQuery = await axios.get(urlQuery, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    // URL ghi dữ liệu (v3 API)
+    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
 
-    const sheets = respQuery.data.data?.sheets || [];
-    if (sheets.length === 0) {
-      throw new Error("Không tìm thấy sheet nào trong spreadsheet");
-    }
-
-    // Map từ SHEET_ID_TEST (sheet_id trong URL) -> title
-    const match = sheets.find(s => s.sheet_id === SHEET_ID_TEST || s.title === SHEET_ID_TEST);
-    if (!match) {
-      console.error("❌ Không tìm thấy sheet với SHEET_ID_TEST =", SHEET_ID_TEST);
-      console.log("📋 Available sheets:");
-      sheets.forEach(s => console.log(`- title: ${s.title} | id: ${s.sheet_id}`));
-      return;
-    }
-
-    const targetTitle = match.title;
-
-    // URL ghi dữ liệu
-    const urlPut = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
-
+    // Body: ghi vào một range lớn J1:AZ5000
     const body = {
       valueRange: {
-        range: `${targetTitle}!J1`, // bắt đầu ghi từ ô J1
+        range: `${SHEET_ID_TEST}!J1:AZ5000`,
         values: tableData,
       },
     };
 
     console.log("========== DEBUG LARK ==========");
-    console.log("🔗 URL:", urlPut);
-    console.log("📋 Target sheet:", targetTitle, "| From sheet_id:", SHEET_ID_TEST);
+    console.log("🔗 URL:", url);
+    console.log("📋 Target range:", body.valueRange.range);
     console.log("📄 Body:", JSON.stringify(body, null, 2));
     console.log("🔑 Token:", token.slice(0, 10) + "...");
     console.log("================================");
 
-    const respPut = await axios.put(urlPut, body, {
+    const resp = await axios.post(url, body, {
       headers: {
         Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
     });
 
-    console.log("📥 Lark raw response:", respPut.data);
+    console.log("📥 Lark raw response:", resp.data);
 
-    if (respPut.data.code === 0) {
+    if (resp.data.code === 0) {
       console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
     } else {
-      console.warn("⚠️ Lark Sheet API trả lỗi:", respPut.data);
+      console.warn("⚠️ Lark Sheet API trả lỗi:", resp.data);
     }
   } catch (err) {
     console.error("❌ Lỗi ghi Lark Sheet:", err.message);
