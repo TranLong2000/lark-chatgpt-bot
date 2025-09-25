@@ -862,10 +862,10 @@ app.use(bodyParser.json());
 // ========= CONFIG =========
 const LARK_APP_ID = process.env.LARK_APP_ID;
 const LARK_APP_SECRET = process.env.LARK_APP_SECRET;
-const LARK_SHEET_TOKEN = "TGR3sdhFshWVbDt8ATllw9TNgMe";
-const LARK_TABLE_ID = "EmjelX";
+const SPREADSHEET_TOKEN_TEST = process.env.SPREADSHEET_TOKEN_TEST;
+const SHEET_ID_TEST = process.env.SHEET_ID_TEST;
 
-const BASE_URL = "https://report.wowbuy.ai";
+const WOWBUY_BASEURL = process.env.WOWBUY_BASEURL;
 const WOWBUY_USERNAME = process.env.WOWBUY_USERNAME;
 const WOWBUY_PASSWORD = process.env.WOWBUY_PASSWORD;
 
@@ -1003,7 +1003,7 @@ async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
 async function loginWOWBUY() {
   console.log("🔐 Login WOWBUY...");
   try {
-    const url = `${BASE_URL}/webroot/decision/login`;
+    const url = `${WOWBUY_BASEURL}/webroot/decision/login`;
     const bodyObj = { username: WOWBUY_USERNAME, password: WOWBUY_PASSWORD, validity: -2, sliderToken: "", origin: "", encrypted: true };
 
     const loginResp = await safeFetchVerbose(url, {
@@ -1011,8 +1011,8 @@ async function loginWOWBUY() {
       headers: {
         accept: "application/json, text/javascript, */*; q=0.01",
         "content-type": "application/json",
-        origin: BASE_URL,
-        referer: `${BASE_URL}/webroot/decision/login`,
+        origin: WOWBUY_BASEURL,
+        referer: `${WOWBUY_BASEURL}/webroot/decision/login`,
         "x-requested-with": "XMLHttpRequest",
         "user-agent": "Mozilla/5.0 (Node)",
       },
@@ -1030,7 +1030,7 @@ async function loginWOWBUY() {
 
     if (!session.entryUrl) {
       console.warn("⚠️ entryUrl not set, using default Purchase Plan UUID");
-      session.entryUrl = `${BASE_URL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
     }
 
     console.log("📥 entryUrl:", session.entryUrl);
@@ -1042,7 +1042,7 @@ async function loginWOWBUY() {
         authorization: `Bearer ${session.token}`,
         accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
-        referer: `${BASE_URL}/webroot/decision`,
+        referer: `${WOWBUY_BASEURL}/webroot/decision`,
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       },
     }, "ENTRY_ACCESS");
@@ -1069,7 +1069,7 @@ async function loginWOWBUY() {
 }
 
 async function doTokenRefresh(token, cookieHeader) {
-  const url = `${BASE_URL}/webroot/decision/token/refresh`;
+  const url = `${WOWBUY_BASEURL}/webroot/decision/token/refresh`;
   const body = { oldToken: token, tokenTimeOut: 1209600000 };
 
   const refreshResp = await safeFetchVerbose(url, {
@@ -1079,7 +1079,7 @@ async function doTokenRefresh(token, cookieHeader) {
       "content-type": "application/json",
       authorization: `Bearer ${token}`,
       cookie: cookieHeader,
-      origin: BASE_URL,
+      origin: WOWBUY_BASEURL,
       referer: session.entryUrl,
       "x-requested-with": "XMLHttpRequest",
       "user-agent": "Mozilla/5.0 (Node)",
@@ -1096,10 +1096,10 @@ async function doTokenRefresh(token, cookieHeader) {
 
 async function initWOWBUYSession() {
   const steps = [
-    { name: "resource", url: `${BASE_URL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
-    { name: "fr_paramstpl", url: `${BASE_URL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
-    { name: "fr_dialog", url: `${BASE_URL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, method: "POST", body: "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
-    { name: "collect", url: `${BASE_URL}/webroot/decision/preview/info/collect`, method: "POST", body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
+    { name: "resource", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
+    { name: "fr_paramstpl", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
+    { name: "fr_dialog", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, method: "POST", body: "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
+    { name: "collect", url: `${WOWBUY_BASEURL}/webroot/decision/preview/info/collect`, method: "POST", body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
   ];
 
   for (const step of steps) {
@@ -1113,7 +1113,7 @@ async function initWOWBUYSession() {
 
 async function submitReportForm() {
   console.log("📤 Submitting report form...");
-  const formUrl = `${BASE_URL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
+  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
   const today = new Date();
   const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
   const endDate = today.toISOString().split('T')[0];
@@ -1151,7 +1151,7 @@ async function submitReportForm() {
 
 async function fetchPageContent() {
   console.log("📡 Fetching page content...");
-  const url = `${BASE_URL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
+  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
   const resp = await safeFetchVerbose(url, {
     method: "GET",
     headers: {
@@ -1206,14 +1206,14 @@ async function writeToLark(tableData) {
     return;
   }
   const token = await getTenantAccessToken();
-  await axios.put(`https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`, { valueRange: { range: `${LARK_TABLE_ID}!J1`, values: tableData } }, {
+  await axios.put(`https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`, { valueRange: { range: `${SHEET_ID_TEST}!J1`, values: tableData } }, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
 }
 
 async function getReportId() {
   console.log("📡 GETTING REPORT TREE...");
-  const url = `${BASE_URL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
+  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
   const resp = await safeFetchVerbose(url, {
     method: "GET",
     headers: {
@@ -1229,7 +1229,7 @@ async function getReportId() {
     console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
     const report = resp.json.data.find(item => item.text === TARGET_REPORT);
     if (report) {
-      session.entryUrl = `${BASE_URL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
       console.log("📋 Selected entryUrl:", session.entryUrl);
     } else {
       console.warn("⚠️ No report found with text:", TARGET_REPORT);
