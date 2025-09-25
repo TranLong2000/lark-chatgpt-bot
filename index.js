@@ -1210,13 +1210,21 @@ async function fetchPageContent() {
 
 // ======= Main flow =======
 async function fetchWOWBUY() {
-  const s = await loginWOWBUY();
-  if (!s) {
-    console.error("❌ Aborting: login failed");
+  try {
+    const s = await loginWOWBUY();
+    if (!s) {
+      console.error("❌ Aborting: login failed");
+      return [];
+    }
+    await initWOWBUYSession();
+    const data = await fetchPageContent();
+
+    console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
+    return data;
+  } catch (err) {
+    console.error("❌ Lỗi trong fetchWOWBUY:", err.message, err.stack);
     return [];
   }
-  await initWOWBUYSession();
-  return await fetchPageContent();
 }
 
 /**
@@ -1229,13 +1237,15 @@ async function getTenantAccessToken() {
       { app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }
     );
     if (resp.data?.tenant_access_token) {
-      console.log("🔑 Tenant access token retrieved:", resp.data.tenant_access_token.slice(0, 10) + "...");
-      return resp.data.tenant_access_token;
+      const token = resp.data.tenant_access_token;
+      console.log("🔑 Tenant access token retrieved:", token.slice(0, 10) + "...");
+      return token;
     } else {
       throw new Error("Không nhận được tenant access token từ Lark");
     }
   } catch (err) {
     console.error("❌ Lỗi lấy tenant access token:", err.message);
+    if (err.response) console.error("📥 Error response:", err.response.data);
     throw err;
   }
 }
@@ -1250,6 +1260,8 @@ async function writeToLark(tableData) {
     return;
   }
 
+  console.log("🚀 Bắt đầu ghi dữ liệu vào Lark...");
+
   try {
     // Lấy access token
     const token = await getTenantAccessToken();
@@ -1263,11 +1275,11 @@ async function writeToLark(tableData) {
       },
     };
 
-    console.log("========== DEBUG LARK ==========");
+    console.log("========== DEBUG LARK REQUEST ==========");
     console.log("🔗 URL:", urlPut);
     console.log("📄 Body:", JSON.stringify(body, null, 2));
     console.log("🔑 Token:", token.slice(0, 10) + "...");
-    console.log("================================");
+    console.log("========================================");
 
     const respPut = await axios.put(urlPut, body, {
       headers: {
@@ -1276,7 +1288,7 @@ async function writeToLark(tableData) {
       },
     });
 
-    console.log("📥 Response:", respPut.data);
+    console.log("📥 Lark raw response:", JSON.stringify(respPut.data, null, 2));
 
     if (respPut.data.code === 0) {
       console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
@@ -1286,7 +1298,9 @@ async function writeToLark(tableData) {
   } catch (err) {
     console.error("❌ Lỗi ghi Lark Sheet:", err.message);
     if (err.response) {
-      console.error("📥 Error response:", err.response.data);
+      console.error("📥 Error response:", JSON.stringify(err.response.data, null, 2));
+    } else {
+      console.error("❌ Không có response từ server:", err.stack);
     }
   }
 }
