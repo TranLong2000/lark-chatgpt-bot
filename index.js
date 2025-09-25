@@ -1280,19 +1280,21 @@ async function writeToLark(tableData) {
   try {
     const token = await getTenantAccessToken();
 
-    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
+    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
 
     const body = {
-      valueRange: {
-        range: `${SHEET_ID_TEST}!J1:AZ5000`,
-        values: tableData,
-      },
+      valueRanges: [
+        {
+          range: `${SHEET_ID_TEST}!J1:AZ5000`, // dùng sheet_id (ví dụ: EmjelX)
+          values: tableData,
+        },
+      ],
     };
 
     // ==== LOG NGẮN GỌN ====
     console.log("========== DEBUG LARK ==========");
     console.log("🔗 URL:", url);
-    console.log("📋 Target range:", body.valueRange.range);
+    console.log("📋 Target range:", body.valueRanges[0].range);
     console.log("📊 Data size:", tableData.length, "rows x", tableData[0]?.length || 0, "cols");
     console.log("🔑 Token:", token.slice(0, 10) + "...");
     console.log("================================");
