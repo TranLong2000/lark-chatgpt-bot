@@ -1219,49 +1219,71 @@ async function fetchWOWBUY() {
   return await fetchPageContent();
 }
 
-// ========= Lark =========
+/**
+ * Lấy tenant access token từ Lark
+ */
 async function getTenantAccessToken() {
-  const resp = await axios.post(
-    "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
-    { app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }
-  );
-  return resp.data.tenant_access_token;
-}
-
-async function getSheetId(token) {
-  const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${LARK_SHEET_TOKEN}/sheets_query`;
-  const resp = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const sheets = resp.data.data.sheets;
-  if (sheets && sheets.length > 0) {
-    // Lấy ID của sheet đầu tiên, hoặc tìm theo tên nếu cần
-    return sheets[0].sheet_id; // Hoặc tìm theo title: sheets.find(s => s.title === 'Tên tab').sheet_id
+  try {
+    const resp = await axios.post(
+      "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
+      { app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }
+    );
+    if (resp.data?.tenant_access_token) {
+      console.log("🔑 Tenant access token retrieved:", resp.data.tenant_access_token.slice(0, 10) + "...");
+      return resp.data.tenant_access_token;
+    } else {
+      throw new Error("Không nhận được tenant access token từ Lark");
+    }
+  } catch (err) {
+    console.error("❌ Lỗi lấy tenant access token:", err.message);
+    throw err;
   }
-  throw new Error("No sheets found in spreadsheet");
 }
 
+/**
+ * Ghi dữ liệu vào Lark Sheet
+ * tableData: mảng 2 chiều [[col1, col2, ...], [col1, col2, ...], ...]
+ */
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) {
-    console.warn("⚠️ Không có dữ liệu để ghi");
+    console.warn("⚠️ Không có dữ liệu để ghi vào Lark Sheet");
     return;
   }
-  try {
-    const token = await getTenantAccessToken();
-    const sheetId = await getSheetId(token);
-    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${LARK_SHEET_TOKEN}/values`;
-    const body = { valueRange: { range: `${sheetId}!J1`, values: tableData } };
 
-    const resp = await axios.put(url, body, {
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  try {
+    // Lấy access token
+    const token = await getTenantAccessToken();
+
+    // URL ghi dữ liệu
+    const urlPut = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
+
+    const body = {
+      valueRange: {
+        range: `${SHEET_ID_TEST}!J1`, // ⚠️ SHEET_ID_TEST giờ là tên tab
+        values: tableData,
+      },
+    };
+
+    console.log(`📡 Sending ${tableData.length} rows to Lark Sheet (Tab: ${SHEET_ID_TEST})...`);
+
+    const respPut = await axios.put(urlPut, body, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
     });
-    console.log("✅ Ghi dữ liệu vào Lark Sheet thành công! Status:", resp.status);
+
+    if (respPut.data.code === 0) {
+      console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!", respPut.data);
+    } else {
+      console.warn("⚠️ Lark Sheet API trả lỗi:", respPut.data);
+    }
   } catch (err) {
-    console.error("❌ Lỗi ghi Lark Sheet:", err.message, " - Response:", err.response?.data);
+    console.error("❌ Lỗi ghi Lark Sheet:", err.message, " - Response:", err.response?.data || err.response);
   }
 }
 
-cron.schedule("*/60 * * * *", async () => {
+cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
