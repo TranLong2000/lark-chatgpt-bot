@@ -1250,6 +1250,20 @@ async function getTenantAccessToken() {
   }
 }
 
+async function listSheets() {
+  const token = await getTenantAccessToken();
+  const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
+
+  const resp = await axios.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  console.log("📋 Available sheets:");
+  resp.data.data.sheets.forEach(s => {
+    console.log(`- title: ${s.title} | id: ${s.sheet_id}`);
+  });
+}
+
 /**
  * Ghi dữ liệu vào Lark Sheet
  * tableData: mảng 2 chiều [[col1, col2, ...], [col1, col2, ...], ...]
