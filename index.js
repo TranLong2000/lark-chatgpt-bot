@@ -435,93 +435,6 @@ async function getTotalStock(token) {
   return null;
 }
 
-// ====================== GET WAREHOUSE STOCK FOR SPECIFIC BRANDS ======================
-
-// Hàm format ngày sang dd/mm/yyyy
-function formatDateVN(value) {
-  if (!value) return "-";
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return value; // nếu parse không được thì giữ nguyên
-  const day = d.getDate().toString().padStart(2, "0");
-  const month = (d.getMonth() + 1).toString().padStart(2, "0");
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
-}
-
-async function getBrandStockList(token) {
-  try {
-    const freshToken = await getAppAccessToken();
-    // cần lấy tới cột AM (index 38)
-    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_RAW}/values/${encodeURIComponent(`${SHEET_ID_RAW}!A:AM`)}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${freshToken}` },
-      timeout: 20000,
-      params: {
-        valueRenderOption: 'FormattedValue',
-        dateTimeRenderOption: 'FormattedString'
-      }
-    });
-
-    const rows = resp.data?.data?.valueRange?.values || [];
-    if (rows.length <= 1) return "⚠ Không có dữ liệu.";
-
-    // Map cột (index tính từ 0)
-    const COL = {
-      F: 5,    // tên sản phẩm
-      G: 6,    // kho
-      H: 7,    // tồn kho
-      AC: 28,  // PO coming
-      AD: 29,  // Day coming
-      AL: 37,  // finalStatus
-      AM: 38   // Brand
-    };
-
-    const brandList = ["Lao Jie Kou", "Vetrue", "BAOBEIDIDAI", "Mr.x Dim", "Jia Xiang"];
-
-    const filtered = rows.slice(1).filter(r => {
-      const status = (r[COL.AL] || "").trim();
-      const brand  = (r[COL.AM] || "").trim();
-      const wh     = (r[COL.G] || "").trim();
-      return (
-        status === "On sale" &&
-        brandList.includes(brand) &&
-        wh === "Binh Tan Warehouse"
-      );
-    });
-
-    if (!filtered.length) return "⚠ Không có SKU nào match điều kiện.";
-
-    // Gom nhóm theo brand
-    const grouped = {};
-    filtered.forEach(r => {
-      const brand = (r[COL.AM] || "").trim();
-      if (!grouped[brand]) grouped[brand] = [];
-      grouped[brand].push({
-        product: r[COL.F] || "(No name)",
-        stock: r[COL.H] || "0",
-        poComing: r[COL.AC] || "0",
-        dayComing: formatDateVN(r[COL.AD])
-      });
-    });
-
-    // Format message
-    let msg = "📦 Danh sách tồn kho (Binh Tan Warehouse):\n";
-    for (const brand of brandList) {
-      if (grouped[brand] && grouped[brand].length) {
-        msg += `\n🔹 *${brand}*\n`;
-        grouped[brand].forEach(r => {
-          msg += `- ${r.product}: ${r.stock} + ${r.poComing} - ${r.dayComing}\n`;
-        });
-      }
-    }
-
-    return msg;
-  } catch (err) {
-    console.error("❌ getBrandStockList error:", err?.message || err);
-    return "❌ Lỗi khi lấy dữ liệu.";
-  }
-}
-
 // ====================== SEND MESSAGE ======================
 async function sendMessageToGroup(token, chatId, messageText) {
   try {
@@ -555,17 +468,15 @@ async function checkTotalStockChange() {
     ) {
       console.log(`🔄 TotalStock thay đổi: ${lastTotalStock} → ${currentTotalStock}`);
 
-      const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS_TEST)
-        ? [...new Set(GROUP_CHAT_IDS_TEST.filter(Boolean))]
+      const uniqueGroupIds = Array.isArray(GROUP_CHAT_IDS)
+        ? [...new Set(GROUP_CHAT_IDS.filter(Boolean))]
         : [];
 
-      // 1️⃣ gửi message về stock
       const stockMsg = `✅ Đã đổ Stock. Số lượng (WBT): ${currentTotalStock} thùng`;
       for (const chatId of uniqueGroupIds) {
         await sendMessageToGroup(token, chatId, stockMsg);
       }
 
-      // 2️⃣ gửi message về sales
       const salesMsg = await safeAnalyzeSalesChange(token);
       if (salesMsg && typeof salesMsg === 'string') {
         const hash = (s) => s ? String(s).slice(0, 500) : '';
@@ -577,14 +488,6 @@ async function checkTotalStockChange() {
           lastSalesMsgHash = h;
         } else {
           console.log('ℹ Sales message giống lần trước → không gửi lại');
-        }
-      }
-
-      // 3️⃣ gửi message brand + Binh Tan warehouse
-      const brandStockMsg = await getBrandStockList(token);
-      if (brandStockMsg && typeof brandStockMsg === "string") {
-        for (const chatId of uniqueGroupIds) {
-          await sendMessageToGroup(token, chatId, brandStockMsg);
         }
       }
     }
