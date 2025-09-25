@@ -1278,13 +1278,10 @@ async function writeToLark(tableData) {
   }
 
   try {
-    // Lấy access token
     const token = await getTenantAccessToken();
 
-    // URL ghi dữ liệu (v3 API)
     const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
 
-    // Body: ghi vào một range lớn J1:AZ5000
     const body = {
       valueRange: {
         range: `${SHEET_ID_TEST}!J1:AZ5000`,
@@ -1292,10 +1289,11 @@ async function writeToLark(tableData) {
       },
     };
 
+    // ==== LOG NGẮN GỌN ====
     console.log("========== DEBUG LARK ==========");
     console.log("🔗 URL:", url);
     console.log("📋 Target range:", body.valueRange.range);
-    console.log("📄 Body:", JSON.stringify(body, null, 2));
+    console.log("📊 Data size:", tableData.length, "rows x", tableData[0]?.length || 0, "cols");
     console.log("🔑 Token:", token.slice(0, 10) + "...");
     console.log("================================");
 
@@ -1306,7 +1304,7 @@ async function writeToLark(tableData) {
       },
     });
 
-    console.log("📥 Lark raw response:", resp.data);
+    console.log("📥 Lark response:", JSON.stringify(resp.data, null, 2));
 
     if (resp.data.code === 0) {
       console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
@@ -1316,7 +1314,7 @@ async function writeToLark(tableData) {
   } catch (err) {
     console.error("❌ Lỗi ghi Lark Sheet:", err.message);
     if (err.response) {
-      console.error("📥 Error response:", err.response.data);
+      console.error("📥 Error response:", JSON.stringify(err.response.data, null, 2));
     }
   }
 }
