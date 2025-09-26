@@ -1044,12 +1044,12 @@ function renderTableToImage(values) {
 
 async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
   const LARK_GROUP_CHAT_IDS_TEST =
-    process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
+    process.env.LARK_GROUP_CHAT_IDS_PC?.split(",") || [];
 
   const values = await getSheetValuesDynamic(APP_ACCESS_TOKEN);
   const buffer = renderTableToImage(values);
   const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
-  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
+  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_PC, imageKey);
 }
 
 // Cron mỗi 60 phút
