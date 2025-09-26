@@ -1449,7 +1449,7 @@ async function fetchWOWBUY() {
       return [];
     }
 
-    // 👉 gọi listSheets ngay sau login để debug/mapping
+    // 👉 Gọi listSheets để debug/mapping
     await listSheets();
 
     await initWOWBUYSession();
@@ -1487,18 +1487,17 @@ async function getTenantAccessToken() {
 }
 
 /**
- * Lấy danh sách sheet (tab) trong spreadsheet
+ * Lấy danh sách sheet (tab) trong file
  */
 async function listSheets() {
   try {
     const token = await getTenantAccessToken();
 
-    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
+    const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
 
-    const resp = await axios.post(url, {}, {
+    const resp = await axios.get(url, {
       headers: {
         Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
       },
     });
 
@@ -1509,7 +1508,7 @@ async function listSheets() {
 
     if (resp.data.code === 0) {
       resp.data.data.sheets.forEach((sheet) => {
-        console.log(`📄 Sheet title="${sheet.title}", sheet_id="${sheet.sheetId}"`);
+        console.log(`📄 Sheet title="${sheet.title}", sheet_id="${sheet.sheet_id}"`);
       });
     } else {
       console.warn("⚠️ Lark API trả lỗi:", resp.data);
@@ -1522,6 +1521,25 @@ async function listSheets() {
       console.error("📥 Error response:", JSON.stringify(err.response.data, null, 2));
     }
   }
+}
+
+// ===== Helper: Convert số cột thành tên cột Excel =====
+function columnNumberToName(n) {
+  let name = "";
+  while (n > 0) {
+    let r = (n - 1) % 26;
+    name = String.fromCharCode(65 + r) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name;
+}
+
+// ===== Helper: Giữ nguyên số/ngày/boolean, chỉ string mới để nguyên =====
+function normalizeValue(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "number" || typeof v === "boolean") return v;
+  if (!isNaN(v)) return Number(v); // "123" -> 123
+  return String(v);
 }
 
 /**
@@ -1544,7 +1562,9 @@ async function writeToLark(tableData) {
     const endColIndex = startColIndex + cols - 1;
     const endColName = columnNumberToName(endColIndex);
 
-    // ⚠️ Dùng SHEET_ID_TEST = sheetId (UUID, ví dụ: EmjelX)
+    const normalizedData = tableData.map(row => row.map(normalizeValue));
+
+    // ⚠️ SHEET_ID_TEST phải là sheet_id (ví dụ: EmjelX)
     const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
 
     const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
@@ -1553,10 +1573,9 @@ async function writeToLark(tableData) {
       valueRanges: [
         {
           range,
-          values: tableData,
+          values: normalizedData,
         },
       ],
-      valueInputOption: "USER_ENTERED", // để giữ đúng định dạng số/ngày từ nguồn
     };
 
     console.log("========== DEBUG LARK ==========");
@@ -1588,7 +1607,7 @@ async function writeToLark(tableData) {
   }
 }
 
-// ====== Cron job ======
+// ===== CRON JOB =====
 cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
