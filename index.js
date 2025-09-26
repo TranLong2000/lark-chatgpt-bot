@@ -1043,7 +1043,7 @@ function renderTableToImage(values) {
 }
 
 async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
-  const LARK_GROUP_CHAT_IDS_TEST =
+  const LARK_GROUP_CHAT_IDS_PC =
     process.env.LARK_GROUP_CHAT_IDS_PC?.split(",") || [];
 
   const values = await getSheetValuesDynamic(APP_ACCESS_TOKEN);
@@ -1054,7 +1054,7 @@ async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
 
 // Cron mỗi 60 phút
 cron.schedule(
-  "*/15 * * * *",
+  "*/10 * * * *",
   async () => {
     try {
       const APP_ACCESS_TOKEN = await getAppAccessToken();
