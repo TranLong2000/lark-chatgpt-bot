@@ -1487,25 +1487,20 @@ async function getTenantAccessToken() {
 }
 
 /**
- * Lấy danh sách sheet (tab) trong spreadsheet (v3)
+ * Lấy danh sách sheet (tab) trong spreadsheet
  */
 async function listSheets() {
   try {
     const token = await getTenantAccessToken();
 
-    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/worksheets/query`;
+    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
 
-    // ⚠️ v3 API dùng POST chứ không phải GET
-    const resp = await axios.post(
-      url,
-      { pageSize: 20 },
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const resp = await axios.post(url, {}, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    });
 
     console.log("========== DEBUG LIST SHEETS ==========");
     console.log("🔗 URL:", url);
@@ -1514,7 +1509,7 @@ async function listSheets() {
 
     if (resp.data.code === 0) {
       resp.data.data.sheets.forEach((sheet) => {
-        console.log(`📄 Sheet title="${sheet.title}", sheetId="${sheet.sheetId}"`);
+        console.log(`📄 Sheet title="${sheet.title}", sheet_id="${sheet.sheetId}"`);
       });
     } else {
       console.warn("⚠️ Lark API trả lỗi:", resp.data);
@@ -1529,19 +1524,8 @@ async function listSheets() {
   }
 }
 
-// ===== Helper: Convert số cột thành tên cột Excel =====
-function columnNumberToName(n) {
-  let name = "";
-  while (n > 0) {
-    let r = (n - 1) % 26;
-    name = String.fromCharCode(65 + r) + name;
-    n = Math.floor((n - 1) / 26);
-  }
-  return name;
-}
-
 /**
- * Ghi dữ liệu vào Lark Sheet (v3 API)
+ * Ghi dữ liệu vào Lark Sheet (v2 API)
  */
 async function writeToLark(tableData) {
   if (!tableData || tableData.length === 0) {
@@ -1560,10 +1544,10 @@ async function writeToLark(tableData) {
     const endColIndex = startColIndex + cols - 1;
     const endColName = columnNumberToName(endColIndex);
 
-    // ⚠️ SHEET_ID_TEST phải là sheetId (ví dụ: "EmjelX"), không phải title
+    // ⚠️ Dùng SHEET_ID_TEST = sheetId (UUID, ví dụ: EmjelX)
     const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
 
-    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
+    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
 
     const body = {
       valueRanges: [
@@ -1572,7 +1556,7 @@ async function writeToLark(tableData) {
           values: tableData,
         },
       ],
-      valueInputOption: "USER_ENTERED", // giữ đúng định dạng số/ngày từ hệ thống nguồn
+      valueInputOption: "USER_ENTERED", // để giữ đúng định dạng số/ngày từ nguồn
     };
 
     console.log("========== DEBUG LARK ==========");
