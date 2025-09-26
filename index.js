@@ -1513,6 +1513,7 @@ async function writeToLark(tableData) {
           values: tableData,
         },
       ],
+      valueInputOption: "RAW", // 👈 giữ nguyên kiểu dữ liệu (số, ngày...)
     };
 
     // ==== LOG NGẮN GỌN ====
