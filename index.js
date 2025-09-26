@@ -851,42 +851,29 @@ const SHEET_ID_WAREHOUSE = "nmyvvO"; // sheetId trong URL
 
 // Hàm lấy dữ liệu A10:O20 với retry
 async function getSheetValuesWarehouse(APP_ACCESS_TOKEN) {
-  const RANGE = `${SHEET_ID_WAREHOUSE}!A10:O20`;
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_WAREHOUSE}/values/${encodeURIComponent(
-    RANGE
-  )}?valueRenderOption=FormattedValue`;
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_WAREHOUSE}/sheets/${SHEET_ID_WAREHOUSE}/query`;
 
-  let retries = 10;
-  while (retries > 0) {
-    try {
-      const res = await axios.get(url, {
-        headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
-      });
-
-      if (res.data?.data?.valueRange?.values) {
-        return res.data.data.valueRange.values;
+  try {
+    const res = await axios.post(
+      url,
+      {
+        range: "A10:O20", // 👈 chỉnh range bạn muốn
+        valueRenderOption: "FormattedValue"
+      },
+      {
+        headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` }
       }
+    );
 
-      if (res.data?.code === 90235) {
-        console.warn("[getSheetValuesWarehouse] Data not ready, retrying...");
-        retries--;
-        await new Promise((r) => setTimeout(r, 10000)); // chờ 10s
-        continue;
-      }
-
-      throw new Error("Không lấy được values từ Sheet Warehouse");
-    } catch (err) {
-      if (err.response?.data?.code === 90235 && retries > 0) {
-        console.warn("[getSheetValuesWarehouse] Data not ready, retrying...");
-        retries--;
-        await new Promise((r) => setTimeout(r, 10000));
-      } else {
-        throw err;
-      }
+    if (!res.data?.data?.range?.values) {
+      throw new Error("Không lấy được values từ Sheet Warehouse (query)");
     }
-  }
 
-  throw new Error("Sheet Warehouse vẫn Data not ready sau nhiều lần retry");
+    return res.data.data.range.values;
+  } catch (err) {
+    console.error("[getSheetValuesWarehouse] Query API lỗi:", err.response?.data || err.message);
+    throw err;
+  }
 }
 
 // Hàm tổng hợp gửi ảnh
@@ -1445,6 +1432,10 @@ async function fetchWOWBUY() {
       console.error("❌ Aborting: login failed");
       return [];
     }
+
+    // 👉 gọi listSheets ngay sau login để debug/mapping
+    await listSheets();
+
     await initWOWBUYSession();
     const data = await fetchPageContent();
 
@@ -1480,9 +1471,6 @@ async function getTenantAccessToken() {
 }
 
 /**
- * Debug: In ra danh sách các sheet trong file
- */
-/**
  * Debug: In ra danh sách các sheet trong file và auto map với TARGET_REPORT
  */
 async function listSheets() {
@@ -1505,11 +1493,9 @@ async function listSheets() {
 
     if (matchedSheet) {
       console.log(`✅ Found sheet for TARGET_REPORT "${TARGET_REPORT}" → id: ${matchedSheet.sheet_id}`);
-      // Auto update biến toàn cục để writeToLark dùng luôn
       global.SHEET_ID_TEST = matchedSheet.sheet_id;
     } else {
       console.warn(`⚠️ Không tìm thấy sheet nào có title = "${TARGET_REPORT}".`);
-      console.warn("👉 Bạn cần copy đúng sheet_id từ listSheets() và set SHEET_ID_TEST.");
     }
   } catch (err) {
     console.error("❌ Lỗi gọi listSheets:", err.message);
@@ -1554,7 +1540,7 @@ async function writeToLark(tableData) {
     // ⚠️ sheetId phải đúng (ví dụ: "shtcxxxx"), không dùng title
     const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
 
-    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
+      const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
 
     const body = {
       valueRange: {
