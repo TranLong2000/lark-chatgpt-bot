@@ -894,14 +894,14 @@ cron.schedule(
 );
 
 /* ==================================================
-   SECTION NEW — Cron gửi hình T1:Z đến dòng cuối cột V
+   SECTION NEW — Cron gửi hình U1:Y đến dòng cuối cột V
    ================================================== */
 
 const SPREADSHEET_TOKEN_NEW = "LYYqsXmnPhwwGHtKP00lZ1IWgDb";
 const SHEET_ID_NEW = "3UQxbQ";
 
 async function getSheetValuesDynamic(APP_ACCESS_TOKEN) {
-  const CHECK_RANGE = `${SHEET_ID_NEW}!T1:Z200`;
+  const CHECK_RANGE = `${SHEET_ID_NEW}!U1:Y200`; // lấy U..Y
   const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_NEW}/values/${encodeURIComponent(
     CHECK_RANGE
   )}?valueRenderOption=FormattedValue`;
@@ -917,20 +917,23 @@ async function getSheetValuesDynamic(APP_ACCESS_TOKEN) {
   const allValues = res.data.data.valueRange.values;
   let lastRow = 0;
 
-  // V nằm ở index 2 trong T..Z
+  // V = cột thứ 2 trong U..Y (index = 1)
   for (let idx = 0; idx < allValues.length; idx++) {
-    const cellV = allValues[idx][2];
-    if (cellV !== undefined && cellV !== "") {
-      lastRow = idx + 1; // cập nhật dòng cuối cùng có dữ liệu
+    const cellV = allValues[idx][1];
+    if (
+      typeof cellV === "string" &&
+      cellV.trim().length > 0 // chỉ tính nếu có ký tự
+    ) {
+      lastRow = idx + 1; // cập nhật dòng cuối cùng có ký tự ở V
     }
   }
 
-  if (lastRow === 0) throw new Error("Cột V không có dữ liệu");
+  if (lastRow === 0) throw new Error("Cột V không có dữ liệu ký tự");
 
   // Slice đến lastRow, pad thiếu cột
   const values = allValues.slice(0, lastRow).map((row) => {
     const out = [];
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 5; i++) {
       out.push(row[i] !== undefined ? row[i] : "");
     }
     return out;
@@ -939,23 +942,21 @@ async function getSheetValuesDynamic(APP_ACCESS_TOKEN) {
   return values;
 }
 
-// Hàm render auto width
+// Hàm render auto width (giữ nguyên như trước)
 function renderTableToImage(values) {
   const cellHeight = 40;
   const rows = values.length;
   const cols = values[0].length;
 
-  // tạo canvas tạm để đo text
   const tmpCanvas = createCanvas(10, 10);
   const tmpCtx = tmpCanvas.getContext("2d");
   tmpCtx.font = `16px NotoSans`;
 
-  // đo chiều rộng lớn nhất từng cột
   const colWidths = new Array(cols).fill(0);
   values.forEach((row) => {
     row.forEach((val, j) => {
       const text = val || "";
-      const w = tmpCtx.measureText(text).width + 20; // padding
+      const w = tmpCtx.measureText(text).width + 20;
       if (w > colWidths[j]) colWidths[j] = w;
     });
   });
@@ -976,15 +977,12 @@ function renderTableToImage(values) {
       const x = xOffset;
       const y = i * cellHeight;
 
-      // nền
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(x, y, cellWidth, cellHeight);
 
-      // viền
       ctx.strokeStyle = "#cccccc";
       ctx.strokeRect(x, y, cellWidth, cellHeight);
 
-      // chữ
       ctx.fillStyle = "#000000";
       ctx.fillText(val || "", x + cellWidth / 2, y + cellHeight / 2);
 
@@ -1012,9 +1010,9 @@ cron.schedule(
   async () => {
     try {
       const APP_ACCESS_TOKEN = await getAppAccessToken();
-      await listAllGroups(APP_ACCESS_TOKEN); // 👈 log group để debug
+      await listAllGroups(APP_ACCESS_TOKEN); // log group để debug
       await sendDynamicSheetAsImage(APP_ACCESS_TOKEN);
-      console.log("✅ [Cron] Đã gửi hình (T1:Z tới dòng cuối cột V, auto width)!");
+      console.log("✅ [Cron] Đã gửi hình (U1:Y tới dòng cuối cột V có ký tự, auto width)!");
     } catch (err) {
       console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
     }
