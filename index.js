@@ -1487,7 +1487,7 @@ async function getTenantAccessToken() {
 }
 
 /**
- * Lấy danh sách sheet (tab) trong spreadsheet
+ * Lấy danh sách sheet (tab) trong spreadsheet (v3)
  */
 async function listSheets() {
   try {
@@ -1495,11 +1495,17 @@ async function listSheets() {
 
     const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/worksheets/query`;
 
-    const resp = await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
+    // ⚠️ v3 API dùng POST chứ không phải GET
+    const resp = await axios.post(
+      url,
+      { pageSize: 20 },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
     console.log("========== DEBUG LIST SHEETS ==========");
     console.log("🔗 URL:", url);
@@ -1508,7 +1514,7 @@ async function listSheets() {
 
     if (resp.data.code === 0) {
       resp.data.data.sheets.forEach((sheet) => {
-        console.log(`📄 Sheet title="${sheet.title}", sheet_id="${sheet.sheetId}"`);
+        console.log(`📄 Sheet title="${sheet.title}", sheetId="${sheet.sheetId}"`);
       });
     } else {
       console.warn("⚠️ Lark API trả lỗi:", resp.data);
@@ -1554,7 +1560,7 @@ async function writeToLark(tableData) {
     const endColIndex = startColIndex + cols - 1;
     const endColName = columnNumberToName(endColIndex);
 
-    // ⚠️ Dùng SHEET_ID_TEST = sheetId (UUID, ví dụ: EmjelX)
+    // ⚠️ SHEET_ID_TEST phải là sheetId (ví dụ: "EmjelX"), không phải title
     const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
 
     const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
@@ -1566,7 +1572,7 @@ async function writeToLark(tableData) {
           values: tableData,
         },
       ],
-      valueInputOption: "USER_ENTERED", // để giữ đúng định dạng số/ngày từ nguồn
+      valueInputOption: "USER_ENTERED", // giữ đúng định dạng số/ngày từ hệ thống nguồn
     };
 
     console.log("========== DEBUG LARK ==========");
@@ -1598,6 +1604,7 @@ async function writeToLark(tableData) {
   }
 }
 
+// ====== Cron job ======
 cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
