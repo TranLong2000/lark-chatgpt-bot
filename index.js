@@ -1482,18 +1482,41 @@ async function getTenantAccessToken() {
 /**
  * Debug: In ra danh sách các sheet trong file
  */
+/**
+ * Debug: In ra danh sách các sheet trong file và auto map với TARGET_REPORT
+ */
 async function listSheets() {
   const token = await getTenantAccessToken();
   const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
 
-  const resp = await axios.get(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  try {
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-  console.log("📋 Available sheets:");
-  resp.data.data.sheets.forEach(s => {
-    console.log(`- title: ${s.title} | id: ${s.sheet_id}`);
-  });
+    console.log("📋 Available sheets:");
+    let matchedSheet = null;
+    resp.data.data.sheets.forEach(s => {
+      console.log(`- title: "${s.title}" | id: ${s.sheet_id}`);
+      if (s.title.trim() === TARGET_REPORT.trim()) {
+        matchedSheet = s;
+      }
+    });
+
+    if (matchedSheet) {
+      console.log(`✅ Found sheet for TARGET_REPORT "${TARGET_REPORT}" → id: ${matchedSheet.sheet_id}`);
+      // Auto update biến toàn cục để writeToLark dùng luôn
+      global.SHEET_ID_TEST = matchedSheet.sheet_id;
+    } else {
+      console.warn(`⚠️ Không tìm thấy sheet nào có title = "${TARGET_REPORT}".`);
+      console.warn("👉 Bạn cần copy đúng sheet_id từ listSheets() và set SHEET_ID_TEST.");
+    }
+  } catch (err) {
+    console.error("❌ Lỗi gọi listSheets:", err.message);
+    if (err.response) {
+      console.error("📥 Error response:", JSON.stringify(err.response.data, null, 2));
+    }
+  }
 }
 
 // ===== Helper: Convert số cột thành tên cột Excel =====
@@ -1528,6 +1551,7 @@ async function writeToLark(tableData) {
     const endColIndex = startColIndex + cols - 1;
     const endColName = columnNumberToName(endColIndex);
 
+    // ⚠️ sheetId phải đúng (ví dụ: "shtcxxxx"), không dùng title
     const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
 
     const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
@@ -1539,7 +1563,6 @@ async function writeToLark(tableData) {
       },
     };
 
-    // ==== LOG NGẮN GỌN ====
     console.log("========== DEBUG LARK ==========");
     console.log("🔗 URL:", url);
     console.log("📋 Target range:", range);
