@@ -918,23 +918,82 @@ async function getSheetValuesDynamic(APP_ACCESS_TOKEN) {
   let lastRow = 0;
 
   // V nằm ở index 2 trong T..Z
-  allValues.forEach((row, idx) => {
-    const cellV = row[2]; 
+  for (let idx = 0; idx < allValues.length; idx++) {
+    const cellV = allValues[idx][2];
     if (cellV !== undefined && cellV !== "") {
-      lastRow = idx + 1;
+      lastRow = idx + 1; // cập nhật dòng cuối cùng có dữ liệu
     }
-  });
+  }
 
   if (lastRow === 0) throw new Error("Cột V không có dữ liệu");
 
-  // Cắt từ T..Z (7 cột) đến dòng cuối
-  return allValues.slice(0, lastRow).map((row) => {
+  // Slice đến lastRow, pad thiếu cột
+  const values = allValues.slice(0, lastRow).map((row) => {
     const out = [];
     for (let i = 0; i < 7; i++) {
       out.push(row[i] !== undefined ? row[i] : "");
     }
     return out;
   });
+
+  return values;
+}
+
+// Hàm render auto width
+function renderTableToImage(values) {
+  const cellHeight = 40;
+  const rows = values.length;
+  const cols = values[0].length;
+
+  // tạo canvas tạm để đo text
+  const tmpCanvas = createCanvas(10, 10);
+  const tmpCtx = tmpCanvas.getContext("2d");
+  tmpCtx.font = `16px NotoSans`;
+
+  // đo chiều rộng lớn nhất từng cột
+  const colWidths = new Array(cols).fill(0);
+  values.forEach((row) => {
+    row.forEach((val, j) => {
+      const text = val || "";
+      const w = tmpCtx.measureText(text).width + 20; // padding
+      if (w > colWidths[j]) colWidths[j] = w;
+    });
+  });
+
+  const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+  const totalHeight = rows * cellHeight;
+
+  const canvas = createCanvas(totalWidth, totalHeight);
+  const ctx = canvas.getContext("2d");
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = `16px NotoSans`;
+
+  let xOffset = 0;
+  values.forEach((row, i) => {
+    row.forEach((val, j) => {
+      const cellWidth = colWidths[j];
+      const x = xOffset;
+      const y = i * cellHeight;
+
+      // nền
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(x, y, cellWidth, cellHeight);
+
+      // viền
+      ctx.strokeStyle = "#cccccc";
+      ctx.strokeRect(x, y, cellWidth, cellHeight);
+
+      // chữ
+      ctx.fillStyle = "#000000";
+      ctx.fillText(val || "", x + cellWidth / 2, y + cellHeight / 2);
+
+      xOffset += cellWidth;
+    });
+    xOffset = 0;
+  });
+
+  return canvas.toBuffer("image/png");
 }
 
 async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
@@ -947,15 +1006,15 @@ async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
 
-// Cron mỗi 60 phút
+// Cron mỗi 2 phút
 cron.schedule(
-  "*/60 * * * *",
+  "*/2 * * * *",
   async () => {
     try {
       const APP_ACCESS_TOKEN = await getAppAccessToken();
-      await listAllGroups(APP_ACCESS_TOKEN); // 👈 log ra group bot đang ở
+      await listAllGroups(APP_ACCESS_TOKEN); // 👈 log group để debug
       await sendDynamicSheetAsImage(APP_ACCESS_TOKEN);
-      console.log("✅ [Cron] Đã gửi hình (T1:Z tới dòng cuối cột V)!");
+      console.log("✅ [Cron] Đã gửi hình (T1:Z tới dòng cuối cột V, auto width)!");
     } catch (err) {
       console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
     }
