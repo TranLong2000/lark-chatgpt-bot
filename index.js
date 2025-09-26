@@ -947,9 +947,9 @@ async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
 
-// Cron mỗi 2 phút
+// Cron mỗi 60 phút
 cron.schedule(
-  "*/2 * * * *",
+  "*/60 * * * *",
   async () => {
     try {
       const APP_ACCESS_TOKEN = await getAppAccessToken();
