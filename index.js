@@ -1537,16 +1537,13 @@ async function writeToLark(tableData) {
 
     const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
 
-    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
+    const url = `https://open.larksuite.com/open-apis/sheets/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values`;
 
     const body = {
-      valueRanges: [
-        {
-          range,
-          values: tableData,
-        },
-      ],
-      valueInputOption: "RAW", // 👈 giữ nguyên kiểu dữ liệu (số, ngày...)
+      valueRange: {
+        range,
+        values: tableData,
+      },
     };
 
     // ==== LOG NGẮN GỌN ====
