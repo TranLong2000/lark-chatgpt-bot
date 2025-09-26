@@ -843,28 +843,105 @@ async function listAllGroups(APP_ACCESS_TOKEN) {
 }
 
 /* ==================================================
-   SECTION 10.2.1 — Warehouse delivery
+   SECTION 10.2.1 — Warehouse delivery (robust + debug)
    ================================================== */
 
 const SPREADSHEET_TOKEN_WH = "UMU1s9pS9hqtkft1yQvlfRqpgqc";
 const SHEET_ID_WH = "nmyvvO";
 
+// helper build URL
+function sheetValuesUrl(spreadsheetToken, range) {
+  return `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}/values/${encodeURIComponent(
+    range
+  )}?valueRenderOption=FormattedValue`;
+}
+
+// lấy metadata của spreadsheet (dùng để debug: xem sheet list / id)
+async function getSpreadsheetInfo(APP_ACCESS_TOKEN, spreadsheetToken) {
+  try {
+    const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${spreadsheetToken}`;
+    const res = await axios.get(url, {
+      headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
+    });
+    console.log("[getSpreadsheetInfo] spreadsheet info:", JSON.stringify(res.data, null, 2));
+    return res.data;
+  } catch (err) {
+    console.error("[getSpreadsheetInfo] Lỗi khi lấy metadata:", err?.response?.data || err?.message);
+    throw err;
+  }
+}
+
+// Lấy values cho Warehouse, với fallback & nhiều log
 async function getSheetValuesWarehouse(APP_ACCESS_TOKEN) {
   const RANGE = `${SHEET_ID_WH}!A10:O20`;
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_WH}/values/${encodeURIComponent(
-    RANGE
-  )}?valueRenderOption=FormattedValue`;
+  try {
+    const url = sheetValuesUrl(SPREADSHEET_TOKEN_WH, RANGE);
+    const res = await axios.get(url, {
+      headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
+    });
 
-  const res = await axios.get(url, {
-    headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
-  });
+    // debug: in response thô nếu cần
+    if (!res.data || !res.data.data) {
+      console.warn("[getSheetValuesWarehouse] Response không có field data:", JSON.stringify(res.data));
+    }
 
-  if (!res.data?.data?.valueRange?.values) {
-    throw new Error("Không lấy được values từ Sheet Warehouse");
+    const values = res.data?.data?.valueRange?.values;
+    if (Array.isArray(values) && values.length > 0) {
+      // pad mỗi hàng đủ 15 cột (A..O)
+      const padded = values.map((row) => {
+        const out = [];
+        for (let i = 0; i < 15; i++) out.push(row[i] !== undefined ? row[i] : "");
+        return out;
+      });
+      return padded;
+    }
+
+    // Nếu A10:O20 rỗng, thử fallback lấy A1:O1000 rồi slice 10..20 (index 9..19)
+    console.warn("[getSheetValuesWarehouse] A10:O20 rỗng — thử fallback A1:O1000 và cắt phần A10:O20");
+    const urlAll = sheetValuesUrl(SPREADSHEET_TOKEN_WH, `${SHEET_ID_WH}!A1:O1000`);
+    const res2 = await axios.get(urlAll, {
+      headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
+    });
+    const all = res2.data?.data?.valueRange?.values || [];
+    // tạo mảng 11 dòng (A10..A20)
+    const slice = [];
+    for (let r = 9; r <= 19; r++) {
+      const row = all[r] || [];
+      const out = [];
+      for (let c = 0; c < 15; c++) out.push(row[c] !== undefined ? row[c] : "");
+      slice.push(out);
+    }
+
+    // kiểm tra xem slice có thực sự chứa ký tự nào không
+    const hasAny = slice.some((row) => row.some((cell) => {
+      if (cell === null || cell === undefined) return false;
+      if (typeof cell === "string") return cell.trim().length > 0;
+      return String(cell).trim().length > 0;
+    }));
+
+    if (hasAny) {
+      return slice;
+    }
+
+    // fallback thất bại -> log chi tiết để debug và ném lỗi rõ ràng
+    console.error("[getSheetValuesWarehouse] Fallback cũng không có data trong A10:O20. Response A1:O1000:", JSON.stringify(res2.data, null, 2));
+    // show spreadsheet meta to help debug permission/sheetId
+    try {
+      await getSpreadsheetInfo(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_WH);
+    } catch (e) {
+      /* ignore - đã log trong getSpreadsheetInfo */
+    }
+    throw new Error("Không lấy được values từ Sheet Warehouse (A10:O20 trống)");
+  } catch (err) {
+    console.error("[getSheetValuesWarehouse] Lỗi fetch:", err?.response?.data || err?.message);
+    // show spreadsheet meta to help debug permission/sheetId
+    try {
+      await getSpreadsheetInfo(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN_WH);
+    } catch (e) {
+      /* ignore */
+    }
+    throw err;
   }
-
-  // Trả về nguyên values, không cần dynamic range
-  return res.data.data.valueRange.values;
 }
 
 async function sendWarehouseSheetAsImage(APP_ACCESS_TOKEN) {
@@ -872,8 +949,12 @@ async function sendWarehouseSheetAsImage(APP_ACCESS_TOKEN) {
     process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
 
   const values = await getSheetValuesWarehouse(APP_ACCESS_TOKEN);
-  const buffer = renderTableToImage(values); // dùng chung hàm render
-  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer); // dùng chung upload
+  // đảm bảo values không rỗng trước khi render
+  if (!Array.isArray(values) || values.length === 0) {
+    throw new Error("Không có dữ liệu để render (Warehouse).");
+  }
+  const buffer = renderTableToImage(values); // dùng chung hàm render (A..O = 15 cols)
+  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
 
@@ -885,7 +966,7 @@ cron.schedule(
       const APP_ACCESS_TOKEN = await getAppAccessToken();
       await listAllGroups(APP_ACCESS_TOKEN); // log group để debug
       await sendWarehouseSheetAsImage(APP_ACCESS_TOKEN);
-      console.log("✅ [Cron] Đã gửi hình (Warehouse delivery A10:O20)!");
+      console.log("✅ [Cron] Đã gửi hình (Warehouse A10:O20)!");
     } catch (err) {
       console.error("❌ [Cron] Lỗi khi gửi ảnh Warehouse:", err?.response?.data || err.message);
     }
