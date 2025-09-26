@@ -873,7 +873,7 @@ async function getSpreadsheetInfo(APP_ACCESS_TOKEN, spreadsheetToken) {
 
 // Lấy values cho Warehouse, với fallback & nhiều log
 async function getSheetValuesWarehouse(APP_ACCESS_TOKEN) {
-  const RANGE = `${SHEET_ID_WH}!A10:O20`;
+  const RANGE = `${SHEET_ID_WH}!A10:O14`;
   try {
     const url = sheetValuesUrl(SPREADSHEET_TOKEN_WH, RANGE);
     const res = await axios.get(url, {
