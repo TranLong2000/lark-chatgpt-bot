@@ -1536,27 +1536,29 @@ function columnNumberToName(n) {
 
 // ===== Helper: Giữ nguyên số/ngày/boolean, chỉ string mới để nguyên =====
 function dateToExcelSerial(dateStr) {
-  // Chuyển "YYYY-MM-DD" → số serial Excel
+  // Input: "YYYY-MM-DD" hoặc "YYYY/MM/DD"
   const date = new Date(dateStr);
-  if (isNaN(date)) return dateStr; // fallback text
-  const excelEpoch = new Date("1899-12-30T00:00:00Z"); // Excel bắt đầu từ 1899-12-30
+  if (isNaN(date)) return dateStr; // fallback: giữ nguyên nếu parse fail
+  const excelEpoch = new Date("1899-12-30T00:00:00Z");
   const diff = (date - excelEpoch) / (1000 * 60 * 60 * 24);
-  return Math.floor(diff);
+  return Math.floor(diff); // Excel dùng số nguyên
 }
 
 function normalizeValue(v, colIndex) {
   if (v === null || v === undefined) return "";
 
-  // Nếu cột là ngày (ví dụ: colIndex = 1 hoặc tên có "date")
-  if (colIndex === 0 || /date/i.test(v)) {
+  // Cột 0 = Ngày
+  if (colIndex === 0) {
     return dateToExcelSerial(v);
   }
 
-  // Nếu cột là giá (giả sử nằm ở colIndex 5 hoặc có ký hiệu tiền tệ)
-  if (typeof v === "string" && v.match(/^\d+(\.\d+)?$/)) {
-    return Number(v);
+  // Cột 4 = Giá
+  if (colIndex === 4) {
+    const num = Number(v.toString().replace(/,/g, "").replace(/[^\d.-]/g, ""));
+    return isNaN(num) ? v : num;
   }
 
+  // Các loại khác
   if (typeof v === "number" || typeof v === "boolean") return v;
   return String(v);
 }
@@ -1581,13 +1583,12 @@ async function writeToLark(tableData) {
     const endColIndex = startColIndex + cols - 1;
     const endColName = columnNumberToName(endColIndex);
 
-   const normalizedData = tableData.map(row =>
-     row.map((val, colIdx) => normalizeValue(val, colIdx))
-   );
+    // Normalize trước khi gửi
+    const normalizedData = tableData.map(row =>
+      row.map((val, colIdx) => normalizeValue(val, colIdx))
+    );
 
-    // ⚠️ SHEET_ID_TEST phải là sheet_id (ví dụ: EmjelX)
     const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
-
     const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
 
     const body = {
@@ -1599,6 +1600,7 @@ async function writeToLark(tableData) {
       ],
     };
 
+    // ==== LOG NGẮN GỌN ====
     console.log("========== DEBUG LARK ==========");
     console.log("🔗 URL:", url);
     console.log("📋 Target range:", range);
