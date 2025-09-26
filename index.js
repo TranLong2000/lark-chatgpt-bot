@@ -856,7 +856,7 @@ async function getSheetValuesWarehouse(APP_ACCESS_TOKEN) {
     RANGE
   )}?valueRenderOption=FormattedValue`;
 
-  let retries = 5;
+  let retries = 10;
   while (retries > 0) {
     try {
       const res = await axios.get(url, {
@@ -864,16 +864,13 @@ async function getSheetValuesWarehouse(APP_ACCESS_TOKEN) {
       });
 
       if (res.data?.data?.valueRange?.values) {
-        console.log(
-          `[getSheetValuesWarehouse] Lấy được ${res.data.data.valueRange.values.length} dòng`
-        );
         return res.data.data.valueRange.values;
       }
 
       if (res.data?.code === 90235) {
         console.warn("[getSheetValuesWarehouse] Data not ready, retrying...");
         retries--;
-        await new Promise((r) => setTimeout(r, 3000)); // chờ 3s
+        await new Promise((r) => setTimeout(r, 10000)); // chờ 10s
         continue;
       }
 
@@ -882,13 +879,9 @@ async function getSheetValuesWarehouse(APP_ACCESS_TOKEN) {
       if (err.response?.data?.code === 90235 && retries > 0) {
         console.warn("[getSheetValuesWarehouse] Data not ready, retrying...");
         retries--;
-        await new Promise((r) => setTimeout(r, 3000));
+        await new Promise((r) => setTimeout(r, 10000));
       } else {
-        console.error(
-          "[getSheetValuesWarehouse] Lỗi fetch:",
-          err?.response?.data || err.message
-        );
-        throw new Error("Không lấy được values từ Sheet Warehouse (A10:O20 trống)");
+        throw err;
       }
     }
   }
@@ -1576,7 +1569,7 @@ async function writeToLark(tableData) {
   }
 }
 
-cron.schedule("*/60 * * * *", async () => {
+cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
