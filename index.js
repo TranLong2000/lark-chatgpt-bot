@@ -1354,34 +1354,21 @@ async function doTokenRefresh(token, cookieHeader) {
   return true;
 }
 
+// ===== Init WOWBUY session =====
 async function initWOWBUYSession() {
-  // ===== Tạo range ngày động =====
-  function getDateRange() {
-    const now = new Date();
+  const now = new Date();
+  const SD = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+  const ED = now.toISOString().split("T")[0];
 
-    // Ngày đầu tháng (YYYY-MM-DD)
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const SD = start.toISOString().split("T")[0];
-
-    // Ngày kết thúc = hôm nay (YYYY-MM-DD)
-    const ED = now.toISOString().split("T")[0];
-
-    return { SD, ED };
-  }
-
-  const { SD, ED } = getDateRange();
-
-  // ===== Tham số request (On sale + Off sale) =====
   const params = {
-    SALE_STATUS: ["0", "1"], // Bao gồm cả On sale và Off sale
+    SALE_STATUS: ["0", "1"], // On sale + Off sale
     LABELSKUSN_C_C: "[4e0a][4e0b][67b6][72b6][6001][ff1a]",
     LABELSTOREID_C: "[4ed3][5e93][ff1a]",
     WH: [],
     LABELSKUSN_C: "SKU[ff1a]",
     SKUSN: [],
     LABELSTOREID_C_C: "[8ba2][5355][521b][5efa][65f6][95f4][ff1a]",
-    SD,
-    ED,
+    SD, ED,
     LABELSKUSN_C_C_C: "[53ef][552e][5e93][5b58][ff1a]",
     KS: [],
     LABELSKUSN_C_C_C_C: "[5546][54c1][7f16][53f7][ff1a]",
@@ -1389,102 +1376,58 @@ async function initWOWBUYSession() {
   };
 
   const steps = [
-    { 
-      name: "resource", 
-      url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` 
-    },
-    { 
-      name: "fr_paramstpl", 
-      url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, 
-      method: "POST" 
-    },
-    { 
-      name: "fr_dialog", 
-      url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, 
-      method: "POST", 
-      body: "__parameters__=" + encodeURIComponent(JSON.stringify(params)), 
-      headers: { "content-type": "application/x-www-form-urlencoded" } 
-    },
-    { 
-      name: "collect", 
-      url: `${WOWBUY_BASEURL}/webroot/decision/preview/info/collect`, 
-      method: "POST", 
-      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", 
-      headers: { "content-type": "application/x-www-form-urlencoded" } 
-    }
+    { name: "resource", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
+    { name: "fr_paramstpl", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
+    { name: "fr_dialog", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, method: "POST", body: "__parameters__=" + encodeURIComponent(JSON.stringify(params)), headers: { "content-type": "application/x-www-form-urlencoded" } },
+    { name: "collect", url: `${WOWBUY_BASEURL}/webroot/decision/preview/info/collect`, method: "POST", body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", headers: { "content-type": "application/x-www-form-urlencoded" } }
   ];
 
   for (const step of steps) {
     await safeFetchVerbose(step.url, {
       method: step.method || "GET",
-      headers: { 
-        authorization: session.token, 
-        cookie: session.cookie, 
-        ...(step.headers || {}) 
-      },
+      headers: { authorization: session.token, cookie: session.cookie, ...(step.headers || {}) },
       body: step.body,
     }, `INIT:${step.name}`);
   }
 }
 
+// ===== Submit report form =====
 async function submitReportForm() {
   console.log("📤 Submitting report form...");
   const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
-
   const today = new Date();
-  const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
-  const endDate = today.toISOString().split("T")[0];
+  const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
+  const ED = today.toISOString().split("T")[0];
 
-  // ✅ Form param đúng format của WOWBUY
-  const params = {
-    SALE_STATUS: ["0", "1"], // On sale + Off sale
-    SD: startDate,
-    ED: endDate,
-    WH: [],
-    SKUSN: [],
-    KS: [],
-    SN: ""
-  };
-
-  // WOWBUY yêu cầu gói param trong field "__parameters__"
+  const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
   const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
 
-  const resp = await safeFetchVerbose(
-    formUrl,
-    {
-      method: "POST",
-      headers: {
-        accept: "application/json, text/javascript, */*; q=0.01",
-        "content-type": "application/x-www-form-urlencoded",
-        authorization: `Bearer ${session.token}`,
-        cookie: session.cookie,
-        referer: session.entryUrl,
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-        "x-requested-with": "XMLHttpRequest",
-      },
-      body,
+  const resp = await safeFetchVerbose(formUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      referer: session.entryUrl,
+      "user-agent": "Mozilla/5.0",
+      "x-requested-with": "XMLHttpRequest",
     },
-    "SUBMIT_FORM"
-  );
+    body,
+  }, "SUBMIT_FORM");
 
-  if (resp.status === 200) {
-    console.log("✅ Form submitted successfully");
-  } else {
-    console.warn("⚠️ Form submit failed with status:", resp.status);
-  }
+  if (resp.status === 200) console.log("✅ Form submitted successfully");
+  else console.warn("⚠️ Form submit failed with status:", resp.status);
   return resp;
 }
 
+// ===== Fetch all pages =====
 async function fetchPageContent() {
   console.log("📡 Fetching all page content...");
-
-  let allRows = [];
-  let pn = 1;
-  let totalPages = 1;
+  let allRows = [], pn = 1, totalPages = 1;
 
   do {
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
-    
     const resp = await safeFetchVerbose(url, {
       method: "GET",
       headers: {
@@ -1509,8 +1452,6 @@ async function fetchPageContent() {
     });
 
     console.log(`📊 Page ${pn}: ${allRows.length} rows total so far`);
-
-    // Cập nhật totalPages từ JSON nếu có
     if (resp.json?.pageCount) totalPages = resp.json.pageCount;
     else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
 
@@ -1519,20 +1460,17 @@ async function fetchPageContent() {
 
   console.log("📊 All pages fetched, total rows:", allRows.length);
   if (allRows.length > 0) console.log("🔎 First 1 rows:", allRows.slice(0, 1));
-
   return allRows;
 }
 
-// ======= Main flow =======
+// ===== Main flow =====
 async function fetchWOWBUY() {
   try {
     const s = await loginWOWBUY();
-    if (!s) {
-      console.error("❌ Aborting: login failed");
-      return [];
-    }
+    if (!s) { console.error("❌ Aborting: login failed"); return []; }
 
     await initWOWBUYSession();
+    await submitReportForm();
     const data = await fetchPageContent();
 
     console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
@@ -1688,7 +1626,7 @@ async function writeToLark(tableData) {
 }
 
 // ===== CRON JOB =====
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("*/60 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
