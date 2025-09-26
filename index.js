@@ -714,7 +714,7 @@ async function sendRebateReport() {
 }
 
 /* ==================================================
-   SECTION: Cron gửi ảnh từ Sheet + Debug list groups
+   SECTION 10.2: Cron gửi ảnh từ Sheet + Debug list groups
    ================================================== */
 
 // Đăng ký font (file nằm cùng cấp index.js)
@@ -725,7 +725,7 @@ registerFont(fontPath, { family: "NotoSans" });
    Hàm dùng chung
    ================================================== */
 
-// Render table thành ảnh (không màu mè, chỉ mock highlight E2)
+// Render table thành ảnh
 function renderTableToImage(values) {
   const cellWidth = 120;
   const cellHeight = 40;
@@ -843,58 +843,58 @@ async function listAllGroups(APP_ACCESS_TOKEN) {
 }
 
 /* ==================================================
-   SECTION TEST — Cron gửi hình vùng A1:H7
+   SECTION 10.2.1 — Warehouse delivery
    ================================================== */
 
-async function getSheetValues(APP_ACCESS_TOKEN, SPREADSHEET_TOKEN, SHEET_ID) {
-  const RANGE = `${SHEET_ID}!A1:H7`;
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN}/values/${encodeURIComponent(
+const SPREADSHEET_TOKEN_WH = "UMU1s9pS9hqtkft1yQvlfRqpgqc";
+const SHEET_ID_WH = "nmyvvO";
+
+async function getSheetValuesWarehouse(APP_ACCESS_TOKEN) {
+  const RANGE = `${SHEET_ID_WH}!A10:O20`;
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_WH}/values/${encodeURIComponent(
     RANGE
   )}?valueRenderOption=FormattedValue`;
 
   const res = await axios.get(url, {
     headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` },
   });
+
   if (!res.data?.data?.valueRange?.values) {
-    throw new Error("Không lấy được values từ Sheet API");
+    throw new Error("Không lấy được values từ Sheet Warehouse");
   }
+
+  // Trả về nguyên values, không cần dynamic range
   return res.data.data.valueRange.values;
 }
 
-async function sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN) {
+async function sendWarehouseSheetAsImage(APP_ACCESS_TOKEN) {
   const LARK_GROUP_CHAT_IDS_TEST =
     process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
-  const SPREADSHEET_TOKEN_TEST = process.env.SPREADSHEET_TOKEN_TEST;
-  const SHEET_ID_TEST = process.env.SHEET_ID_TEST;
 
-  const values = await getSheetValues(
-    APP_ACCESS_TOKEN,
-    SPREADSHEET_TOKEN_TEST,
-    SHEET_ID_TEST
-  );
-  const buffer = renderTableToImage(values);
-  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
+  const values = await getSheetValuesWarehouse(APP_ACCESS_TOKEN);
+  const buffer = renderTableToImage(values); // dùng chung hàm render
+  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer); // dùng chung upload
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
 
-// Cron 18:00 mỗi ngày
+// Cron mỗi 2 phút (giờ VN)
 cron.schedule(
-  "0 18 * * *",
+  "*/2 * * * *",
   async () => {
     try {
       const APP_ACCESS_TOKEN = await getAppAccessToken();
-      await listAllGroups(APP_ACCESS_TOKEN); // 👈 log ra group bot đang ở
-      await sendSheetAsImageWithMockStyle(APP_ACCESS_TOKEN);
-      console.log("✅ [Cron] Đã gửi hình (A1:H7)!");
+      await listAllGroups(APP_ACCESS_TOKEN); // log group để debug
+      await sendWarehouseSheetAsImage(APP_ACCESS_TOKEN);
+      console.log("✅ [Cron] Đã gửi hình (Warehouse delivery A10:O20)!");
     } catch (err) {
-      console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
+      console.error("❌ [Cron] Lỗi khi gửi ảnh Warehouse:", err?.response?.data || err.message);
     }
   },
   { scheduled: true, timezone: "Asia/Ho_Chi_Minh" }
 );
 
 /* ==================================================
-   SECTION NEW — Cron gửi hình U1:Y đến dòng cuối cột V
+   SECTION 10.2.2 — Sale PC Miền Trung & Tây
    ================================================== */
 
 const SHEET_ID_PC = process.env.SHEET_ID_PC;
@@ -1041,7 +1041,7 @@ async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
 
 // Cron 9h30 hàng ngày (giờ VN)
 cron.schedule(
-  "30 14 * * *",
+  "30 9 * * *",
   async () => {
     try {
       const APP_ACCESS_TOKEN = await getAppAccessToken();
