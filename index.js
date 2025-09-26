@@ -944,25 +944,29 @@ async function getSheetValuesDynamic(APP_ACCESS_TOKEN) {
 
 // Hàm render auto width (giữ nguyên như trước)
 function renderTableToImage(values) {
-  const cellHeight = 40;
+  const baseCellHeight = 40;
+  const headerHeight = baseCellHeight * 2; // header gấp đôi
   const rows = values.length;
   const cols = values[0].length;
 
+  // Tạo context tạm để đo chữ
   const tmpCanvas = createCanvas(10, 10);
   const tmpCtx = tmpCanvas.getContext("2d");
   tmpCtx.font = `16px NotoSans`;
 
+  // Tính chiều rộng từng cột
   const colWidths = new Array(cols).fill(0);
   values.forEach((row) => {
     row.forEach((val, j) => {
-      const text = val || "";
+      const text = (val !== undefined && val !== null) ? String(val) : "";
       const w = tmpCtx.measureText(text).width + 20;
       if (w > colWidths[j]) colWidths[j] = w;
     });
   });
 
   const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-  const totalHeight = rows * cellHeight;
+  const totalHeight =
+    headerHeight + (rows - 1) * baseCellHeight; // 1 dòng header + các dòng còn lại
 
   const canvas = createCanvas(totalWidth, totalHeight);
   const ctx = canvas.getContext("2d");
@@ -970,25 +974,50 @@ function renderTableToImage(values) {
   ctx.textBaseline = "middle";
   ctx.font = `16px NotoSans`;
 
-  let xOffset = 0;
+  let yOffset = 0;
   values.forEach((row, i) => {
+    const rowHeight = i === 0 ? headerHeight : baseCellHeight;
+    let xOffset = 0;
+
     row.forEach((val, j) => {
       const cellWidth = colWidths[j];
       const x = xOffset;
-      const y = i * cellHeight;
+      const y = yOffset;
 
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(x, y, cellWidth, cellHeight);
+      let bgColor = "#ffffff"; // mặc định trắng
+      let displayVal = (val !== undefined && val !== null) ? String(val) : "";
 
+      // Dòng đầu tiên = header
+      if (i === 0) {
+        bgColor = "#ccffcc"; // xanh lá cây nhạt
+      }
+
+      // Inventory = cột W (index = 2 trong U:Y)
+      if (j === 2) {
+        if (displayVal === "" || displayVal === undefined) {
+          displayVal = "0"; // ép hiện 0
+        }
+        if (displayVal === "0") {
+          bgColor = "#ffcccc"; // đỏ nhạt nếu = 0
+        }
+      }
+
+      // Vẽ nền
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(x, y, cellWidth, rowHeight);
+
+      // Viền
       ctx.strokeStyle = "#cccccc";
-      ctx.strokeRect(x, y, cellWidth, cellHeight);
+      ctx.strokeRect(x, y, cellWidth, rowHeight);
 
+      // Text
       ctx.fillStyle = "#000000";
-      ctx.fillText(val || "", x + cellWidth / 2, y + cellHeight / 2);
+      ctx.fillText(displayVal, x + cellWidth / 2, y + rowHeight / 2);
 
       xOffset += cellWidth;
     });
-    xOffset = 0;
+
+    yOffset += rowHeight;
   });
 
   return canvas.toBuffer("image/png");
