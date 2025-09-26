@@ -1534,32 +1534,46 @@ function columnNumberToName(n) {
   return name;
 }
 
-// ===== Helper: Giữ nguyên số/ngày/boolean, chỉ string mới để nguyên =====
+// ===== Helper: Chuyển ngày sang Excel serial =====
 function dateToExcelSerial(dateStr) {
-  // Input: "YYYY-MM-DD" hoặc "YYYY/MM/DD"
   const date = new Date(dateStr);
-  if (isNaN(date)) return dateStr; // fallback: giữ nguyên nếu parse fail
+  if (isNaN(date)) return dateStr; // fallback
   const excelEpoch = new Date("1899-12-30T00:00:00Z");
   const diff = (date - excelEpoch) / (1000 * 60 * 60 * 24);
-  return Math.floor(diff); // Excel dùng số nguyên
+  return Math.floor(diff);
 }
 
-function normalizeValue(v, colIndex) {
+// ===== Helper: Auto detect value type =====
+function autoNormalize(v) {
   if (v === null || v === undefined) return "";
 
-  // Cột 0 = Ngày
-  if (colIndex === 0) {
-    return dateToExcelSerial(v);
-  }
-
-  // Cột 4 = Giá
-  if (colIndex === 4) {
-    const num = Number(v.toString().replace(/,/g, "").replace(/[^\d.-]/g, ""));
-    return isNaN(num) ? v : num;
-  }
-
-  // Các loại khác
   if (typeof v === "number" || typeof v === "boolean") return v;
+
+  if (typeof v === "string") {
+    const raw = v.trim();
+
+    // 1️⃣ Number (loại bỏ dấu phẩy, ký tự thừa)
+    const num = Number(raw.replace(/,/g, "").replace(/[^\d.-]/g, ""));
+    if (!isNaN(num) && raw !== "") {
+      return num;
+    }
+
+    // 2️⃣ Date (ISO hoặc format phổ biến)
+    const parsed = Date.parse(raw);
+    if (!isNaN(parsed)) {
+      return dateToExcelSerial(raw);
+    }
+
+    // 3️⃣ Boolean
+    const lower = raw.toLowerCase();
+    if (["true", "false"].includes(lower)) {
+      return lower === "true";
+    }
+
+    // 4️⃣ Default string
+    return raw;
+  }
+
   return String(v);
 }
 
@@ -1583,12 +1597,12 @@ async function writeToLark(tableData) {
     const endColIndex = startColIndex + cols - 1;
     const endColName = columnNumberToName(endColIndex);
 
-    // Normalize trước khi gửi
-    const normalizedData = tableData.map(row =>
-      row.map((val, colIdx) => normalizeValue(val, colIdx))
+    const normalizedData = tableData.map((row, rowIdx) =>
+      row.map(val => rowIdx === 0 ? String(val) : autoNormalize(val)) // hàng 1 giữ nguyên text (header)
     );
 
     const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
+
     const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
 
     const body = {
@@ -1598,9 +1612,9 @@ async function writeToLark(tableData) {
           values: normalizedData,
         },
       ],
+      valueInputOption: "USER_ENTERED", // cho phép hệ thống tự định dạng
     };
 
-    // ==== LOG NGẮN GỌN ====
     console.log("========== DEBUG LARK ==========");
     console.log("🔗 URL:", url);
     console.log("📋 Target range:", range);
