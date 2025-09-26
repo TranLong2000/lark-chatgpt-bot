@@ -1052,17 +1052,33 @@ async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_PC, imageKey);
 }
 
-// Cron mỗi 60 phút
+// Cron 9h30 hàng ngày (giờ VN)
 cron.schedule(
-  "*/10 * * * *",
+  "30 9 * * *",
   async () => {
     try {
       const APP_ACCESS_TOKEN = await getAppAccessToken();
       await listAllGroups(APP_ACCESS_TOKEN); // log group để debug
       await sendDynamicSheetAsImage(APP_ACCESS_TOKEN);
-      console.log("✅ [Cron] Đã gửi hình (U1:Y tới dòng cuối cột V có ký tự, auto width)!");
+      console.log("✅ [Cron] Đã gửi hình 9h30!");
     } catch (err) {
-      console.error("❌ [Cron] Lỗi khi gửi ảnh:", err?.response?.data || err.message);
+      console.error("❌ [Cron] Lỗi khi gửi ảnh 9h30:", err?.response?.data || err.message);
+    }
+  },
+  { scheduled: true, timezone: "Asia/Ho_Chi_Minh" }
+);
+
+// Cron 13h30 hàng ngày (giờ VN)
+cron.schedule(
+  "30 13 * * *",
+  async () => {
+    try {
+      const APP_ACCESS_TOKEN = await getAppAccessToken();
+      await listAllGroups(APP_ACCESS_TOKEN);
+      await sendDynamicSheetAsImage(APP_ACCESS_TOKEN);
+      console.log("✅ [Cron] Đã gửi hình 13h30!");
+    } catch (err) {
+      console.error("❌ [Cron] Lỗi khi gửi ảnh 13h30:", err?.response?.data || err.message);
     }
   },
   { scheduled: true, timezone: "Asia/Ho_Chi_Minh" }
