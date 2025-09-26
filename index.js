@@ -949,7 +949,7 @@ function renderTableToImage(values) {
   const rows = values.length;
   const cols = values[0].length;
 
-  // Tạo context tạm để đo chữ
+  // Context tạm để đo chữ
   const tmpCanvas = createCanvas(10, 10);
   const tmpCtx = tmpCanvas.getContext("2d");
   tmpCtx.font = `16px NotoSans`;
@@ -959,20 +959,18 @@ function renderTableToImage(values) {
   values.forEach((row) => {
     row.forEach((val, j) => {
       const text = (val !== undefined && val !== null) ? String(val) : "";
-      const w = tmpCtx.measureText(text).width + 20;
+      const w = tmpCtx.measureText(text).width + 20; // padding ngang
       if (w > colWidths[j]) colWidths[j] = w;
     });
   });
 
   const totalWidth = colWidths.reduce((a, b) => a + b, 0);
-  const totalHeight =
-    headerHeight + (rows - 1) * baseCellHeight; // 1 dòng header + các dòng còn lại
+  const totalHeight = headerHeight + (rows - 1) * baseCellHeight;
 
   const canvas = createCanvas(totalWidth, totalHeight);
   const ctx = canvas.getContext("2d");
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
   ctx.font = `16px NotoSans`;
+  ctx.textBaseline = "middle";
 
   let yOffset = 0;
   values.forEach((row, i) => {
@@ -987,12 +985,12 @@ function renderTableToImage(values) {
       let bgColor = "#ffffff"; // mặc định trắng
       let displayVal = (val !== undefined && val !== null) ? String(val) : "";
 
-      // Dòng đầu tiên = header
+      // Header
       if (i === 0) {
-        bgColor = "#ccffcc"; // xanh lá cây nhạt
+        bgColor = "#ccffcc"; // xanh lá nhạt
       }
 
-      // Inventory = cột W (index = 2 trong U:Y)
+      // Inventory = cột W (index 2 trong U:Y)
       if (j === 2) {
         if (displayVal === "" || displayVal === undefined) {
           displayVal = "0"; // ép hiện 0
@@ -1012,7 +1010,16 @@ function renderTableToImage(values) {
 
       // Text
       ctx.fillStyle = "#000000";
-      ctx.fillText(displayVal, x + cellWidth / 2, y + rowHeight / 2);
+
+      if (j === 1) {
+        // Cột V -> căn trái
+        ctx.textAlign = "left";
+        ctx.fillText(displayVal, x + 8, y + rowHeight / 2);
+      } else {
+        // Cột khác -> căn giữa
+        ctx.textAlign = "center";
+        ctx.fillText(displayVal, x + cellWidth / 2, y + rowHeight / 2);
+      }
 
       xOffset += cellWidth;
     });
