@@ -1355,17 +1355,73 @@ async function doTokenRefresh(token, cookieHeader) {
 }
 
 async function initWOWBUYSession() {
+  // ===== Tạo range ngày động =====
+  function getDateRange() {
+    const now = new Date();
+
+    // Ngày đầu tháng (YYYY-MM-DD)
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const SD = start.toISOString().split("T")[0];
+
+    // Ngày kết thúc = hôm nay (YYYY-MM-DD)
+    const ED = now.toISOString().split("T")[0];
+
+    return { SD, ED };
+  }
+
+  const { SD, ED } = getDateRange();
+
+  // ===== Tham số request (On sale + Off sale) =====
+  const params = {
+    SALE_STATUS: ["0", "1"], // Bao gồm cả On sale và Off sale
+    LABELSKUSN_C_C: "[4e0a][4e0b][67b6][72b6][6001][ff1a]",
+    LABELSTOREID_C: "[4ed3][5e93][ff1a]",
+    WH: [],
+    LABELSKUSN_C: "SKU[ff1a]",
+    SKUSN: [],
+    LABELSTOREID_C_C: "[8ba2][5355][521b][5efa][65f6][95f4][ff1a]",
+    SD,
+    ED,
+    LABELSKUSN_C_C_C: "[53ef][552e][5e93][5b58][ff1a]",
+    KS: [],
+    LABELSKUSN_C_C_C_C: "[5546][54c1][7f16][53f7][ff1a]",
+    SN: ""
+  };
+
   const steps = [
-    { name: "resource", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
-    { name: "fr_paramstpl", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
-    { name: "fr_dialog", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, method: "POST", body: "__parameters__=%7B%22SD%22%3A%222025-08-20%22%2C%22ED%22%3A%222025-09-19%22%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
-    { name: "collect", url: `${WOWBUY_BASEURL}/webroot/decision/preview/info/collect`, method: "POST", body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", headers: { "content-type": "application/x-www-form-urlencoded" } },
+    { 
+      name: "resource", 
+      url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` 
+    },
+    { 
+      name: "fr_paramstpl", 
+      url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, 
+      method: "POST" 
+    },
+    { 
+      name: "fr_dialog", 
+      url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, 
+      method: "POST", 
+      body: "__parameters__=" + encodeURIComponent(JSON.stringify(params)), 
+      headers: { "content-type": "application/x-www-form-urlencoded" } 
+    },
+    { 
+      name: "collect", 
+      url: `${WOWBUY_BASEURL}/webroot/decision/preview/info/collect`, 
+      method: "POST", 
+      body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", 
+      headers: { "content-type": "application/x-www-form-urlencoded" } 
+    }
   ];
 
   for (const step of steps) {
     await safeFetchVerbose(step.url, {
       method: step.method || "GET",
-      headers: { authorization: session.token, cookie: session.cookie, ...(step.headers || {}) },
+      headers: { 
+        authorization: session.token, 
+        cookie: session.cookie, 
+        ...(step.headers || {}) 
+      },
       body: step.body,
     }, `INIT:${step.name}`);
   }
@@ -1374,32 +1430,42 @@ async function initWOWBUYSession() {
 async function submitReportForm() {
   console.log("📤 Submitting report form...");
   const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
+
   const today = new Date();
-  const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split('T')[0];
-  const endDate = today.toISOString().split('T')[0];
-  const formData = {
+  const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
+  const endDate = today.toISOString().split("T")[0];
+
+  // ✅ Form param đúng format của WOWBUY
+  const params = {
+    SALE_STATUS: ["0", "1"], // On sale + Off sale
     SD: startDate,
     ED: endDate,
-    SALE_STATUS: "On sale",
-    WH: "",
-    SKUSN: "",
-    KS: "",
-    SN: "",
+    WH: [],
+    SKUSN: [],
+    KS: [],
+    SN: ""
   };
 
-  const resp = await safeFetchVerbose(formUrl, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/x-www-form-urlencoded",
-      authorization: `Bearer ${session.token}`,
-      cookie: session.cookie,
-      referer: session.entryUrl,
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-      "x-requested-with": "XMLHttpRequest",
+  // WOWBUY yêu cầu gói param trong field "__parameters__"
+  const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
+
+  const resp = await safeFetchVerbose(
+    formUrl,
+    {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: `Bearer ${session.token}`,
+        cookie: session.cookie,
+        referer: session.entryUrl,
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        "x-requested-with": "XMLHttpRequest",
+      },
+      body,
     },
-    body: new URLSearchParams(formData).toString(),
-  }, "SUBMIT_FORM");
+    "SUBMIT_FORM"
+  );
 
   if (resp.status === 200) {
     console.log("✅ Form submitted successfully");
@@ -1410,34 +1476,51 @@ async function submitReportForm() {
 }
 
 async function fetchPageContent() {
-  console.log("📡 Fetching page content...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=1&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
-  const resp = await safeFetchVerbose(url, {
-    method: "GET",
-    headers: {
-      accept: "text/html, */*; q=0.01",
-      "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
-      authorization: session.token,
-      cookie: session.cookie,
-      referer: session.entryUrl,
-      "user-agent": "Mozilla/5.0",
-      "x-requested-with": "XMLHttpRequest",
-    },
-  }, "PAGE_CONTENT");
+  console.log("📡 Fetching all page content...");
 
-  const raw = resp.text || "";
-  let html = raw;
-  if (resp.json?.html) html = resp.json.html;
+  let allRows = [];
+  let pn = 1;
+  let totalPages = 1;
 
-  const $ = cheerio.load(html);
-  const rows = [];
-  $("table tr").each((i, tr) => {
-    const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-    if (cols.length > 0) rows.push(cols);
-  });
-  console.log("📊 Parsed rows:", rows.length);
-  if (rows.length > 0) console.log("🔎 First 1 rows:", rows.slice(0, 1));
-  return rows;
+  do {
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
+    
+    const resp = await safeFetchVerbose(url, {
+      method: "GET",
+      headers: {
+        accept: "text/html, */*; q=0.01",
+        "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
+        authorization: session.token,
+        cookie: session.cookie,
+        referer: session.entryUrl,
+        "user-agent": "Mozilla/5.0",
+        "x-requested-with": "XMLHttpRequest",
+      },
+    }, `PAGE_CONTENT: PN=${pn}`);
+
+    const raw = resp.text || "";
+    let html = raw;
+    if (resp.json?.html) html = resp.json.html;
+
+    const $ = cheerio.load(html);
+    $("table tr").each((i, tr) => {
+      const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
+      if (cols.length > 0) allRows.push(cols);
+    });
+
+    console.log(`📊 Page ${pn}: ${allRows.length} rows total so far`);
+
+    // Cập nhật totalPages từ JSON nếu có
+    if (resp.json?.pageCount) totalPages = resp.json.pageCount;
+    else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
+
+    pn++;
+  } while (pn <= totalPages);
+
+  console.log("📊 All pages fetched, total rows:", allRows.length);
+  if (allRows.length > 0) console.log("🔎 First 1 rows:", allRows.slice(0, 1));
+
+  return allRows;
 }
 
 // ======= Main flow =======
@@ -1448,9 +1531,6 @@ async function fetchWOWBUY() {
       console.error("❌ Aborting: login failed");
       return [];
     }
-
-    // 👉 Gọi listSheets để debug/mapping
-    await listSheets();
 
     await initWOWBUYSession();
     const data = await fetchPageContent();
@@ -1483,43 +1563,6 @@ async function getTenantAccessToken() {
     console.error("❌ Lỗi lấy tenant access token:", err.message);
     if (err.response) console.error("📥 Error response:", err.response.data);
     throw err;
-  }
-}
-
-/**
- * Lấy danh sách sheet (tab) trong file
- */
-async function listSheets() {
-  try {
-    const token = await getTenantAccessToken();
-
-    const url = `https://open.larksuite.com/open-apis/sheet/v3/spreadsheets/${SPREADSHEET_TOKEN_TEST}/sheets_query`;
-
-    const resp = await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    console.log("========== DEBUG LIST SHEETS ==========");
-    console.log("🔗 URL:", url);
-    console.log("📥 Raw response:", JSON.stringify(resp.data, null, 2));
-    console.log("=======================================");
-
-    if (resp.data.code === 0) {
-      resp.data.data.sheets.forEach((sheet) => {
-        console.log(`📄 Sheet title="${sheet.title}", sheet_id="${sheet.sheet_id}"`);
-      });
-    } else {
-      console.warn("⚠️ Lark API trả lỗi:", resp.data);
-    }
-
-    return resp.data;
-  } catch (err) {
-    console.error("❌ Lỗi gọi listSheets:", err.message);
-    if (err.response) {
-      console.error("📥 Error response:", JSON.stringify(err.response.data, null, 2));
-    }
   }
 }
 
