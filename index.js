@@ -897,7 +897,6 @@ cron.schedule(
    SECTION NEW — Cron gửi hình U1:Y đến dòng cuối cột V
    ================================================== */
 
-const SPREADSHEET_TOKEN_RAW = process.env.SPREADSHEET_TOKEN_RAW;
 const SHEET_ID_PC = process.env.SHEET_ID_PC;
 
 async function getSheetValuesDynamic(APP_ACCESS_TOKEN) {
@@ -1042,7 +1041,7 @@ async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
 
 // Cron 9h30 hàng ngày (giờ VN)
 cron.schedule(
-  "20 14 * * *",
+  "30 14 * * *",
   async () => {
     try {
       const APP_ACCESS_TOKEN = await getAppAccessToken();
