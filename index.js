@@ -897,12 +897,12 @@ cron.schedule(
    SECTION NEW — Cron gửi hình U1:Y đến dòng cuối cột V
    ================================================== */
 
-const SPREADSHEET_TOKEN_NEW = "LYYqsXmnPhwwGHtKP00lZ1IWgDb";
-const SHEET_ID_NEW = "3UQxbQ";
+const SPREADSHEET_TOKEN_RAW = process.env.SPREADSHEET_TOKEN_RAW;
+const SHEET_ID_PC = process.env.SHEET_ID_PC;
 
 async function getSheetValuesDynamic(APP_ACCESS_TOKEN) {
-  const CHECK_RANGE = `${SHEET_ID_NEW}!U1:Y200`; // lấy U..Y
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_NEW}/values/${encodeURIComponent(
+  const CHECK_RANGE = `${SHEET_ID_PC}!U1:Y200`; // lấy U..Y
+  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_RAW}/values/${encodeURIComponent(
     CHECK_RANGE
   )}?valueRenderOption=FormattedValue`;
 
@@ -1040,9 +1040,9 @@ async function sendDynamicSheetAsImage(APP_ACCESS_TOKEN) {
   await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
 }
 
-// Cron mỗi 60 phút
+// Cron 9h30 hàng ngày (giờ VN)
 cron.schedule(
-  "*/60 * * * *",
+  "20 14 * * *",
   async () => {
     try {
       const APP_ACCESS_TOKEN = await getAppAccessToken();
