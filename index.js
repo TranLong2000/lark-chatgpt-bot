@@ -1535,10 +1535,29 @@ function columnNumberToName(n) {
 }
 
 // ===== Helper: Giữ nguyên số/ngày/boolean, chỉ string mới để nguyên =====
-function normalizeValue(v) {
+function dateToExcelSerial(dateStr) {
+  // Chuyển "YYYY-MM-DD" → số serial Excel
+  const date = new Date(dateStr);
+  if (isNaN(date)) return dateStr; // fallback text
+  const excelEpoch = new Date("1899-12-30T00:00:00Z"); // Excel bắt đầu từ 1899-12-30
+  const diff = (date - excelEpoch) / (1000 * 60 * 60 * 24);
+  return Math.floor(diff);
+}
+
+function normalizeValue(v, colIndex) {
   if (v === null || v === undefined) return "";
+
+  // Nếu cột là ngày (ví dụ: colIndex = 1 hoặc tên có "date")
+  if (colIndex === 0 || /date/i.test(v)) {
+    return dateToExcelSerial(v);
+  }
+
+  // Nếu cột là giá (giả sử nằm ở colIndex 5 hoặc có ký hiệu tiền tệ)
+  if (typeof v === "string" && v.match(/^\d+(\.\d+)?$/)) {
+    return Number(v);
+  }
+
   if (typeof v === "number" || typeof v === "boolean") return v;
-  if (!isNaN(v)) return Number(v); // "123" -> 123
   return String(v);
 }
 
@@ -1562,7 +1581,9 @@ async function writeToLark(tableData) {
     const endColIndex = startColIndex + cols - 1;
     const endColName = columnNumberToName(endColIndex);
 
-    const normalizedData = tableData.map(row => row.map(normalizeValue));
+   const normalizedData = tableData.map(row =>
+     row.map((val, colIdx) => normalizeValue(val, colIdx))
+   );
 
     // ⚠️ SHEET_ID_TEST phải là sheet_id (ví dụ: EmjelX)
     const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
