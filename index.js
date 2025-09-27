@@ -1366,11 +1366,9 @@ async function fetchPageContent() {
   console.log("📡 Fetching all page content...");
   let allRows = [];
   let pn = 1;
-  let totalPages = Infinity; // ban đầu chưa biết số trang
+  let totalPages = null;
 
-  const PAGE_SIZE = 36; // nếu bạn biết số row/trang chuẩn
-
-  while (pn <= totalPages) {
+  while (true) {
     const timestamp = Date.now();
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
 
@@ -1387,6 +1385,7 @@ async function fetchPageContent() {
       },
     }, `PAGE_CONTENT: PN=${pn}`);
 
+    // ==== Parse HTML ====
     const html = resp.json?.html || resp.text || "";
     const $ = cheerio.load(html);
 
@@ -1402,15 +1401,25 @@ async function fetchPageContent() {
 
     console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows this page, total rows so far: ${allRows.length}`);
 
-    // Lấy totalPages nếu server trả
-    if (resp.json?.pageCount) totalPages = resp.json.pageCount;
-    else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
+    // ==== Cập nhật totalPages từ JSON nếu có ====
+    if (!totalPages) {
+      if (resp.json?.pageCount) totalPages = resp.json.pageCount;
+      else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
+    }
 
-    // Nếu server không trả totalPages, dùng row count để dừng
-    if (!resp.json?.pageCount && rowsThisPage < PAGE_SIZE) break;
+    // ==== Kiểm tra dừng ====
+    if (totalPages && pn >= totalPages) break; // biết tổng trang
+    if (!totalPages) {
+      // Nếu page rỗng → dừng
+      if (rowsThisPage === 0) break;
+
+      // Hoặc kiểm tra nút Next trong HTML
+      const nextBtn = $(".fr-pagination .next");
+      if (!nextBtn.length || nextBtn.hasClass("disabled")) break;
+    }
 
     pn++;
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 300)); // delay nhẹ tránh block
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
