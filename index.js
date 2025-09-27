@@ -1332,150 +1332,120 @@ async function initWOWBUYSession() {
   }
 }
 
-// 📝 SUBMIT FORM
-async function submitReportForm() {
+// Gửi form để mở sessionID cho report
+async function submitReportForm(entryUrl, session) {
   console.log("📤 Submitting report form...");
 
-  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
-  const today = new Date();
-  const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
-  const ED = today.toISOString().split("T")[0];
+  try {
+    const resp = await safeFetchVerbose(entryUrl, {
+      method: "GET",
+      headers: {
+        accept: "text/html, */*; q=0.01",
+        authorization: `Bearer ${session.token}`,
+        cookie: session.cookie,
+        referer: entryUrl,
+        "user-agent": "Mozilla/5.0",
+      },
+    }, "SUBMIT_REPORT_FORM");
 
-  const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
-  const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
-
-  const resp = await safeFetchVerbose(formUrl, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/x-www-form-urlencoded",
-      authorization: `Bearer ${session.token}`,
-      cookie: session.cookie,
-      referer: session.entryUrl,
-      "user-agent": "Mozilla/5.0",
-      "x-requested-with": "XMLHttpRequest",
-    },
-    body,
-  }, "SUBMIT_FORM");
-
-  if (resp.status === 200) {
-    console.log("✅ Form submitted successfully");
-
-    // In toàn bộ response để debug
-    if (resp.json) {
-      console.log("🔎 submitReportForm JSON response:", JSON.stringify(resp.json, null, 2));
-    } else if (resp.text) {
-      console.log("🔎 submitReportForm TEXT response:", resp.text.slice(0, 500));
-    }
-
-    // Thử extract widgetName từ JSON
-    const widgetNames = [];
-    if (resp.json?.components) {
-      for (const comp of resp.json.components) {
-        if (comp.widgetName) widgetNames.push(comp.widgetName);
-      }
-    }
-
-    if (widgetNames.length) {
-      console.log("🔎 Found widgetNames:", widgetNames);
-      session.widgetName = widgetNames[0];
+    if (!resp.text || !resp.text.includes("sessionID")) {
+      console.log("⚠️ No sessionID found in form response, using fallback");
     } else {
-      console.warn("⚠️ No widgetNames found in form response, fallback to formSubmit0");
-      session.widgetName = "formSubmit0";
+      console.log("✅ Form submitted successfully");
     }
-  } else {
-    console.warn("⚠️ Form submit failed with status:", resp.status);
+
+    return true;
+  } catch (err) {
+    console.error("🔥 Error in submitReportForm:", err);
+    return false;
   }
-  return resp;
 }
 
-// 📝 FETCH PAGE CONTENT
-async function fetchPageContent() {
-  console.log("📡 Fetching all page content (by widget)...");
+// Lấy tất cả page content (Purchase Plan)
+async function fetchPageContent(entryUrl, session) {
+  console.log("📡 Fetching all page content (Purchase Plan mode)...");
 
   const allRows = [];
   let pn = 1;
-  let totalPages = null;
 
   while (true) {
     const timestamp = Date.now();
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content` +
-                `&widgetname=formSubmit0` +   // 👉 sửa widgetName theo log
-                `&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}&sessionID=${session.sessionid}`;
+    const baseUrl = entryUrl.replace("/entry/access/", "/view/report?");
+    const url = `${baseUrl}&op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}&sessionID=${session.sessionid}`;
 
-    try {
-      const resp = await safeFetchVerbose(url, {
-        method: "GET",
-        headers: {
-          accept: "application/json, text/javascript, */*; q=0.01",
-          authorization: `Bearer ${session.token}`,
-          cookie: session.cookie,
-          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-          "x-requested-with": "XMLHttpRequest",
-        },
-      }, `PAGE_CONTENT: PN=${pn}`);
+    const resp = await safeFetchVerbose(url, {
+      method: "GET",
+      headers: {
+        accept: "text/html, */*; q=0.01",
+        authorization: `Bearer ${session.token}`,
+        cookie: session.cookie,
+        referer: entryUrl,
+        "user-agent": "Mozilla/5.0",
+        "x-requested-with": "XMLHttpRequest",
+      },
+    }, `PAGE_CONTENT: PN=${pn}`);
 
-      const html = resp.json?.html || resp.text || "";
-
-      if (!html.trim()) {
-        console.log(`⛔ Empty response at PN=${pn}, stopping.`);
-        break;
-      }
-
-      // detect số trang
-      if (pn === 1 && !totalPages) {
-        const totalPagesMatch = html.match(/data-totalpages=["']?(\d+)["']?/i);
-        if (totalPagesMatch) {
-          totalPages = parseInt(totalPagesMatch[1], 10);
-          console.log(`📌 Detected totalPages = ${totalPages}`);
-        }
-      }
-
-      // parse rows
-      const $ = cheerio.load(html);
-      let rowsThisPage = 0;
-      $("table tr").each((i, tr) => {
-        const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-        if (cols.length) {
-          allRows.push(cols);
-          rowsThisPage++;
-        }
-      });
-      console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
-
-      if (totalPages && pn >= totalPages) {
-        console.log(`✅ Last page reached at PN=${pn}`);
-        break;
-      }
-
-      pn++;
-      await new Promise(r => setTimeout(r, 300));
-    } catch (err) {
-      console.error(`🔥 Error fetching PN=${pn}:`, err);
+    const html = resp.json?.html || resp.text || "";
+    if (!html || !html.trim()) {
+      console.log(`⛔ Empty response at PN=${pn}, stopping`);
       break;
     }
+
+    // parse rows
+    const $ = cheerio.load(html);
+    let rowsThisPage = 0;
+    $("table tr").each((i, tr) => {
+      const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
+      if (cols.length) {
+        allRows.push(cols);
+        rowsThisPage++;
+      }
+    });
+
+    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
+
+    if (rowsThisPage === 0) break;
+    pn++;
+    await new Promise(r => setTimeout(r, 300));
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
 
-// ===== Main flow =====
-async function fetchWOWBUY() {
-  try {
-    const s = await loginWOWBUY();
-    if (!s) { console.error("❌ Aborting: login failed"); return []; }
+// Luồng chính lấy dữ liệu WOWBUY
+async function fetchWOWBUY(reportName = "Purchase Plan") {
+  console.log("📥 entryUrl:", session.entryUrl);
 
-    await initWOWBUYSession();
-    await submitReportForm();
-    const data = await fetchPageContent();
+  // Lấy sessionID từ entryUrl
+  console.log("📡 ENTRY ACCESS to fetch sessionID...");
+  const entryResp = await safeFetchVerbose(session.entryUrl, {
+    method: "GET",
+    headers: {
+      accept: "text/html, */*; q=0.01",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      referer: session.entryUrl,
+      "user-agent": "Mozilla/5.0",
+    },
+  }, "ENTRY_ACCESS");
 
-    console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
-    return data;
-  } catch (err) {
-    console.error("❌ Lỗi trong fetchWOWBUY:", err.message, err.stack);
+  const sessionMatch = (entryResp.text || "").match(/"sessionID":"([a-f0-9-]+)"/);
+  if (!sessionMatch) {
+    console.error("❌ Cannot extract sessionID");
     return [];
   }
+  session.sessionid = sessionMatch[1];
+  console.log("🆔 sessionID extracted:", session.sessionid);
+
+  // Submit report form
+  await submitReportForm(session.entryUrl, session);
+
+  // Fetch all page content
+  const allRows = await fetchPageContent(session.entryUrl, session);
+
+  console.log(`📊 Fetched data from WOWBUY: ${allRows.length} rows`);
+  return allRows;
 }
 
 /**
