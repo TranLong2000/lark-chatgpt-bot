@@ -1383,13 +1383,8 @@ async function initWOWBUYSession() {
 
 // ===== Submit report form =====
 async function submitReportForm() {
-  if (!session.widgetName) {
-    console.warn("⚠️ widgetName not set, using default 'formSubmit0'");
-    session.widgetName = "formSubmit0";
-  }
-
   console.log("📤 Submitting report form...");
-  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=${session.widgetName}&sessionID=${session.sessionid}`;
+  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
   const today = new Date();
   const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
   const ED = today.toISOString().split("T")[0];
@@ -1411,23 +1406,28 @@ async function submitReportForm() {
     body,
   }, "SUBMIT_FORM");
 
-  if (resp.status === 200) console.log("✅ Form submitted successfully");
-  else console.warn("⚠️ Form submit failed with status:", resp.status);
+  if (resp.status !== 200) {
+    console.warn("⚠️ Form submit failed with status:", resp.status);
+    return 0;
+  }
 
-  // Lưu lại totalPage từ response JSON nếu có
-  session.totalPages = resp.json?.totalPage || 1;
+  // Lấy totalPages từ JSON
+  let totalPages = 1;
+  if (resp.json?.totalPage) totalPages = resp.json.totalPage;
 
-  return resp;
+  console.log(`✅ Form submitted successfully, total pages: ${totalPages}`);
+  session.totalPages = totalPages;
+  return totalPages;
 }
 
 async function fetchPageContent() {
   console.log("📡 Fetching all page content...");
-  let allRows = [];
+  const allRows = [];
   const totalPages = session.totalPages || 1;
 
   for (let pn = 1; pn <= totalPages; pn++) {
     const timestamp = Date.now();
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&widgetname=${session.widgetName}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
 
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1442,7 +1442,7 @@ async function fetchPageContent() {
       },
     }, `PAGE_CONTENT: PN=${pn}`);
 
-    // Lấy HTML table
+    // Parse HTML
     const html = resp.json?.html || resp.text || "";
     const $ = cheerio.load(html);
 
@@ -1455,7 +1455,7 @@ async function fetchPageContent() {
       }
     });
 
-    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows this page, total rows so far: ${allRows.length}`);
+    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
     await new Promise(r => setTimeout(r, 300));
   }
 
