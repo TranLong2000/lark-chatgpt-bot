@@ -1294,8 +1294,9 @@ async function fetchPageContent(entryUrl, session) {
       `?_=${timestamp}&op=page_content&pn=${pn}` +
       `&__webpage__=true&__boxModel__=true` +
       `&_paperWidth=174&_paperHeight=510&__fit__=false` +
-      `&widgetName=${session.widgetName}`; // ✅ quan trọng: widgetName
+      `&widgetName=${session.widgetName}`;
 
+    console.log(`📡 Fetching PN=${pn} with sessionID=${session.sessionid}`);
     const resp = await safeFetchVerbose(url, {
       method: "GET",
       headers: {
@@ -1310,7 +1311,12 @@ async function fetchPageContent(entryUrl, session) {
     }, `PAGE_CONTENT: PN=${pn}`);
 
     const html = resp.json?.html || resp.text || "";
-    if (!html || !html.trim()) break;
+    console.log(`📥 Page ${pn} HTML length:`, html.length);
+
+    if (!html || !html.trim()) {
+      console.log(`⛔ Empty response at PN=${pn}, stopping`);
+      break;
+    }
 
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
@@ -1319,7 +1325,7 @@ async function fetchPageContent(entryUrl, session) {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
       if (cols.length) {
         const lastRow = allRows[allRows.length - 1];
-        // Loại trùng: tránh fetch lại page lặp
+        // loại trùng
         if (!lastRow || lastRow.join("|") !== cols.join("|")) {
           allRows.push(cols);
           rowsThisPage++;
@@ -1331,22 +1337,23 @@ async function fetchPageContent(entryUrl, session) {
     if (rowsThisPage === 0) break;
 
     pn++;
-    if (pn > 200) break; // giới hạn max 200 pages
-    await new Promise(r => setTimeout(r, 600)); // tăng delay tránh backend chưa kịp render
+    if (pn > 200) break;
+    await new Promise(r => setTimeout(r, 600));
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
 
+
 // ======== Main flow (Purchase Plan only) ========
 async function fetchWOWBUY() {
   try {
     console.log("🔐 Login WOWBUY...");
-    const loginResp = await loginWOWBUY(); // dùng hàm loginWOWBUY cũ
-    if (!loginResp) return [];
+    const s = await loginWOWBUY(); // login giữ token + cookie
+    if (!s) return [];
 
-    // Chỉ sử dụng UUID báo cáo Purchase Plan
+    // Fix trực tiếp UUID báo cáo Purchase Plan
     session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=174&height=667`;
     session.widgetName = "formSubmit0";
 
@@ -1373,7 +1380,10 @@ async function fetchWOWBUY() {
       console.log("🆔 sessionID extracted:", session.sessionid);
     }
 
+    console.log("📡 Init WOWBUY session resources...");
     await initWOWBUYSession();
+
+    console.log("📤 Submitting report form...");
     await submitReportForm();
 
     const data = await fetchPageContent(session.entryUrl, session);
@@ -1384,11 +1394,6 @@ async function fetchWOWBUY() {
     return [];
   }
 }
-
-// ======== Execute ========
-fetchWOWBUY().then(rows => {
-  console.log("✅ DONE, total rows fetched:", rows.length);
-});
 
 
 /**
