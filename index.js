@@ -16,7 +16,6 @@ const fs = require('fs');
 const path = require('path');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
-const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
 const moment = require('moment-timezone');
 const QuickChart = require('quickchart-js');
@@ -1399,7 +1398,7 @@ async function submitReportForm() {
   const endDate = today.toISOString().split("T")[0];
 
   const params = {
-    SALE_STATUS: ["0", "1"],
+    SALE_STATUS: ["0", "1"], // On sale + Off sale
     SD: startDate,
     ED: endDate,
     WH: [],
@@ -1423,21 +1422,62 @@ async function submitReportForm() {
 
   // ✅ Lấy exportDataId từ JSON trả về
   const exportDataId = resp.json?.data?.exportDataId || resp.json?.data?.dataId;
+  if (!exportDataId) {
+    console.error("❌ Không lấy được exportDataId từ form response");
+    return null;
+  }
   return exportDataId;
 }
 
-async function runSubmit() {
-  const exportDataId = await submitReportForm();
-  if (!exportDataId) {
-    console.error("❌ Không lấy được exportDataId từ form response");
-    return;
-  }
-  console.log("✅ exportDataId:", exportDataId);
+async function checkExportRegister() {
+  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=export&cmd=check_register`;
+  const resp = await safeFetchVerbose(url, {
+    method: "GET",
+    headers: {
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "x-requested-with": "XMLHttpRequest",
+    }
+  }, "CHECK_EXPORT_REGISTER");
+  return resp.json;
 }
 
-runSubmit();
+async function checkExportFont() {
+  const url = `${WOWBUY_BASEURL}/webroot/decision/export/check/font`;
+  const resp = await safeFetchVerbose(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body: "format=excel"
+  }, "CHECK_EXPORT_FONT");
+  return resp.json;
+}
 
-// ===== Fetch all pages =====
+async function pollExportExcel(exportDataId) {
+  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
+  const body = `op=export&cmd=export_polling&type=excel&data=${exportDataId}`;
+
+  const resp = await safeFetchVerbose(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body
+  }, "EXPORT_POLLING");
+
+  // ✅ resp.text / resp.data sẽ là file Excel thô (binary)
+  return resp;
+}
+
+
+// ===== Fetch Excel from Wowbuy =====
 async function fetchExcelFromWOWBUY(exportDataId) {
   const exportUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
   const body = `op=export&cmd=export_polling&type=excel&data=${exportDataId}`;
@@ -1445,17 +1485,16 @@ async function fetchExcelFromWOWBUY(exportDataId) {
   const resp = await safeFetchVerbose(exportUrl, {
     method: "POST",
     headers: {
-      "content-type": "application/x-www-form-urlencoded",
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
       authorization: `Bearer ${session.token}`,
       cookie: session.cookie,
-      sessionid: session.sessionid,
       "x-requested-with": "XMLHttpRequest",
     },
     body
   }, "EXPORT_EXCEL");
 
-  // resp.text hoặc resp.arrayBuffer() tùy dữ liệu trả về
-  return resp;
+  // Trả về buffer để parse Excel
+  return resp.arrayBuffer ? await resp.arrayBuffer() : resp.text;
 }
 
 // ===== Main flow =====
@@ -1465,12 +1504,24 @@ async function fetchWOWBUY() {
     if (!s) return [];
 
     await initWOWBUYSession();
+
+    // Lấy exportDataId
     const exportDataId = await submitReportForm();
     if (!exportDataId) throw new Error("Không lấy được exportDataId");
 
-    const excelResp = await fetchExcelFromWOWBUY(exportDataId);
-    // parse excelResp nếu cần
-    return excelResp;
+    // Lấy dữ liệu Excel
+    const excelBuffer = await fetchExcelFromWOWBUY(exportDataId);
+
+    // ===== Parse Excel ra array =====
+    const XLSX = require("xlsx");
+    const workbook = XLSX.read(excelBuffer, { type: "buffer" });
+    const sheetName = workbook.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1 });
+
+    console.log("📊 Fetched rows from Excel:", rows.length);
+    if (rows.length > 0) console.log("🔎 First 1 row:", rows.slice(0, 1));
+
+    return rows;
   } catch (err) {
     console.error("❌ Lỗi trong fetchWOWBUY:", err);
     return [];
