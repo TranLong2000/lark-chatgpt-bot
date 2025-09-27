@@ -1335,6 +1335,7 @@ async function initWOWBUYSession() {
 // ===== Submit report form =====
 async function submitReportForm() {
   console.log("📤 Submitting report form...");
+
   const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
   const today = new Date();
   const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
@@ -1357,63 +1358,23 @@ async function submitReportForm() {
     body,
   }, "SUBMIT_FORM");
 
-  if (resp.status === 200) console.log("✅ Form submitted successfully");
-  else console.warn("⚠️ Form submit failed with status:", resp.status);
+  if (resp.status === 200) {
+    console.log("✅ Form submitted successfully");
+  } else {
+    console.warn("⚠️ Form submit failed with status:", resp.status);
+  }
   return resp;
 }
 
 // ===== Fetch all pages =====
-// ---- helper: lấy totalPages từ resp hoặc html ----
-function extractTotalPagesFromResp(resp, html = "") {
-  try {
-    const j = resp.json || {};
-    if (j.totalPages) return j.totalPages;
-    if (j.pageCount) return j.pageCount;
-    if (j.data?.totalPages) return j.data.totalPages;
-
-    const patterns = [
-      /Page\s*\d+\s*of\s*(\d+)/i,
-      /共\s*(\d+)\s*页/,
-      /"totalPage"\s*:\s*(\d+)/i,
-      /"pageCount"\s*:\s*(\d+)/i
-    ];
-    for (const p of patterns) {
-      const m = html.match(p);
-      if (m) return Number(m[1]);
-    }
-  } catch (_) {}
-  return null;
-}
-
-// ---- helper: tạo chữ ký page để phát hiện lặp ----
-function pageSignatureFromHtml(html) {
-  try {
-    const $ = cheerio.load(html || "");
-    const rows = $("table").first().find("tr").slice(0, 5).map((i, tr) => {
-      return $(tr).find("td,th").map((j, td) => $(td).text().trim()).get().join("|");
-    }).get();
-    if (rows.length) return rows.join("||");
-    return String(html).slice(0, 500);
-  } catch {
-    return String(html).slice(0, 500);
-  }
-}
-
 async function fetchPageContent() {
-  console.log("📡 Fetching all page content (improved)...");
+  console.log("📡 Fetching all page content (pn loop mode)...");
 
   const allRows = [];
   let pn = 1;
-  let totalPages = null;
-  const seenSignatures = new Set();
-  const MAX_PAGES = 200;
+  const MAX_PAGES = 16;
 
-  while (true) {
-    if (pn > MAX_PAGES) {
-      console.warn("⚠️ Stop: reached MAX_PAGES");
-      break;
-    }
-
+  while (pn <= MAX_PAGES) {
     const timestamp = Date.now();
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content` +
                 `&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
@@ -1433,21 +1394,12 @@ async function fetchPageContent() {
 
     const html = resp.json?.html || resp.text || "";
 
-    // lấy totalPages 1 lần
-    if (!totalPages) {
-      totalPages = extractTotalPagesFromResp(resp, html);
-      if (totalPages) console.log(`🔢 Detected totalPages=${totalPages}`);
-    }
-
-    // detect duplicate page
-    const signature = pageSignatureFromHtml(html);
-    if (seenSignatures.has(signature)) {
-      console.log(`🔁 Duplicate page at PN=${pn}, stopping`);
+    if (!html || !html.trim()) {
+      console.log(`⛔ Empty response at PN=${pn}, stopping.`);
       break;
     }
-    seenSignatures.add(signature);
 
-    // parse rows
+    // Parse rows
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
@@ -1460,13 +1412,8 @@ async function fetchPageContent() {
 
     console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
 
-    // điều kiện dừng
-    if (totalPages && pn >= totalPages) {
-      console.log("✅ Done: reached totalPages");
-      break;
-    }
     if (rowsThisPage === 0) {
-      console.log("⛔ No rows → last page");
+      console.log(`⛔ No rows at PN=${pn}, assuming last page.`);
       break;
     }
 
@@ -1477,7 +1424,6 @@ async function fetchPageContent() {
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
-
 
 // ===== Main flow =====
 async function fetchWOWBUY() {
