@@ -1391,92 +1391,77 @@ async function initWOWBUYSession() {
   }
 }
 
-// ===== Submit report form =====
 async function submitReportForm() {
-  console.log("📤 Submitting report form...");
   const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
-  const today = new Date();
-  const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
-  const ED = today.toISOString().split("T")[0];
 
-  const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
+  const today = new Date();
+  const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
+  const endDate = today.toISOString().split("T")[0];
+
+  const params = {
+    SALE_STATUS: ["0", "1"],
+    SD: startDate,
+    ED: endDate,
+    WH: [],
+    SKUSN: [],
+    KS: [],
+    SN: ""
+  };
+
   const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
 
   const resp = await safeFetchVerbose(formUrl, {
     method: "POST",
     headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
       "content-type": "application/x-www-form-urlencoded",
       authorization: `Bearer ${session.token}`,
       cookie: session.cookie,
-      referer: session.entryUrl,
-      "user-agent": "Mozilla/5.0",
       "x-requested-with": "XMLHttpRequest",
     },
     body,
   }, "SUBMIT_FORM");
 
-  if (resp.status === 200) console.log("✅ Form submitted successfully");
-  else console.warn("⚠️ Form submit failed with status:", resp.status);
-  return resp;
+  // ✅ Lấy exportDataId từ JSON trả về
+  const exportDataId = resp.json?.data?.exportDataId || resp.json?.data?.dataId;
+  return exportDataId;
 }
 
 // ===== Fetch all pages =====
-async function fetchPageContent() {
-  console.log("📡 Fetching all page content...");
-  let allRows = [], pn = 1, totalPages = 1;
+async function fetchExcelFromWOWBUY(exportDataId) {
+  const exportUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
+  const body = `op=export&cmd=export_polling&type=excel&data=${exportDataId}`;
 
-  do {
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
-    const resp = await safeFetchVerbose(url, {
-      method: "GET",
-      headers: {
-        accept: "text/html, */*; q=0.01",
-        "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
-        authorization: session.token,
-        cookie: session.cookie,
-        referer: session.entryUrl,
-        "user-agent": "Mozilla/5.0",
-        "x-requested-with": "XMLHttpRequest",
-      },
-    }, `PAGE_CONTENT: PN=${pn}`);
+  const resp = await safeFetchVerbose(exportUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      sessionid: session.sessionid,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body
+  }, "EXPORT_EXCEL");
 
-    const raw = resp.text || "";
-    let html = raw;
-    if (resp.json?.html) html = resp.json.html;
-
-    const $ = cheerio.load(html);
-    $("table tr").each((i, tr) => {
-      const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-      if (cols.length > 0) allRows.push(cols);
-    });
-
-    console.log(`📊 Page ${pn}: ${allRows.length} rows total so far`);
-    if (resp.json?.pageCount) totalPages = resp.json.pageCount;
-    else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
-
-    pn++;
-  } while (pn <= totalPages);
-
-  console.log("📊 All pages fetched, total rows:", allRows.length);
-  if (allRows.length > 0) console.log("🔎 First 1 rows:", allRows.slice(0, 1));
-  return allRows;
+  // resp.text hoặc resp.arrayBuffer() tùy dữ liệu trả về
+  return resp;
 }
 
 // ===== Main flow =====
 async function fetchWOWBUY() {
   try {
     const s = await loginWOWBUY();
-    if (!s) { console.error("❌ Aborting: login failed"); return []; }
+    if (!s) return [];
 
     await initWOWBUYSession();
-    await submitReportForm();
-    const data = await fetchPageContent();
+    const exportDataId = await submitReportForm();
+    if (!exportDataId) throw new Error("Không lấy được exportDataId");
 
-    console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
-    return data;
+    const excelResp = await fetchExcelFromWOWBUY(exportDataId);
+    // parse excelResp nếu cần
+    return excelResp;
   } catch (err) {
-    console.error("❌ Lỗi trong fetchWOWBUY:", err.message, err.stack);
+    console.error("❌ Lỗi trong fetchWOWBUY:", err);
     return [];
   }
 }
