@@ -1337,41 +1337,57 @@ async function submitReportForm() {
   console.log("📤 Submitting report form...");
 
   const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
+  const today = new Date();
+  const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
+  const ED = today.toISOString().split("T")[0];
 
-  try {
-    const resp = await safeFetchVerbose(formUrl, {
-      method: "GET",
-      headers: {
-        accept: "application/json, text/javascript, */*; q=0.01",
-        authorization: `Bearer ${session.token}`,
-        cookie: session.cookie,
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
-        "x-requested-with": "XMLHttpRequest",
-      },
-    }, "SUBMIT_FORM");
+  const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
+  const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
 
-    if (resp.status === 200) {
-      console.log("✅ Form submitted successfully");
+  const resp = await safeFetchVerbose(formUrl, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      referer: session.entryUrl,
+      "user-agent": "Mozilla/5.0",
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body,
+  }, "SUBMIT_FORM");
 
-      const html = resp.text || "";
-      // Tìm toàn bộ widgetName trong response
-      const widgetMatches = html.match(/widgetname=["']([^"']+)["']/g) || [];
-      const cleanWidgets = widgetMatches.map(m => m.replace(/widgetname=|['"]/g, ""));
+  if (resp.status === 200) {
+    console.log("✅ Form submitted successfully");
 
-      if (cleanWidgets.length > 0) {
-        console.log("🔎 Found widgetNames:", cleanWidgets);
-      } else {
-        console.log("⚠️ No widgetNames found in form response");
-      }
-
-    } else {
-      console.error("❌ Form submit failed", resp.status, resp.text);
+    // In toàn bộ response để debug
+    if (resp.json) {
+      console.log("🔎 submitReportForm JSON response:", JSON.stringify(resp.json, null, 2));
+    } else if (resp.text) {
+      console.log("🔎 submitReportForm TEXT response:", resp.text.slice(0, 500));
     }
-  } catch (err) {
-    console.error("🔥 Error in submitReportForm:", err);
-  }
-}
 
+    // Thử extract widgetName từ JSON
+    const widgetNames = [];
+    if (resp.json?.components) {
+      for (const comp of resp.json.components) {
+        if (comp.widgetName) widgetNames.push(comp.widgetName);
+      }
+    }
+
+    if (widgetNames.length) {
+      console.log("🔎 Found widgetNames:", widgetNames);
+      session.widgetName = widgetNames[0];
+    } else {
+      console.warn("⚠️ No widgetNames found in form response, fallback to formSubmit0");
+      session.widgetName = "formSubmit0";
+    }
+  } else {
+    console.warn("⚠️ Form submit failed with status:", resp.status);
+  }
+  return resp;
+}
 
 // 📝 FETCH PAGE CONTENT
 async function fetchPageContent() {
