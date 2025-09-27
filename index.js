@@ -1392,21 +1392,11 @@ async function initWOWBUYSession() {
 
 async function submitReportForm() {
   const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
-
   const today = new Date();
   const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
   const endDate = today.toISOString().split("T")[0];
 
-  const params = {
-    SALE_STATUS: ["0","1"], // On sale + Off sale
-    SD: startDate,
-    ED: endDate,
-    WH: [],
-    SKUSN: [],
-    KS: [],
-    SN: ""
-  };
-
+  const params = { SALE_STATUS: ["0","1"], SD: startDate, ED: endDate, WH: [], SKUSN: [], KS: [], SN: "" };
   const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
 
   const resp = await safeFetchVerbose(formUrl, {
@@ -1417,81 +1407,69 @@ async function submitReportForm() {
       cookie: session.cookie,
       "x-requested-with": "XMLHttpRequest",
     },
-    body,
+    body
   }, "SUBMIT_FORM");
 
-  // ✅ Quan trọng: inspect toàn bộ JSON để tìm exportDataId/dataId
+  // Log JSON đầy đủ để kiểm tra exportDataId/dataId
   console.log("🔍 Form response JSON:", resp.json);
 
   const exportDataId = resp.json?.data?.exportDataId || resp.json?.data?.dataId;
-
   if (!exportDataId) throw new Error("❌ Không lấy được exportDataId từ form response");
+
   return exportDataId;
 }
 
+async function checkFont() {
+  const url = `${WOWBUY_BASEURL}/webroot/decision/export/check/font`;
+  const body = "format=excel";
+  const resp = await safeFetchVerbose(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body
+  }, "CHECK_FONT");
+
+  if (resp.json?.state !== 1) throw new Error("❌ check/font failed");
+  return true;
+}
+
+
 // ===== Fetch Excel trực tiếp từ WOWBUY =====
-async function fetchExcelFromWOWBUY() {
-  try {
-    // ===== 1. Check font (chuẩn bị export) =====
-    const checkFontUrl = `${WOWBUY_BASEURL}/webroot/decision/export/check/font`;
-    const checkFontResp = await safeFetchVerbose(checkFontUrl, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-        authorization: `Bearer ${session.token}`,
-        cookie: session.cookie,
-        sessionid: session.sessionid,
-        "x-requested-with": "XMLHttpRequest",
-      },
-      body: "format=excel",
-    }, "EXPORT_CHECK_FONT");
+async function fetchExcelFromWOWBUY(exportDataId) {
+  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
+  const body = `op=export&cmd=export_polling&type=excel&data=${exportDataId}`;
+  const resp = await safeFetchVerbose(url, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      sessionid: session.sessionid,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body
+  }, "EXPORT_EXCEL");
 
-    const dataId = checkFontResp.json?.dataId || checkFontResp.json?.exportDataId;
-    if (!dataId) throw new Error("❌ Không lấy được dataId từ check/font");
-
-    // ===== 2. Export polling =====
-    const exportUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
-    const exportBody = `op=export&cmd=export_polling&type=excel&data=${dataId}`;
-
-    const excelResp = await safeFetchVerbose(exportUrl, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        authorization: `Bearer ${session.token}`,
-        cookie: session.cookie,
-        sessionid: session.sessionid,
-        "x-requested-with": "XMLHttpRequest",
-      },
-      body: exportBody,
-    }, "EXPORT_EXCEL");
-
-    return excelResp;
-
-  } catch (err) {
-    console.error("❌ Lỗi trong fetchExcelFromWOWBUY:", err.message);
-    return null;
-  }
+  return resp; // resp.text hoặc resp.arrayBuffer() tùy server trả về
 }
 
 // ===== Main flow =====
 async function fetchWOWBUY() {
   try {
-    const s = await loginWOWBUY();
-    if (!s) return [];
-
+    await loginWOWBUY();
     await initWOWBUYSession();
 
-    const excelResp = await fetchExcelFromWOWBUY();
-    if (!excelResp) {
-      console.warn("⚠️ Không có dữ liệu Excel từ WOWBUY");
-      return [];
-    }
+    const exportDataId = await submitReportForm(); // 1. submit form
+    await checkFont();                               // 2. check font
+    const excelResp = await fetchExcelFromWOWBUY(exportDataId); // 3. export
 
-    console.log("✅ Lấy dữ liệu Excel thành công");
     return excelResp;
-
   } catch (err) {
-    console.error("❌ Lỗi trong fetchWOWBUY:", err.message);
+    console.error("❌ Lỗi trong fetchWOWBUY:", err);
     return [];
   }
 }
