@@ -1378,6 +1378,165 @@ fetchWOWBUY().then(rows => {
   console.log("✅ DONE, total rows fetched:", rows.length);
 });
 
+/**
+ * Lấy tenant access token từ Lark
+ */
+async function getTenantAccessToken() {
+  try {
+    const resp = await axios.post(
+      "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
+      { app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }
+    );
+    if (resp.data?.tenant_access_token) {
+      const token = resp.data.tenant_access_token;
+      console.log("🔑 Tenant access token retrieved:", token.slice(0, 10) + "...");
+      return token;
+    } else {
+      throw new Error("Không nhận được tenant access token từ Lark");
+    }
+  } catch (err) {
+    console.error("❌ Lỗi lấy tenant access token:", err.message);
+    if (err.response) console.error("📥 Error response:", err.response.data);
+    throw err;
+  }
+}
+
+// ===== Helper: Convert số cột thành tên cột Excel =====
+function columnNumberToName(n) {
+  let name = "";
+  while (n > 0) {
+    let r = (n - 1) % 26;
+    name = String.fromCharCode(65 + r) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name;
+}
+
+// ===== Helper: Chuyển ngày sang Excel serial =====
+function dateToExcelSerial(dateStr) {
+  const date = new Date(dateStr);
+  if (isNaN(date)) return dateStr; // fallback
+  const excelEpoch = new Date("1899-12-30T00:00:00Z");
+  const diff = (date - excelEpoch) / (1000 * 60 * 60 * 24);
+  return Math.floor(diff);
+}
+
+// ===== Helper: Auto detect value type =====
+function autoNormalize(v) {
+  if (v === null || v === undefined) return "";
+
+  if (typeof v === "number" || typeof v === "boolean") return v;
+
+  if (typeof v === "string") {
+    const raw = v.trim();
+
+    // 1️⃣ Number (loại bỏ dấu phẩy, ký tự thừa)
+    const num = Number(raw.replace(/,/g, "").replace(/[^\d.-]/g, ""));
+    if (!isNaN(num) && raw !== "") {
+      return num;
+    }
+
+    // 2️⃣ Date (ISO hoặc format phổ biến)
+    const parsed = Date.parse(raw);
+    if (!isNaN(parsed)) {
+      return dateToExcelSerial(raw);
+    }
+
+    // 3️⃣ Boolean
+    const lower = raw.toLowerCase();
+    if (["true", "false"].includes(lower)) {
+      return lower === "true";
+    }
+
+    // 4️⃣ Default string
+    return raw;
+  }
+
+  return String(v);
+}
+
+/**
+ * Ghi dữ liệu vào Lark Sheet (v2 API)
+ */
+async function writeToLark(tableData) {
+  if (!tableData || tableData.length === 0) {
+    console.warn("⚠️ Không có dữ liệu để ghi vào Lark Sheet");
+    return;
+  }
+
+  try {
+    const token = await getTenantAccessToken();
+
+    const rows = tableData.length;
+    const cols = tableData[0]?.length || 0;
+
+    // Tính range: bắt đầu từ cột J (thứ 10)
+    const startColIndex = 10;
+    const endColIndex = startColIndex + cols - 1;
+    const endColName = columnNumberToName(endColIndex);
+
+    const normalizedData = tableData.map((row, rowIdx) =>
+      row.map(val => rowIdx === 0 ? String(val) : autoNormalize(val)) // hàng 1 giữ nguyên text (header)
+    );
+
+    const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
+
+    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
+
+    const body = {
+      valueRanges: [
+        {
+          range,
+          values: normalizedData,
+        },
+      ],
+      valueInputOption: "USER_ENTERED", // cho phép hệ thống tự định dạng
+    };
+
+    console.log("========== DEBUG LARK ==========");
+    console.log("🔗 URL:", url);
+    console.log("📋 Target range:", range);
+    console.log("📊 Data size:", rows, "rows x", cols, "cols");
+    console.log("🔑 Token:", token.slice(0, 10) + "...");
+    console.log("================================");
+
+    const resp = await axios.post(url, body, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    console.log("📥 Lark response:", JSON.stringify(resp.data, null, 2));
+
+    if (resp.data.code === 0) {
+      console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
+    } else {
+      console.warn("⚠️ Lark Sheet API trả lỗi:", resp.data);
+    }
+  } catch (err) {
+    console.error("❌ Lỗi ghi Lark Sheet:", err.message);
+    if (err.response) {
+      console.error("📥 Error response:", JSON.stringify(err.response.data, null, 2));
+    }
+  }
+}
+
+// ===== CRON JOB =====
+cron.schedule("*/5 * * * *", async () => {
+  try {
+    const data = await fetchWOWBUY();
+    await writeToLark(data);
+  } catch (err) {
+    console.error("❌ Job failed:", err.message);
+  }
+});
+
+app.listen(3000, () => {
+  console.log("🚀 Bot running on port 3000");
+  fetchWOWBUY();
+});
+
 
 /* =======================================================
    SECTION 11 — Conversation memory (short, rolling window)
