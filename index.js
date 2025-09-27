@@ -1283,8 +1283,8 @@ async function getPurchasePlanWidgetName() {
 
 async function getReportId() {
   console.log("📡 GETTING REPORT TREE...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
-  
+  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_=${Date.now()}`;
+
   const resp = await safeFetchVerbose(url, {
     method: "GET",
     headers: {
@@ -1299,17 +1299,19 @@ async function getReportId() {
   if (resp.json?.data) {
     console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
 
-    // Tìm báo cáo theo TARGET_REPORT
+    // 🔎 Tìm đúng báo cáo Purchase Plan
     const report = resp.json.data.find(item => item.text === TARGET_REPORT);
 
     if (report) {
+      session.reportId = report.id;
       session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
 
-      // Lưu widgetName chính xác để fetchPageContent biết
+      // 📌 Lưu widgetName cho submit & fetch (nếu có children thì lấy children[0])
       session.widgetName = report.children?.[0]?.widgetName || report.widgetName || "formSubmit0";
 
-      console.log("📋 Selected entryUrl:", session.entryUrl);
-      console.log("📋 Selected widgetName:", session.widgetName);
+      console.log("📋 Selected report:", report.text);
+      console.log("📋 entryUrl:", session.entryUrl);
+      console.log("📋 widgetName:", session.widgetName);
     } else {
       console.warn("⚠️ No report found with text:", TARGET_REPORT);
     }
