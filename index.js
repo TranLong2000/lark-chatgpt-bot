@@ -1379,7 +1379,7 @@ async function fetchPageContent() {
 
   const allRows = [];
   let pn = 1;
-  const seenPages = new Set();
+  let totalPages = null;
 
   while (true) {
     const timestamp = Date.now();
@@ -1405,34 +1405,39 @@ async function fetchPageContent() {
       break;
     }
 
+    // 👉 detect tổng số trang ngay ở lần đầu
+    if (pn === 1 && !totalPages) {
+      const totalPagesMatch = html.match(/data-totalpages=["']?(\d+)["']?/i);
+      if (totalPagesMatch) {
+        totalPages = parseInt(totalPagesMatch[1], 10);
+        console.log(`📌 Detected totalPages = ${totalPages}`);
+      }
+    }
+
+    // Parse rows
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
-    const pageRows = [];
-
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
       if (cols.length) {
-        pageRows.push(cols);
+        allRows.push(cols);
         rowsThisPage++;
       }
     });
 
-    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows`);
+    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
 
     if (rowsThisPage === 0) {
-      console.log(`⛔ No rows at PN=${pn}, stopping.`);
+      console.log(`⛔ No rows at PN=${pn}, assuming last page.`);
       break;
     }
 
-    // check trùng
-    const pageHash = JSON.stringify(pageRows);
-    if (seenPages.has(pageHash)) {
-      console.log(`🔁 Duplicate page at PN=${pn}, stopping.`);
+    // 👉 dừng đúng lúc
+    if (totalPages && pn >= totalPages) {
+      console.log(`✅ Last page reached at PN=${pn}`);
       break;
     }
-    seenPages.add(pageHash);
 
-    allRows.push(...pageRows);
     pn++;
     await new Promise(r => setTimeout(r, 300));
   }
