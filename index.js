@@ -1390,87 +1390,57 @@ async function initWOWBUYSession() {
   }
 }
 
-async function submitReportForm() {
-  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
-  const today = new Date();
-  const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
-  const endDate = today.toISOString().split("T")[0];
+// 1️⃣ Check register
+async function checkRegister() {
+  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=export&cmd=check_register`;
+  const resp = await safeFetchVerbose(url, {
+    method: "GET",
+    headers: { authorization: session.token, cookie: session.cookie, "x-requested-with": "XMLHttpRequest" },
+  }, "CHECK_REGISTER");
 
-  const params = { SALE_STATUS: ["0","1"], SD: startDate, ED: endDate, WH: [], SKUSN: [], KS: [], SN: "" };
-  const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
-
-  const resp = await safeFetchVerbose(formUrl, {
-    method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      authorization: `Bearer ${session.token}`,
-      cookie: session.cookie,
-      "x-requested-with": "XMLHttpRequest",
-    },
-    body
-  }, "SUBMIT_FORM");
-
-  // Log JSON đầy đủ để kiểm tra exportDataId/dataId
-  console.log("🔍 Form response JSON:", resp.json);
-
-  const exportDataId = resp.json?.data?.exportDataId || resp.json?.data?.dataId;
-  if (!exportDataId) throw new Error("❌ Không lấy được exportDataId từ form response");
-
-  return exportDataId;
+  if (!resp.ok) throw new Error("❌ check_register failed");
+  return true;
 }
 
+// 2️⃣ Check font → lấy dataId
 async function checkFont() {
   const url = `${WOWBUY_BASEURL}/webroot/decision/export/check/font`;
   const body = "format=excel";
   const resp = await safeFetchVerbose(url, {
     method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
-      authorization: `Bearer ${session.token}`,
-      cookie: session.cookie,
-      "x-requested-with": "XMLHttpRequest",
-    },
+    headers: { authorization: session.token, cookie: session.cookie, "x-requested-with": "XMLHttpRequest", "content-type": "application/x-www-form-urlencoded" },
     body
   }, "CHECK_FONT");
 
-  if (resp.json?.state !== 1) throw new Error("❌ check/font failed");
-  return true;
+  if (resp.json?.state !== 1) throw new Error("❌ Không lấy được dataId từ check/font");
+  return resp.json?.dataId || Date.now(); // hoặc server tạo dataId tự động
 }
 
-
-// ===== Fetch Excel trực tiếp từ WOWBUY =====
-async function fetchExcelFromWOWBUY(exportDataId) {
+// 3️⃣ Export Excel
+async function fetchExcelFromWOWBUY(dataId) {
   const url = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
-  const body = `op=export&cmd=export_polling&type=excel&data=${exportDataId}`;
+  const body = `op=export&cmd=export_polling&type=excel&data=${dataId}`;
   const resp = await safeFetchVerbose(url, {
     method: "POST",
-    headers: {
-      "content-type": "application/x-www-form-urlencoded",
-      authorization: `Bearer ${session.token}`,
-      cookie: session.cookie,
-      sessionid: session.sessionid,
-      "x-requested-with": "XMLHttpRequest",
-    },
+    headers: { authorization: session.token, cookie: session.cookie, "x-requested-with": "XMLHttpRequest", "content-type": "application/x-www-form-urlencoded" },
     body
   }, "EXPORT_EXCEL");
 
-  return resp; // resp.text hoặc resp.arrayBuffer() tùy server trả về
+  return resp; // resp.text hoặc resp.arrayBuffer() tùy server trả
 }
 
-// ===== Main flow =====
+// Main flow
 async function fetchWOWBUY() {
   try {
     await loginWOWBUY();
     await initWOWBUYSession();
-
-    const exportDataId = await submitReportForm(); // 1. submit form
-    await checkFont();                               // 2. check font
-    const excelResp = await fetchExcelFromWOWBUY(exportDataId); // 3. export
-
+    await checkRegister();
+    const dataId = await checkFont();
+    const excelResp = await fetchExcelFromWOWBUY(dataId);
     return excelResp;
   } catch (err) {
     console.error("❌ Lỗi trong fetchWOWBUY:", err);
-    return [];
+    return null;
   }
 }
 
