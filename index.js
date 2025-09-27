@@ -1418,22 +1418,18 @@ async function submitReportForm() {
 }
 
 // ===== Fetch all pages =====
-// Lấy tất cả page content (Purchase Plan)
+// ===== Lấy tất cả page content (Purchase Plan) =====
 async function fetchPageContent(entryUrl, session) {
   console.log("📡 Fetching all page content (Purchase Plan mode)...");
 
   const allRows = [];
   let pn = 1;
 
-  // Lấy reportId từ entryUrl để log
-  const reportIdMatch = entryUrl.match(/access\/([a-f0-9-]+)/);
-  const reportId = reportIdMatch ? reportIdMatch[1] : "unknown";
-  console.log("📋 Using reportId (from referer):", reportId);
+  // Kiểm tra sessionID đã có chưa
+  if (!session.sessionid) throw new Error("❌ sessionID chưa được set, không thể fetch page content");
 
   while (true) {
     const timestamp = Date.now();
-
-    // URL chuẩn KHÔNG có reportId
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report` +
       `?_=${timestamp}&op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true` +
       `&_paperWidth=514&_paperHeight=510&__fit__=false`;
@@ -1444,9 +1440,9 @@ async function fetchPageContent(entryUrl, session) {
         accept: "text/html, */*; q=0.01",
         authorization: `Bearer ${session.token}`,
         cookie: session.cookie,
-        referer: entryUrl, // quan trọng để phân biệt report nào
-        sessionid: session.sessionid, // quan trọng
-        "user-agent": "Mozilla/5.0",
+        referer: entryUrl,           // ✅ quan trọng: referer chính là entryUrl
+        sessionid: session.sessionid, // ✅ quan trọng: sessionID header
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "x-requested-with": "XMLHttpRequest",
       },
     }, `PAGE_CONTENT: PN=${pn}`);
@@ -1457,7 +1453,7 @@ async function fetchPageContent(entryUrl, session) {
       break;
     }
 
-    // parse rows
+    // parse table rows
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
@@ -1481,7 +1477,7 @@ async function fetchPageContent(entryUrl, session) {
       break;
     }
 
-    await new Promise(r => setTimeout(r, 300)); // tránh spam
+    await new Promise(r => setTimeout(r, 300)); // tránh spam request
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
@@ -1491,62 +1487,53 @@ async function fetchPageContent(entryUrl, session) {
 // ===== Main flow =====
 async function fetchWOWBUY() {
   try {
-    const session = await loginWOWBUY();
-    if (!session) {
-      console.error("❌ Aborting: login failed");
-      return [];
+    const s = await loginWOWBUY();
+    if (!s) { 
+      console.error("❌ Aborting: login failed"); 
+      return []; 
     }
 
-    // entryUrl should be set by getReportId (called inside loginWOWBUY)
+    // entryUrl được set bởi getReportId
     if (!session.entryUrl) {
-      console.warn("⚠️ entryUrl still empty after login/getReportId, using default Purchase Plan UUID");
-      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
-      session.reportId = session.reportId || "821488a1-d632-4eb8-80e9-85fae1fb1bda";
+      console.warn("⚠️ entryUrl empty, sử dụng default Purchase Plan UUID");
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=513&height=667`;
       session.widgetName = session.widgetName || "formSubmit0";
     }
 
-    // Ensure entry access to obtain sessionID
+    // Lấy sessionID từ entryUrl
     console.log("📡 ENTRY ACCESS to fetch sessionID...");
     const entryResp = await safeFetchVerbose(session.entryUrl, {
       method: "GET",
       headers: {
         cookie: session.cookie,
         authorization: `Bearer ${session.token}`,
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         referer: `${WOWBUY_BASEURL}/webroot/decision`,
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
       },
     }, "ENTRY_ACCESS");
 
-    if (entryResp && entryResp.text) {
-      const sid = extractSessionIDFromHtml(entryResp.text);
+    if (entryResp.text) {
+      let sid = extractSessionIDFromHtml(entryResp.text);
+      if (!sid) {
+        const m = entryResp.text.match(/"sessionID"\s*:\s*"([a-f0-9-]+)"/i);
+        if (m && m[1]) sid = m[1];
+      }
       if (sid) {
         session.sessionid = sid;
         console.log("🆔 sessionID extracted:", session.sessionid);
       } else {
-        const m = (entryResp.text || "").match(/"sessionID"\s*:\s*"([a-f0-9-]+)"/i);
-        if (m && m[1]) {
-          session.sessionid = m[1];
-          console.log("🆔 sessionID extracted (fallback):", session.sessionid);
-        } else {
-          console.warn("⚠️ Failed to extract sessionID from ENTRY_ACCESS response");
-        }
+        throw new Error("❌ Failed to extract sessionID from ENTRY_ACCESS response");
       }
-    } else {
-      console.warn("⚠️ ENTRY_ACCESS returned empty body");
     }
 
-    if (!session.sessionid) {
-      throw new Error("❌ sessionid still missing after ENTRY_ACCESS");
-    }
-
-    // Initialize (resources etc.)
+    // Init session resources
     await initWOWBUYSession();
 
-    // Submit the form
+    // Submit report form
     await submitReportForm();
 
-    // Fetch page contents
+    // Fetch all page contents
     const data = await fetchPageContent(session.entryUrl, session);
 
     console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
