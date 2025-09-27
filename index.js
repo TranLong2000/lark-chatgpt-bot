@@ -1241,9 +1241,50 @@ async function loginWOWBUY() {
   }
 }
 
+async function getPurchasePlanWidgetName() {
+  console.log("📡 GETTING REPORT TREE for Purchase Plan...");
+  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
+  const resp = await safeFetchVerbose(url, {
+    method: "GET",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "user-agent": "Mozilla/5.0",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  }, "GET_REPORTS");
+
+  if (!resp.json?.data) {
+    console.warn("⚠️ No data in report tree response");
+    return null;
+  }
+
+  const report = resp.json.data.find(r => r.text === TARGET_REPORT);
+  if (!report) {
+    console.warn("⚠️ No report found with text:", TARGET_REPORT);
+    return null;
+  }
+
+  let widgetName = null;
+
+  if (report.children?.length) {
+    const purchaseTab = report.children.find(c => c.text === TARGET_REPORT || /purchase/i.test(c.text));
+    if (purchaseTab) widgetName = purchaseTab.widgetName || purchaseTab.name || null;
+  } else if (report.widgetName) {
+    widgetName = report.widgetName;
+  }
+
+  if (!widgetName) console.warn("⚠️ Could not find widgetName for Purchase Plan");
+  else console.log("📋 Found widgetName for Purchase Plan:", widgetName);
+
+  return widgetName;
+}
+
 async function getReportId() {
   console.log("📡 GETTING REPORT TREE...");
   const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
+  
   const resp = await safeFetchVerbose(url, {
     method: "GET",
     headers: {
@@ -1257,10 +1298,18 @@ async function getReportId() {
 
   if (resp.json?.data) {
     console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
+
+    // Tìm báo cáo theo TARGET_REPORT
     const report = resp.json.data.find(item => item.text === TARGET_REPORT);
+
     if (report) {
       session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
+
+      // Lưu widgetName chính xác để fetchPageContent biết
+      session.widgetName = report.children?.[0]?.widgetName || report.widgetName || "formSubmit0";
+
       console.log("📋 Selected entryUrl:", session.entryUrl);
+      console.log("📋 Selected widgetName:", session.widgetName);
     } else {
       console.warn("⚠️ No report found with text:", TARGET_REPORT);
     }
@@ -1335,7 +1384,8 @@ async function initWOWBUYSession() {
 // ===== Submit report form =====
 async function submitReportForm() {
   console.log("📤 Submitting report form...");
-  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
+  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=${session.widgetName}&sessionID=${session.sessionid}`;
+
   const today = new Date();
   const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
   const ED = today.toISOString().split("T")[0];
@@ -1370,7 +1420,7 @@ async function fetchPageContent() {
 
   while (true) {
     const timestamp = Date.now();
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&widgetname=${session.widgetName}&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
 
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1385,11 +1435,9 @@ async function fetchPageContent() {
       },
     }, `PAGE_CONTENT: PN=${pn}`);
 
-    // ==== Parse HTML ====
     const html = resp.json?.html || resp.text || "";
     const $ = cheerio.load(html);
 
-    // Lấy tất cả row của table
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
@@ -1401,25 +1449,16 @@ async function fetchPageContent() {
 
     console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows this page, total rows so far: ${allRows.length}`);
 
-    // ==== Cập nhật totalPages từ JSON nếu có ====
     if (!totalPages) {
       if (resp.json?.pageCount) totalPages = resp.json.pageCount;
       else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
     }
 
-    // ==== Kiểm tra dừng ====
-    if (totalPages && pn >= totalPages) break; // biết tổng trang
-    if (!totalPages) {
-      // Nếu page rỗng → dừng
-      if (rowsThisPage === 0) break;
-
-      // Hoặc kiểm tra nút Next trong HTML
-      const nextBtn = $(".fr-pagination .next");
-      if (!nextBtn.length || nextBtn.hasClass("disabled")) break;
-    }
+    if (totalPages && pn >= totalPages) break;
+    if (!totalPages && rowsThisPage === 0) break;
 
     pn++;
-    await new Promise(r => setTimeout(r, 300)); // delay nhẹ tránh block
+    await new Promise(r => setTimeout(r, 300));
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
