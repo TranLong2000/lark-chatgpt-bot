@@ -1335,12 +1335,14 @@ async function initWOWBUYSession() {
 // ===== Submit report form =====
 async function submitReportForm() {
   console.log("📤 Submitting report form...");
-  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
   const today = new Date();
   const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
   const ED = today.toISOString().split("T")[0];
 
   const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
+  session.reportParams = params; // <-- lưu lại để fetchPageContent dùng
+
+  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
   const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
 
   const resp = await safeFetchVerbose(formUrl, {
@@ -1362,34 +1364,39 @@ async function submitReportForm() {
   return resp;
 }
 
+// ===== Fetch all pages =====
 async function fetchPageContent() {
   console.log("📡 Fetching all page content...");
   let allRows = [];
   let pn = 1;
-  let totalPages = null;
+
+  const params = session.reportParams;
+  if (!params) {
+    console.error("❌ Không tìm thấy reportParams. Chắc chắn submitReportForm đã chạy và lưu params vào session.reportParams");
+    return allRows;
+  }
 
   while (true) {
     const timestamp = Date.now();
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
+    const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
 
     const resp = await safeFetchVerbose(url, {
-      method: "GET",
+      method: "POST", // phải POST mới ra page đúng
       headers: {
-        accept: "text/html, */*; q=0.01",
+        "content-type": "application/x-www-form-urlencoded",
         authorization: `Bearer ${session.token}`,
         cookie: session.cookie,
         referer: session.entryUrl,
-        "user-agent": "Mozilla/5.0",
         "x-requested-with": "XMLHttpRequest",
         sessionid: session.sessionid,
       },
+      body,
     }, `PAGE_CONTENT: PN=${pn}`);
 
-    // ==== Parse HTML ====
     const html = resp.json?.html || resp.text || "";
     const $ = cheerio.load(html);
 
-    // Lấy tất cả row của table
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
@@ -1401,22 +1408,7 @@ async function fetchPageContent() {
 
     console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows this page, total rows so far: ${allRows.length}`);
 
-    // ==== Cập nhật totalPages từ JSON nếu có ====
-    if (!totalPages) {
-      if (resp.json?.pageCount) totalPages = resp.json.pageCount;
-      else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
-    }
-
-    // ==== Kiểm tra dừng ====
-    if (totalPages && pn >= totalPages) break; // biết tổng trang
-    if (!totalPages) {
-      // Nếu page rỗng → dừng
-      if (rowsThisPage === 0) break;
-
-      // Hoặc kiểm tra nút Next trong HTML
-      const nextBtn = $(".fr-pagination .next");
-      if (!nextBtn.length || nextBtn.hasClass("disabled")) break;
-    }
+    if (rowsThisPage === 0) break; // dừng khi server trả rỗng
 
     pn++;
     await new Promise(r => setTimeout(r, 300)); // delay nhẹ tránh block
