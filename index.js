@@ -846,65 +846,6 @@ async function listAllGroups(APP_ACCESS_TOKEN) {
    SECTION 10.2.1 — Warehouse delivery
    ================================================== */
 
-const SPREADSHEET_TOKEN_WAREHOUSE = "UMU1s9pS9hqtkft1yQvlfRqpgqc"; // fixed token từ link bạn đưa
-const SHEET_ID_WAREHOUSE = "nmyvvO"; // sheetId trong URL
-
-// Hàm lấy dữ liệu A10:O20 với retry
-async function getSheetValuesWarehouse(APP_ACCESS_TOKEN) {
-  const url = `${process.env.LARK_DOMAIN}/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_WAREHOUSE}/sheets/${SHEET_ID_WAREHOUSE}/query`;
-
-  try {
-    const res = await axios.post(
-      url,
-      {
-        range: "A10:O20", // 👈 chỉnh range bạn muốn
-        valueRenderOption: "FormattedValue"
-      },
-      {
-        headers: { Authorization: `Bearer ${APP_ACCESS_TOKEN}` }
-      }
-    );
-
-    if (!res.data?.data?.range?.values) {
-      throw new Error("Không lấy được values từ Sheet Warehouse (query)");
-    }
-
-    return res.data.data.range.values;
-  } catch (err) {
-    console.error("[getSheetValuesWarehouse] Query API lỗi:", err.response?.data || err.message);
-    throw err;
-  }
-}
-
-// Hàm tổng hợp gửi ảnh
-async function sendWarehouseSheetAsImage(APP_ACCESS_TOKEN) {
-  const LARK_GROUP_CHAT_IDS_TEST =
-    process.env.LARK_GROUP_CHAT_IDS_TEST?.split(",") || [];
-
-  const values = await getSheetValuesWarehouse(APP_ACCESS_TOKEN);
-  const buffer = renderTableToImage(values); // dùng chung render
-  const imageKey = await uploadImageFromBuffer(APP_ACCESS_TOKEN, buffer);
-  await sendImageToGroup(APP_ACCESS_TOKEN, LARK_GROUP_CHAT_IDS_TEST, imageKey);
-}
-
-// Cron mỗi 2 phút
-cron.schedule(
-  "*/2 * * * *",
-  async () => {
-    try {
-      const APP_ACCESS_TOKEN = await getAppAccessToken();
-      await listAllGroups(APP_ACCESS_TOKEN); // log group để debug
-      await sendWarehouseSheetAsImage(APP_ACCESS_TOKEN);
-      console.log("✅ [Cron] Đã gửi hình Warehouse (A10:O20)!");
-    } catch (err) {
-      console.error(
-        "❌ [Cron] Lỗi khi gửi ảnh Warehouse:",
-        err?.response?.data || err.message
-      );
-    }
-  },
-  { scheduled: true, timezone: "Asia/Ho_Chi_Minh" }
-);
 
 /* ==================================================
    SECTION 10.2.2 — Sale PC Miền Trung & Tây
@@ -1421,12 +1362,11 @@ async function submitReportForm() {
   return resp;
 }
 
-// ===== Fetch all pages =====
 async function fetchPageContent() {
   console.log("📡 Fetching all page content...");
   let allRows = [], pn = 1, totalPages = 1;
 
-  do {
+  while (true) {
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1441,22 +1381,31 @@ async function fetchPageContent() {
       },
     }, `PAGE_CONTENT: PN=${pn}`);
 
-    const raw = resp.text || "";
-    let html = raw;
-    if (resp.json?.html) html = resp.json.html;
-
+    const html = resp.json?.html || resp.text || "";
     const $ = cheerio.load(html);
+
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
       if (cols.length > 0) allRows.push(cols);
     });
 
-    console.log(`📊 Page ${pn}: ${allRows.length} rows total so far`);
-    if (resp.json?.pageCount) totalPages = resp.json.pageCount;
-    else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
+    // Lấy tổng số trang từ JSON hoặc HTML
+    if (pn === 1) {
+      if (resp.json?.pageCount) totalPages = resp.json.pageCount;
+      else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
+      else {
+        // fallback: parse từ HTML
+        const pageMatch = html.match(/Page 1 of (\d+)/i);
+        if (pageMatch) totalPages = parseInt(pageMatch[1], 10);
+      }
+      console.log(`📄 Total pages detected: ${totalPages}`);
+    }
 
+    console.log(`📊 Page ${pn}: ${allRows.length} rows total so far`);
+
+    if (pn >= totalPages) break;
     pn++;
-  } while (pn <= totalPages);
+  }
 
   console.log("📊 All pages fetched, total rows:", allRows.length);
   if (allRows.length > 0) console.log("🔎 First 1 rows:", allRows.slice(0, 1));
