@@ -1419,15 +1419,9 @@ async function submitReportForm() {
 
 // ===== Fetch all pages =====
 // ===== Lấy tất cả page content (Purchase Plan mode) =====
+// Lấy tất cả page content (Purchase Plan)
 async function fetchPageContent(entryUrl, session) {
   console.log("📡 Fetching all page content (Purchase Plan mode)...");
-
-  if (!entryUrl) {
-    throw new Error("❌ entryUrl is missing in fetchPageContent");
-  }
-  if (!session?.sessionid) {
-    throw new Error("❌ session.sessionid is missing in fetchPageContent");
-  }
 
   const allRows = [];
   let pn = 1;
@@ -1442,7 +1436,9 @@ async function fetchPageContent(entryUrl, session) {
 
   while (true) {
     const timestamp = Date.now();
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report` +
+
+    // Quan trọng: gắn reportId trực tiếp vào path
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report/${reportId}` +
       `?_=${timestamp}&op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true` +
       `&_paperWidth=514&_paperHeight=510&__fit__=false&sessionID=${session.sessionid}`;
 
@@ -1464,7 +1460,7 @@ async function fetchPageContent(entryUrl, session) {
       break;
     }
 
-    // Parse rows
+    // parse rows
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
