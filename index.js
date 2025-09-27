@@ -1231,34 +1231,71 @@ async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
   return { res, status: res.status, headers: respHeaders, setCookieArray, text, json: parsed };
 }
 
-// ===== Login WOWBUY =====
+// ====== Login ======
 async function loginWOWBUY() {
   console.log("🔐 Login WOWBUY...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/login`;
-  const bodyObj = { username: WOWBUY_USERNAME, password: WOWBUY_PASSWORD, validity: -2, sliderToken: "", origin: "", encrypted: true };
+  try {
+    const url = `${WOWBUY_BASEURL}/webroot/decision/login`;
+    const bodyObj = { username: WOWBUY_USERNAME, password: WOWBUY_PASSWORD, validity: -2, sliderToken: "", origin: "", encrypted: true };
 
-  const loginResp = await safeFetchVerbose(url, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/json",
-      origin: WOWBUY_BASEURL,
-      referer: `${WOWBUY_BASEURL}/webroot/decision/login`,
-      "x-requested-with": "XMLHttpRequest",
-      "user-agent": "Mozilla/5.0 (Node)",
-    },
-    body: JSON.stringify(bodyObj),
-  }, "LOGIN");
+    const loginResp = await safeFetchVerbose(url, {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/javascript, */*; q=0.01",
+        "content-type": "application/json",
+        origin: WOWBUY_BASEURL,
+        referer: `${WOWBUY_BASEURL}/webroot/decision/login`,
+        "x-requested-with": "XMLHttpRequest",
+        "user-agent": "Mozilla/5.0 (Node)",
+      },
+      body: JSON.stringify(bodyObj),
+    }, "LOGIN");
 
-  if (!loginResp.json?.data?.accessToken) throw new Error("No accessToken in LOGIN response");
-  session.token = loginResp.json.data.accessToken;
-  session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || "");
-  session.lastLogin = Date.now();
-  console.log("✅ Login successful. Token & cookie set.");
-  return session;
+    // Lưu cookie + token
+    session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || "");
+    if (loginResp.json?.data?.accessToken) session.token = loginResp.json.data.accessToken;
+    else throw new Error("No accessToken in LOGIN response");
+
+    // refresh token nếu cần
+    if (session.token) await doTokenRefresh(session.token, session.cookie);
+
+    // lấy entryUrl từ report tree
+    await getReportId();
+    if (!session.entryUrl) {
+      console.warn("⚠️ entryUrl not set, dùng default");
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
+    }
+
+    console.log("📡 ENTRY ACCESS để lấy sessionID...");
+    const entryResp = await safeFetchVerbose(session.entryUrl, {
+      method: "GET",
+      headers: {
+        cookie: session.cookie,
+        authorization: `Bearer ${session.token}`,
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        referer: `${WOWBUY_BASEURL}/webroot/decision`,
+        "user-agent": "Mozilla/5.0",
+      },
+    }, "ENTRY_ACCESS");
+
+    if (entryResp.text) {
+      const sid = extractSessionIDFromHtml(entryResp.text);
+      if (!sid) throw new Error("Không lấy được sessionID");
+      session.sessionid = sid;
+      console.log("🆔 sessionID:", session.sessionid);
+    }
+
+    // merge cookie
+    session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(entryResp.setCookieArray));
+    session.lastLogin = Date.now();
+    return session;
+  } catch (err) {
+    console.error("❌ login error:", err.message);
+    return null;
+  }
 }
 
-// ===== Init WOWBUY session =====
+// ====== Init WOWBUY session ======
 async function initWOWBUYSession() {
   console.log("⚡ Initializing WOWBUY session...");
   const now = new Date();
@@ -1267,83 +1304,106 @@ async function initWOWBUYSession() {
 
   const params = {
     SALE_STATUS: ["0", "1"],
-    WH: [],
-    SKUSN: [],
-    KS: [],
-    SN: "",
-    SD, ED
+    LABELSKUSN_C_C: "[4e0a][4e0b][67b6][72b6][6001][ff1a]",
+    LABELSTOREID_C: "[4ed3][5e93][ff1a]",
+    WH: [], LABELSKUSN_C: "SKU[ff1a]", SKUSN: [],
+    LABELSTOREID_C_C: "[8ba2][5355][521b][5efa][65f6][95f4][ff1a]",
+    SD, ED,
+    LABELSKUSN_C_C_C: "[53ef][552e][5e93][5b58][ff1a]", KS: [],
+    LABELSKUSN_C_C_C_C: "[5546][54c1][7f16][53f7][ff1a]", SN: ""
   };
 
   const steps = [
     { name: "resource", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
     { name: "fr_paramstpl", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
-    { name: "fr_dialog", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, method: "POST", body: "__parameters__=" + encodeURIComponent(JSON.stringify(params)), headers: { "content-type": "application/x-www-form-urlencoded" } }
+    { name: "fr_dialog", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, method: "POST", body: "__parameters__=" + encodeURIComponent(JSON.stringify(params)), headers: { "content-type": "application/x-www-form-urlencoded" } },
+    { name: "collect", url: `${WOWBUY_BASEURL}/webroot/decision/preview/info/collect`, method: "POST", body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", headers: { "content-type": "application/x-www-form-urlencoded" } }
   ];
 
   for (const step of steps) {
     const resp = await safeFetchVerbose(step.url, {
       method: step.method || "GET",
-      headers: { authorization: session.token, cookie: session.cookie, ...(step.headers || {}) },
-      body: step.body,
+      headers: { authorization: session.token, cookie: session.cookie, sessionid: session.sessionid, ...(step.headers || {}) },
+      body: step.body
     }, `INIT:${step.name}`);
-    console.log(`📡 Step ${step.name} done. Status: ${resp.ok}`);
+    console.log(`📡 Step ${step.name} done. Status:`, resp.status);
   }
 }
 
-// ===== Check register =====
+// ====== Check register ======
 async function checkRegister() {
   console.log("🔍 check_register...");
   const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=export&cmd=check_register`;
   const resp = await safeFetchVerbose(url, {
     method: "GET",
-    headers: { authorization: session.token, cookie: session.cookie, "x-requested-with": "XMLHttpRequest" },
+    headers: {
+      authorization: session.token,
+      cookie: session.cookie,
+      sessionid: session.sessionid,
+      "x-requested-with": "XMLHttpRequest"
+    }
   }, "CHECK_REGISTER");
 
-  console.log("🔍 check_register response:", resp.text?.slice(0, 500) || resp.json);
   if (!resp.ok) throw new Error("❌ check_register failed");
+  console.log("✅ check_register OK");
   return true;
 }
 
-// ===== Check font / get dataId =====
+// ====== Check font (dataId) ======
 async function checkFont() {
   console.log("🔍 check_font...");
   const url = `${WOWBUY_BASEURL}/webroot/decision/export/check/font`;
   const body = "format=excel";
   const resp = await safeFetchVerbose(url, {
     method: "POST",
-    headers: { authorization: session.token, cookie: session.cookie, "x-requested-with": "XMLHttpRequest", "content-type": "application/x-www-form-urlencoded" },
+    headers: {
+      authorization: session.token,
+      cookie: session.cookie,
+      sessionid: session.sessionid,
+      "x-requested-with": "XMLHttpRequest",
+      "content-type": "application/x-www-form-urlencoded"
+    },
     body
   }, "CHECK_FONT");
 
-  console.log("🔍 check_font response:", resp.json);
   if (resp.json?.state !== 1) throw new Error("❌ Không lấy được dataId từ check/font");
-  return resp.json?.dataId;
+  console.log("✅ check_font OK. dataId:", resp.json?.dataId || "auto-generated");
+  return resp.json?.dataId || Date.now();
 }
 
-// ===== Export Excel =====
+// ====== Fetch Excel ======
 async function fetchExcelFromWOWBUY(dataId) {
-  console.log("📥 Fetching Excel with dataId:", dataId);
+  console.log("📥 Export Excel...");
   const url = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
   const body = `op=export&cmd=export_polling&type=excel&data=${dataId}`;
+
   const resp = await safeFetchVerbose(url, {
     method: "POST",
-    headers: { authorization: session.token, cookie: session.cookie, "x-requested-with": "XMLHttpRequest", "content-type": "application/x-www-form-urlencoded" },
+    headers: {
+      authorization: session.token,
+      cookie: session.cookie,
+      sessionid: session.sessionid,
+      "x-requested-with": "XMLHttpRequest",
+      "content-type": "application/x-www-form-urlencoded"
+    },
     body
   }, "EXPORT_EXCEL");
 
-  console.log("📥 Excel fetch done. Status:", resp.ok);
+  console.log("✅ Excel fetched");
   return resp;
 }
 
-// ===== Main flow =====
+// ====== Main Flow ======
 async function fetchWOWBUY() {
   try {
-    await loginWOWBUY();
+    const s = await loginWOWBUY();
+    if (!s) throw new Error("Login failed");
+
     await initWOWBUYSession();
     await checkRegister();
     const dataId = await checkFont();
-    if (!dataId) throw new Error("❌ Không lấy được dataId từ check/font");
     const excelResp = await fetchExcelFromWOWBUY(dataId);
+
     return excelResp;
   } catch (err) {
     console.error("❌ Lỗi trong fetchWOWBUY:", err);
