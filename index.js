@@ -1360,6 +1360,13 @@ async function submitReportForm() {
 
   if (resp.status === 200) {
     console.log("✅ Form submitted successfully");
+    if (resp.json) {
+      console.log("🛠️ submitReportForm response JSON keys:", Object.keys(resp.json));
+      if (resp.json.widgetName) {
+        console.log("📌 WidgetName detected:", resp.json.widgetName);
+        session.widgetName = resp.json.widgetName;
+      }
+    }
   } else {
     console.warn("⚠️ Form submit failed with status:", resp.status);
   }
@@ -1372,9 +1379,9 @@ async function fetchPageContent() {
 
   const allRows = [];
   let pn = 1;
-  const MAX_PAGES = 100;
+  const seenPages = new Set();
 
-  while (pn <= MAX_PAGES) {
+  while (true) {
     const timestamp = Date.now();
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content` +
                 `&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
@@ -1393,30 +1400,39 @@ async function fetchPageContent() {
     }, `PAGE_CONTENT: PN=${pn}`);
 
     const html = resp.json?.html || resp.text || "";
-
     if (!html || !html.trim()) {
       console.log(`⛔ Empty response at PN=${pn}, stopping.`);
       break;
     }
 
-    // Parse rows
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
+    const pageRows = [];
+
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
       if (cols.length) {
-        allRows.push(cols);
+        pageRows.push(cols);
         rowsThisPage++;
       }
     });
 
-    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
+    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows`);
 
     if (rowsThisPage === 0) {
-      console.log(`⛔ No rows at PN=${pn}, assuming last page.`);
+      console.log(`⛔ No rows at PN=${pn}, stopping.`);
       break;
     }
 
+    // check trùng
+    const pageHash = JSON.stringify(pageRows);
+    if (seenPages.has(pageHash)) {
+      console.log(`🔁 Duplicate page at PN=${pn}, stopping.`);
+      break;
+    }
+    seenPages.add(pageHash);
+
+    allRows.push(...pageRows);
     pn++;
     await new Promise(r => setTimeout(r, 300));
   }
