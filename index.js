@@ -1418,9 +1418,16 @@ async function submitReportForm() {
 }
 
 // ===== Fetch all pages =====
-// Lấy tất cả page content (Purchase Plan)
+// ===== Lấy tất cả page content (Purchase Plan mode) =====
 async function fetchPageContent(entryUrl, session) {
   console.log("📡 Fetching all page content (Purchase Plan mode)...");
+
+  if (!entryUrl) {
+    throw new Error("❌ entryUrl is missing in fetchPageContent");
+  }
+  if (!session?.sessionid) {
+    throw new Error("❌ session.sessionid is missing in fetchPageContent");
+  }
 
   const allRows = [];
   let pn = 1;
@@ -1457,7 +1464,7 @@ async function fetchPageContent(entryUrl, session) {
       break;
     }
 
-    // parse rows
+    // Parse rows
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
@@ -1491,8 +1498,11 @@ async function fetchPageContent(entryUrl, session) {
 // ===== Main flow =====
 async function fetchWOWBUY() {
   try {
-    const s = await loginWOWBUY();
-    if (!s) { console.error("❌ Aborting: login failed"); return []; }
+    const session = await loginWOWBUY();
+    if (!session) {
+      console.error("❌ Aborting: login failed");
+      return [];
+    }
 
     // entryUrl should be set by getReportId (called inside loginWOWBUY)
     if (!session.entryUrl) {
@@ -1502,7 +1512,7 @@ async function fetchWOWBUY() {
       session.widgetName = session.widgetName || "formSubmit0";
     }
 
-    // Ensure entry access to obtain sessionID for the chosen report
+    // Ensure entry access to obtain sessionID
     console.log("📡 ENTRY ACCESS to fetch sessionID...");
     const entryResp = await safeFetchVerbose(session.entryUrl, {
       method: "GET",
@@ -1521,7 +1531,6 @@ async function fetchWOWBUY() {
         session.sessionid = sid;
         console.log("🆔 sessionID extracted:", session.sessionid);
       } else {
-        // fallback: try JSON match
         const m = (entryResp.text || "").match(/"sessionID"\s*:\s*"([a-f0-9-]+)"/i);
         if (m && m[1]) {
           session.sessionid = m[1];
@@ -1534,14 +1543,18 @@ async function fetchWOWBUY() {
       console.warn("⚠️ ENTRY_ACCESS returned empty body");
     }
 
+    if (!session.sessionid) {
+      throw new Error("❌ sessionid still missing after ENTRY_ACCESS");
+    }
+
     // Initialize (resources etc.)
     await initWOWBUYSession();
 
-    // Submit the form (to apply parameters and possibly initialize widget)
+    // Submit the form
     await submitReportForm();
 
-    // Fetch page contents (only for the selected report/session)
-    const data = await fetchPageContent();
+    // Fetch page contents
+    const data = await fetchPageContent(session.entryUrl, session);
 
     console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
     return data;
