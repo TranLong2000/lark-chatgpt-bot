@@ -1383,9 +1383,13 @@ async function initWOWBUYSession() {
 
 // ===== Submit report form =====
 async function submitReportForm() {
+  if (!session.widgetName) {
+    console.warn("⚠️ widgetName not set, using default 'formSubmit0'");
+    session.widgetName = "formSubmit0";
+  }
+
   console.log("📤 Submitting report form...");
   const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=${session.widgetName}&sessionID=${session.sessionid}`;
-
   const today = new Date();
   const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
   const ED = today.toISOString().split("T")[0];
@@ -1409,18 +1413,21 @@ async function submitReportForm() {
 
   if (resp.status === 200) console.log("✅ Form submitted successfully");
   else console.warn("⚠️ Form submit failed with status:", resp.status);
+
+  // Lưu lại totalPage từ response JSON nếu có
+  session.totalPages = resp.json?.totalPage || 1;
+
   return resp;
 }
 
 async function fetchPageContent() {
   console.log("📡 Fetching all page content...");
   let allRows = [];
-  let pn = 1;
-  let totalPages = null;
+  const totalPages = session.totalPages || 1;
 
-  while (true) {
+  for (let pn = 1; pn <= totalPages; pn++) {
     const timestamp = Date.now();
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&widgetname=${session.widgetName}&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&widgetname=${session.widgetName}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
 
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1435,6 +1442,7 @@ async function fetchPageContent() {
       },
     }, `PAGE_CONTENT: PN=${pn}`);
 
+    // Lấy HTML table
     const html = resp.json?.html || resp.text || "";
     const $ = cheerio.load(html);
 
@@ -1448,16 +1456,6 @@ async function fetchPageContent() {
     });
 
     console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows this page, total rows so far: ${allRows.length}`);
-
-    if (!totalPages) {
-      if (resp.json?.pageCount) totalPages = resp.json.pageCount;
-      else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
-    }
-
-    if (totalPages && pn >= totalPages) break;
-    if (!totalPages && rowsThisPage === 0) break;
-
-    pn++;
     await new Promise(r => setTimeout(r, 300));
   }
 
@@ -1468,15 +1466,29 @@ async function fetchPageContent() {
 // ===== Main flow =====
 async function fetchWOWBUY() {
   try {
+    // 1️⃣ Login
     const s = await loginWOWBUY();
-    if (!s) { console.error("❌ Aborting: login failed"); return []; }
+    if (!s) { 
+      console.error("❌ Aborting: login failed"); 
+      return []; 
+    }
 
+    // 2️⃣ Init session (setup params, widgets, etc.)
     await initWOWBUYSession();
+
+    // 3️⃣ Lấy widgetName đúng của Purchase Plan
+    // Mặc định widgetName sẽ lưu trong session.widgetName
+    if (!session.widgetName) session.widgetName = "formSubmit0";
+
+    // 4️⃣ Submit report form, lưu totalPages
     await submitReportForm();
+
+    // 5️⃣ Fetch tất cả page content dựa trên totalPages và widgetName
     const data = await fetchPageContent();
 
     console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
     return data;
+
   } catch (err) {
     console.error("❌ Lỗi trong fetchWOWBUY:", err.message, err.stack);
     return [];
