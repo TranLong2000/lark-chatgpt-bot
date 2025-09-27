@@ -1307,46 +1307,20 @@ async function submitReportForm() {
   }, "FORM_SUBMIT");
 }
 
-// ======== Fetch all page content (Purchase Plan only) ========
+// ======== Fetch all page content (Purchase Plan only, dynamic widgetName/reportID) ========
 async function fetchPageContent(entryUrl, session) {
   console.log("📡 Fetching all page content for Purchase Plan...");
 
   if (!session.sessionid) throw new Error("❌ sessionID chưa được set");
 
   const allRows = [];
+  let currentPage = 1;
+  let widget = session.widgetName;
+  let morePages = true;
 
-  // --- Fetch page 1 để lấy tổng số page ---
-  const urlFirst = `${WOWBUY_BASEURL}/webroot/decision/view/report?_=${Date.now()}&op=page_content&pn=1&widgetName=${session.widgetName}`;
-  const respFirst = await safeFetchVerbose(urlFirst, {
-    method: "GET",
-    headers: {
-      accept: "text/html, */*; q=0.01",
-      authorization: `Bearer ${session.token}`,
-      cookie: session.cookie,
-      referer: entryUrl,
-      sessionid: session.sessionid,
-      "x-requested-with": "XMLHttpRequest",
-    },
-  });
-
-  const htmlFirst = respFirst.json?.html || respFirst.text || "";
-  if (!htmlFirst.trim()) throw new Error("❌ Page 1 HTML empty");
-
-  const $first = cheerio.load(htmlFirst);
-  $first("table tr").each((i, tr) => {
-    const cols = $first(tr).find("td,th").map((j, td) => $first(td).text().trim()).get();
-    if (cols.length) allRows.push(cols);
-  });
-
-  // --- Lấy tổng số page từ response, fallback nếu server không trả ---
-  const totalPage = respFirst.json?.pageCount || Math.ceil(allRows.length / 36); 
-  console.log(`📊 Total page detected: ${totalPage}`);
-  console.log(`📊 Page 1 fetched, ${allRows.length} rows`);
-
-  // --- Fetch page 2 trở đi ---
-  for (let pn = 2; pn <= totalPage; pn++) {
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?_=${Date.now()}&op=page_content&pn=${pn}&widgetName=${session.widgetName}`;
-    console.log(`📡 Fetching PN=${pn} with sessionID=${session.sessionid}`);
+  while (morePages) {
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?_=${Date.now()}&op=page_content&pn=${currentPage}&widgetName=${widget}`;
+    console.log(`📡 Fetching PN=${currentPage} with sessionID=${session.sessionid} and widgetName=${widget}`);
 
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1361,21 +1335,42 @@ async function fetchPageContent(entryUrl, session) {
     });
 
     const html = resp.json?.html || resp.text || "";
-    if (!html.trim()) break;
+    if (!html.trim()) {
+      console.log(`⛔ Empty response at PN=${currentPage}, stopping`);
+      break;
+    }
 
     const $ = cheerio.load(html);
+    let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-      if (cols.length) allRows.push(cols);
+      if (cols.length) {
+        allRows.push(cols);
+        rowsThisPage++;
+      }
     });
 
-    await new Promise(r => setTimeout(r, 500)); 
+    console.log(`📊 Page ${currentPage} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
+
+    // --- Cập nhật widgetName cho page tiếp theo ---
+    if (resp.json?.nextPageWidget) {
+      widget = resp.json.nextPageWidget;
+    }
+
+    // --- Kiểm tra pageCount nếu có ---
+    if (resp.json?.pageCount && currentPage >= resp.json.pageCount) {
+      morePages = false;
+    } else {
+      currentPage++;
+    }
+
+    // tránh quá tải server
+    await new Promise(r => setTimeout(r, 500));
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
-
 
 // ======== Main flow (Purchase Plan only) ========
 async function fetchWOWBUY() {
