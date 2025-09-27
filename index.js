@@ -1418,7 +1418,6 @@ async function submitReportForm() {
 }
 
 // ===== Fetch all pages =====
-// ===== Lấy tất cả page content (Purchase Plan mode) =====
 // Lấy tất cả page content (Purchase Plan)
 async function fetchPageContent(entryUrl, session) {
   console.log("📡 Fetching all page content (Purchase Plan mode)...");
@@ -1426,21 +1425,18 @@ async function fetchPageContent(entryUrl, session) {
   const allRows = [];
   let pn = 1;
 
-  // Lấy reportId từ entryUrl
+  // Lấy reportId từ entryUrl để log
   const reportIdMatch = entryUrl.match(/access\/([a-f0-9-]+)/);
-  if (!reportIdMatch) {
-    throw new Error("❌ Cannot extract reportId from entryUrl: " + entryUrl);
-  }
-  const reportId = reportIdMatch[1];
-  console.log("📋 Using reportId:", reportId);
+  const reportId = reportIdMatch ? reportIdMatch[1] : "unknown";
+  console.log("📋 Using reportId (from referer):", reportId);
 
   while (true) {
     const timestamp = Date.now();
 
-    // Quan trọng: gắn reportId trực tiếp vào path
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report/${reportId}` +
+    // URL chuẩn KHÔNG có reportId
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report` +
       `?_=${timestamp}&op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true` +
-      `&_paperWidth=514&_paperHeight=510&__fit__=false&sessionID=${session.sessionid}`;
+      `&_paperWidth=514&_paperHeight=510&__fit__=false`;
 
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1448,7 +1444,8 @@ async function fetchPageContent(entryUrl, session) {
         accept: "text/html, */*; q=0.01",
         authorization: `Bearer ${session.token}`,
         cookie: session.cookie,
-        referer: entryUrl,
+        referer: entryUrl, // quan trọng để phân biệt report nào
+        sessionid: session.sessionid, // quan trọng
         "user-agent": "Mozilla/5.0",
         "x-requested-with": "XMLHttpRequest",
       },
