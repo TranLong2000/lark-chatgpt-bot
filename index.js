@@ -1426,13 +1426,16 @@ async function submitReportForm() {
   return exportDataId;
 }
 
-const resp = await safeFetchVerbose(formUrl, {...}, "SUBMIT_FORM");
-console.log("🔍 Form response JSON:", resp.json);
-const exportDataId = resp.json?.data?.exportDataId || resp.json?.data?.dataId;
-if (!exportDataId) {
-  console.error("❌ Không lấy được exportDataId từ form response");
-  return null;
+async function runSubmit() {
+  const exportDataId = await submitReportForm();
+  if (!exportDataId) {
+    console.error("❌ Không lấy được exportDataId từ form response");
+    return;
+  }
+  console.log("✅ exportDataId:", exportDataId);
 }
+
+runSubmit();
 
 // ===== Fetch all pages =====
 async function fetchExcelFromWOWBUY(exportDataId) {
