@@ -1342,15 +1342,17 @@ async function submitReportForm() {
     const resp = await safeFetchVerbose(formUrl, {
       method: "GET",
       headers: {
-        ...DEFAULT_HEADERS,
-        Cookie: cookieJar.getCookieStringSync(WOWBUY_BASEURL),
+        accept: "application/json, text/javascript, */*; q=0.01",
+        authorization: `Bearer ${session.token}`,
+        cookie: session.cookie,
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+        "x-requested-with": "XMLHttpRequest",
       },
     }, "SUBMIT_FORM");
 
     if (resp.status === 200) {
       console.log("✅ Form submitted successfully");
 
-      // log thử widgetNames có trong response
       if (resp.text) {
         const widgetMatches = resp.text.match(/widgetname=["']([^"']+)["']/g) || [];
         const cleanWidgets = widgetMatches.map(m => m.replace(/widgetname=|['"]/g, ""));
@@ -1376,15 +1378,18 @@ async function fetchPageContent() {
   while (true) {
     const timestamp = Date.now();
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content` +
-                `&widgetname=formSubmit0` +                 // 👉 nhớ sửa widgetName đúng theo log
-                `&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
+                `&widgetname=formSubmit0` +   // 👉 sửa widgetName theo log
+                `&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}&sessionID=${session.sessionid}`;
 
     try {
       const resp = await safeFetchVerbose(url, {
         method: "GET",
         headers: {
-          ...DEFAULT_HEADERS,
-          Cookie: cookieJar.getCookieStringSync(WOWBUY_BASEURL),
+          accept: "application/json, text/javascript, */*; q=0.01",
+          authorization: `Bearer ${session.token}`,
+          cookie: session.cookie,
+          "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+          "x-requested-with": "XMLHttpRequest",
         },
       }, `PAGE_CONTENT: PN=${pn}`);
 
@@ -1395,7 +1400,7 @@ async function fetchPageContent() {
         break;
       }
 
-      // detect số trang ở lần đầu
+      // detect số trang
       if (pn === 1 && !totalPages) {
         const totalPagesMatch = html.match(/data-totalpages=["']?(\d+)["']?/i);
         if (totalPagesMatch) {
@@ -1432,7 +1437,6 @@ async function fetchPageContent() {
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
-
 
 // ===== Main flow =====
 async function fetchWOWBUY() {
