@@ -1286,14 +1286,15 @@ async function fetchPageContent(entryUrl, session) {
 
   const allRows = [];
   let pn = 1;
-
   if (!session.sessionid) throw new Error("❌ sessionID chưa được set");
 
   while (true) {
     const timestamp = Date.now();
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report` +
-      `?_=${timestamp}&op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true` +
-      `&_paperWidth=174&_paperHeight=510&__fit__=false`; // fix đúng kích thước Purchase Plan
+      `?_=${timestamp}&op=page_content&pn=${pn}` +
+      `&__webpage__=true&__boxModel__=true` +
+      `&_paperWidth=174&_paperHeight=510&__fit__=false` +
+      `&widgetName=${session.widgetName}`; // ✅ quan trọng: widgetName
 
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1301,18 +1302,15 @@ async function fetchPageContent(entryUrl, session) {
         accept: "text/html, */*; q=0.01",
         authorization: `Bearer ${session.token}`,
         cookie: session.cookie,
-        referer: entryUrl,          // ✅ referer = entryUrl Purchase Plan
-        sessionid: session.sessionid, // ✅ sessionID từ entryUrl
+        referer: entryUrl,
+        sessionid: session.sessionid,
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "x-requested-with": "XMLHttpRequest",
       },
     }, `PAGE_CONTENT: PN=${pn}`);
 
     const html = resp.json?.html || resp.text || "";
-    if (!html || !html.trim()) {
-      console.log(`⛔ Empty response at PN=${pn}, stopping`);
-      break;
-    }
+    if (!html || !html.trim()) break;
 
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
@@ -1320,8 +1318,12 @@ async function fetchPageContent(entryUrl, session) {
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
       if (cols.length) {
-        allRows.push(cols);
-        rowsThisPage++;
+        const lastRow = allRows[allRows.length - 1];
+        // Loại trùng: tránh fetch lại page lặp
+        if (!lastRow || lastRow.join("|") !== cols.join("|")) {
+          allRows.push(cols);
+          rowsThisPage++;
+        }
       }
     });
 
@@ -1329,12 +1331,8 @@ async function fetchPageContent(entryUrl, session) {
     if (rowsThisPage === 0) break;
 
     pn++;
-    if (pn > 200) {
-      console.warn("⚠️ Max 200 pages reached, stopping");
-      break;
-    }
-
-    await new Promise(r => setTimeout(r, 300));
+    if (pn > 200) break; // giới hạn max 200 pages
+    await new Promise(r => setTimeout(r, 600)); // tăng delay tránh backend chưa kịp render
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
@@ -1391,6 +1389,7 @@ async function fetchWOWBUY() {
 fetchWOWBUY().then(rows => {
   console.log("✅ DONE, total rows fetched:", rows.length);
 });
+
 
 /**
  * Lấy tenant access token từ Lark
