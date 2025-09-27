@@ -1372,7 +1372,7 @@ async function fetchPageContent() {
 
   const allRows = [];
   let pn = 1;
-  const MAX_PAGES = 16;
+  const MAX_PAGES = 100;
 
   while (pn <= MAX_PAGES) {
     const timestamp = Date.now();
