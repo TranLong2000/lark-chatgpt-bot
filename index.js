@@ -1362,53 +1362,52 @@ async function submitReportForm() {
   return resp;
 }
 
-async function fetchPageContent() {
-  console.log("📡 Fetching all page content...");
-  let allRows = [], pn = 1, totalPages = 1;
+async function fetchAllPagesWOWBUY() {
+  console.log("📡 Fetching all pages from WOWBUY...");
+
+  let allRows = [];
+  let pn = 1;
 
   while (true) {
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
+    // `_` phải mới cho mỗi request (timestamp/nonce)
+    const timestamp = Date.now();
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
+
     const resp = await safeFetchVerbose(url, {
       method: "GET",
       headers: {
         accept: "text/html, */*; q=0.01",
-        "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
-        authorization: session.token,
+        authorization: `Bearer ${session.token}`,
         cookie: session.cookie,
         referer: session.entryUrl,
         "user-agent": "Mozilla/5.0",
         "x-requested-with": "XMLHttpRequest",
+        sessionid: session.sessionid,
       },
     }, `PAGE_CONTENT: PN=${pn}`);
 
     const html = resp.json?.html || resp.text || "";
     const $ = cheerio.load(html);
 
+    // Lấy tất cả row của table
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-      if (cols.length > 0) allRows.push(cols);
+      if (cols.length) allRows.push(cols);
     });
 
-    // Lấy tổng số trang từ JSON hoặc HTML
-    if (pn === 1) {
-      if (resp.json?.pageCount) totalPages = resp.json.pageCount;
-      else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
-      else {
-        // fallback: parse từ HTML
-        const pageMatch = html.match(/Page 1 of (\d+)/i);
-        if (pageMatch) totalPages = parseInt(pageMatch[1], 10);
-      }
-      console.log(`📄 Total pages detected: ${totalPages}`);
-    }
+    console.log(`📊 Page ${pn} fetched, total rows so far: ${allRows.length}`);
 
-    console.log(`📊 Page ${pn}: ${allRows.length} rows total so far`);
+    // Kiểm tra nút "Next" trong HTML
+    // Nếu có class "next disabled" thì đã hết trang
+    const hasNext = $(".fr-pagination .next").length && !$(".fr-pagination .next").hasClass("disabled");
+    if (!hasNext) break;
 
-    if (pn >= totalPages) break;
     pn++;
+    // Delay nhẹ để tránh server chặn request liên tục
+    await new Promise(r => setTimeout(r, 300));
   }
 
-  console.log("📊 All pages fetched, total rows:", allRows.length);
-  if (allRows.length > 0) console.log("🔎 First 1 rows:", allRows.slice(0, 1));
+  console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
 
