@@ -1243,7 +1243,8 @@ async function loginWOWBUY() {
 
 async function getReportId() {
   console.log("📡 GETTING REPORT TREE...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
+  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_=${Date.now()}`;
+
   const resp = await safeFetchVerbose(url, {
     method: "GET",
     headers: {
@@ -1258,6 +1259,7 @@ async function getReportId() {
   if (resp.json?.data) {
     console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
     const report = resp.json.data.find(item => item.text === TARGET_REPORT);
+
     if (report) {
       session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
       console.log("📋 Selected entryUrl:", session.entryUrl);
@@ -1267,32 +1269,6 @@ async function getReportId() {
   } else {
     console.warn("⚠️ No data in report tree response");
   }
-}
-
-async function doTokenRefresh(token, cookieHeader) {
-  const url = `${WOWBUY_BASEURL}/webroot/decision/token/refresh`;
-  const body = { oldToken: token, tokenTimeOut: 1209600000 };
-
-  const refreshResp = await safeFetchVerbose(url, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      cookie: cookieHeader,
-      origin: WOWBUY_BASEURL,
-      referer: session.entryUrl,
-      "x-requested-with": "XMLHttpRequest",
-      "user-agent": "Mozilla/5.0 (Node)",
-    },
-    body: JSON.stringify(body),
-  }, "TOKEN_REFRESH");
-
-  if (refreshResp.json?.data?.accessToken) {
-    session.token = refreshResp.json.data.accessToken;
-    session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(refreshResp.setCookieArray));
-  }
-  return true;
 }
 
 // ===== Init WOWBUY session =====
@@ -1370,7 +1346,10 @@ async function fetchPageContent(entryUrl, session) {
 
   while (true) {
     const timestamp = Date.now();
-    const baseUrl = entryUrl.replace("/entry/access/", "/view/report?");
+    const baseUrl = entryUrl.includes("/entry/access/")
+      ? entryUrl.replace("/entry/access/", "/view/report?")
+      : `${WOWBUY_BASEURL}/webroot/decision/view/report?`;
+
     const url = `${baseUrl}&op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}&sessionID=${session.sessionid}`;
 
     const resp = await safeFetchVerbose(url, {
@@ -1416,6 +1395,10 @@ async function fetchPageContent(entryUrl, session) {
 // Luồng chính lấy dữ liệu WOWBUY
 async function fetchWOWBUY(reportName = "Purchase Plan") {
   console.log("📥 entryUrl:", session.entryUrl);
+
+  if (!session.entryUrl) {
+    throw new Error("❌ entryUrl is empty. Please check TARGET_REPORT or set a default entryUrl.");
+  }
 
   // Lấy sessionID từ entryUrl
   console.log("📡 ENTRY ACCESS to fetch sessionID...");
