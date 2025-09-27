@@ -1393,24 +1393,7 @@ async function initWOWBUYSession() {
 // ===== Fetch Excel trực tiếp từ WOWBUY =====
 async function fetchExcelFromWOWBUY() {
   try {
-    // ===== 1. Check register =====
-    const checkRegisterUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=export&cmd=check_register`;
-    const checkRegisterResp = await safeFetchVerbose(checkRegisterUrl, {
-      method: "GET",
-      headers: {
-        accept: "*/*",
-        authorization: `Bearer ${session.token}`,
-        cookie: session.cookie,
-        sessionid: session.sessionid,
-        "x-requested-with": "XMLHttpRequest",
-      },
-    }, "EXPORT_CHECK_REGISTER");
-
-    if (!checkRegisterResp.ok && !checkRegisterResp.json) {
-      throw new Error("❌ check_register failed");
-    }
-
-    // ===== 2. Check font (chuẩn bị export) =====
+    // ===== 1. Check font (chuẩn bị export) =====
     const checkFontUrl = `${WOWBUY_BASEURL}/webroot/decision/export/check/font`;
     const checkFontResp = await safeFetchVerbose(checkFontUrl, {
       method: "POST",
@@ -1424,11 +1407,10 @@ async function fetchExcelFromWOWBUY() {
       body: "format=excel",
     }, "EXPORT_CHECK_FONT");
 
-    // Lấy dataId hoặc token cho bước export_polling
     const dataId = checkFontResp.json?.dataId || checkFontResp.json?.exportDataId;
-    if (!dataId) throw new Error("❌ Không lấy được dataId từ check_font");
+    if (!dataId) throw new Error("❌ Không lấy được dataId từ check/font");
 
-    // ===== 3. Export polling =====
+    // ===== 2. Export polling =====
     const exportUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
     const exportBody = `op=export&cmd=export_polling&type=excel&data=${dataId}`;
 
@@ -1444,11 +1426,10 @@ async function fetchExcelFromWOWBUY() {
       body: exportBody,
     }, "EXPORT_EXCEL");
 
-    // ✅ excelResp.text hoặc excelResp.arrayBuffer() tuỳ bạn muốn xử lý
     return excelResp;
 
   } catch (err) {
-    console.error("❌ Lỗi trong fetchExcelFromWOWBUY:", err.message, err.stack);
+    console.error("❌ Lỗi trong fetchExcelFromWOWBUY:", err.message);
     return null;
   }
 }
