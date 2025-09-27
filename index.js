@@ -1050,10 +1050,8 @@ let session = {
   cookie: "",
   entryUrl: "",
   sessionid: "",
+  widgetName: "",
   lastLogin: 0,
-  reportId: null,
-  widgetName: null,
-  totalPages: null,
 };
 
 // ======= Debug / Cookie helpers =======
@@ -1077,7 +1075,7 @@ function maskCookieString(cookieStr = "") {
       if (eq === -1) return pair;
       const k = pair.slice(0, eq);
       const v = pair.slice(eq + 1);
-      if (/fine_auth_token|accessToken|Authorization|auth_token|token|password|fineMarkId|last_login_info/i.test(k)) {
+      if (/fine_auth_token|accessToken|Authorization|auth_token|token|password/i.test(k)) {
         return `${k}=${maskValue(v)}`;
       }
       return `${k}=${v}`;
@@ -1128,60 +1126,12 @@ function extractSessionIDFromHtml(html) {
   const match2 = html.match(regex2);
   if (match2 && match2[1]) return match2[1];
 
-  // New fallback: some entry pages embed JSON with "sessionID":"..."
-  const regex3 = /"sessionID"\s*:\s*"([a-f0-9-]+)"/i;
-  const match3 = html.match(regex3);
-  if (match3 && match3[1]) return match3[1];
-
   return null;
 }
 
-/* -------------------
-   Helpers for page fetching
-   ------------------- */
-function extractTotalPagesFromResp(resp, html = "") {
-  try {
-    const j = resp.json || {};
-    if (j.totalPages) return Number(j.totalPages);
-    if (j.pageCount) return Number(j.pageCount);
-    if (j.data?.totalPages) return Number(j.data.totalPages);
-    if (j.data?.pageCount) return Number(j.data.pageCount);
-    // html patterns (common)
-    const patterns = [
-      /"totalPage"\s*:\s*(\d+)/i,
-      /"pageCount"\s*:\s*(\d+)/i,
-      /Page\s*\d+\s*of\s*(\d+)/i,
-      /共\s*(\d+)\s*页/
-    ];
-    for (const p of patterns) {
-      const m = html.match(p);
-      if (m) return Number(m[1]);
-    }
-  } catch (e) {}
-  return null;
-}
-
-function pageSignatureFromHtml(html) {
-  try {
-    const $ = cheerio.load(html || "");
-    // signature = first 5 row texts joined
-    const rows = $("table").first().find("tr").slice(0, 5).map((i, tr) => {
-      return $(tr).find("td,th").map((j, td) => $(td).text().trim()).get().join("|");
-    }).get();
-    if (rows.length) return rows.join("||");
-    return String(html || "").slice(0, 500);
-  } catch {
-    return String(html || "").slice(0, 500);
-  }
-}
-
-/* -------------------
-   safe fetch (unchanged)
-   ------------------- */
+// ======== Safe Fetch ========
 async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
   opts.headers = opts.headers || {};
-  const method = (opts.method || "GET").toUpperCase();
-
   const headersMasked = {};
   Object.keys(opts.headers).forEach(k => {
     const v = opts.headers[k];
@@ -1193,17 +1143,8 @@ async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
   });
 
   let res;
-  try {
-    if (!url || typeof url !== "string" || !url.trim()) {
-      throw new Error(`Invalid URL passed to safeFetchVerbose for step ${stepName}`);
-    }
-    res = await fetch(url, opts);
-  } catch (err) {
-    // rethrow but include step for easier debug
-    const e = new Error(`Fetch failed at step ${stepName}: ${err.message}`);
-    e.cause = err;
-    throw e;
-  }
+  try { res = await fetch(url, opts); } 
+  catch (err) { throw err; }
 
   const respHeaders = {};
   res.headers.forEach((v, k) => (respHeaders[k] = v));
@@ -1212,26 +1153,14 @@ async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
   const single = res.headers.get("set-cookie");
   if (single) setCookieArray = [single];
 
-  const respMasked = {};
-  Object.keys(respHeaders).forEach(k => {
-    const v = respHeaders[k];
-    if (/set-cookie|cookie|authorization|token/i.test(k)) {
-      respMasked[k] = maskCookieString(String(v));
-    } else {
-      respMasked[k] = String(v);
-    }
-  });
-
-  const text = await res.text().catch(() => "");
   let parsed = null;
+  const text = await res.text().catch(() => "");
   try { parsed = JSON.parse(text); } catch (_) {}
 
   return { res, status: res.status, headers: respHeaders, setCookieArray, text, json: parsed };
 }
 
-/* -------------------
-   LOGIN / GET REPORT TREE / TOKEN REFRESH
-   ------------------- */
+// ======== Login WOWBUY ========
 async function loginWOWBUY() {
   console.log("🔐 Login WOWBUY...");
   try {
@@ -1261,10 +1190,9 @@ async function loginWOWBUY() {
     await getReportId();
 
     if (!session.entryUrl) {
-      console.warn("⚠️ entryUrl not set after getReportId(), using default Purchase Plan UUID");
-      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
-      session.reportId = "821488a1-d632-4eb8-80e9-85fae1fb1bda";
-      session.widgetName = session.widgetName || "formSubmit0";
+      console.warn("⚠️ entryUrl not set, using default Purchase Plan UUID");
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=513&height=667`;
+      session.widgetName = "formSubmit0";
     }
 
     console.log("📥 entryUrl:", session.entryUrl);
@@ -1275,16 +1203,17 @@ async function loginWOWBUY() {
   }
 }
 
+// ======== Get Report ID ========
 async function getReportId() {
   console.log("📡 GETTING REPORT TREE...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_=${Date.now()}`;
+  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
   const resp = await safeFetchVerbose(url, {
     method: "GET",
     headers: {
       accept: "application/json, text/javascript, */*; q=0.01",
       authorization: `Bearer ${session.token}`,
       cookie: session.cookie,
-      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "user-agent": "Mozilla/5.0",
       "x-requested-with": "XMLHttpRequest",
     },
   }, "GET_REPORTS");
@@ -1293,26 +1222,18 @@ async function getReportId() {
     console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
     const report = resp.json.data.find(item => item.text === TARGET_REPORT);
     if (report) {
-      session.reportId = report.id;
-      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
-      // try to detect widgetName (if available in tree structure)
-      session.widgetName = report.children?.[0]?.widgetName || report.widgetName || session.widgetName || "formSubmit0";
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=513&height=667`;
+      session.widgetName = "formSubmit0";
       console.log("📋 Selected report:", report.text, `(${report.id})`);
       console.log("📋 Selected entryUrl:", session.entryUrl);
-      console.log("📋 Detected widgetName:", session.widgetName);
-    } else {
-      console.warn("⚠️ No report found with text:", TARGET_REPORT);
-      // leave session.entryUrl undefined - loginWOWBUY will fallback if needed
     }
-  } else {
-    console.warn("⚠️ No data in report tree response");
   }
 }
 
+// ======== Token refresh ========
 async function doTokenRefresh(token, cookieHeader) {
   const url = `${WOWBUY_BASEURL}/webroot/decision/token/refresh`;
   const body = { oldToken: token, tokenTimeOut: 1209600000 };
-
   const refreshResp = await safeFetchVerbose(url, {
     method: "POST",
     headers: {
@@ -1332,101 +1253,40 @@ async function doTokenRefresh(token, cookieHeader) {
     session.token = refreshResp.json.data.accessToken;
     session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(refreshResp.setCookieArray));
   }
+}
+
+// ======== Init session resources ========
+async function initWOWBUYSession() {
+  console.log("📡 Init WOWBUY session resources...");
+  // Placeholder nếu cần fetch thêm resources
   return true;
 }
 
-// ===== Init WOWBUY session =====
-async function initWOWBUYSession() {
-  const now = new Date();
-  const SD = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
-  const ED = now.toISOString().split("T")[0];
-
-  const params = {
-    SALE_STATUS: ["0", "1"], // On sale + Off sale
-    LABELSKUSN_C_C: "[4e0a][4e0b][67b6][72b6][6001][ff1a]",
-    LABELSTOREID_C: "[4ed3][5e93][ff1a]",
-    WH: [],
-    LABELSKUSN_C: "SKU[ff1a]",
-    SKUSN: [],
-    LABELSTOREID_C_C: "[8ba2][5355][521b][5efa][65f6][95f4][ff1a]",
-    SD, ED,
-    LABELSKUSN_C_C_C: "[53ef][552e][5e93][5b58][ff1a]",
-    KS: [],
-    LABELSKUSN_C_C_C_C: "[5546][54c1][7f16][53f7][ff1a]",
-    SN: ""
-  };
-
-  const steps = [
-    { name: "resource", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=resource&resource=/com/fr/web/core/js/paramtemplate.js` },
-    { name: "fr_paramstpl", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_paramstpl&cmd=query_favorite_params`, method: "POST" },
-    { name: "fr_dialog", url: `${WOWBUY_BASEURL}/webroot/decision/view/report?op=fr_dialog&cmd=parameters_d`, method: "POST", body: "__parameters__=" + encodeURIComponent(JSON.stringify(params)), headers: { "content-type": "application/x-www-form-urlencoded" } },
-    { name: "collect", url: `${WOWBUY_BASEURL}/webroot/decision/preview/info/collect`, method: "POST", body: "webInfo=%7B%22webResolution%22%3A%221536*864%22%2C%22fullScreen%22%3A0%7D", headers: { "content-type": "application/x-www-form-urlencoded" } }
-  ];
-
-  for (const step of steps) {
-    await safeFetchVerbose(step.url, {
-      method: step.method || "GET",
-      headers: { authorization: `Bearer ${session.token}`, cookie: session.cookie, ...(step.headers || {}) },
-      body: step.body,
-    }, `INIT:${step.name}`);
-  }
-}
-
-// ===== Submit report form =====
+// ======== Submit report form ========
 async function submitReportForm() {
   console.log("📤 Submitting report form...");
-
-  const widgetName = session.widgetName || "formSubmit0";
-  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=${widgetName}&sessionID=${session.sessionid}`;
-  const today = new Date();
-  const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
-  const ED = today.toISOString().split("T")[0];
-
-  const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
-  const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
-
-  try {
-    const resp = await safeFetchVerbose(formUrl, {
-      method: "POST",
-      headers: {
-        accept: "application/json, text/javascript, */*; q=0.01",
-        "content-type": "application/x-www-form-urlencoded",
-        authorization: `Bearer ${session.token}`,
-        cookie: session.cookie,
-        referer: session.entryUrl,
-        "user-agent": "Mozilla/5.0",
-        "x-requested-with": "XMLHttpRequest",
-      },
-      body,
-    }, "SUBMIT_FORM");
-
-    if (resp.status === 200) {
-      console.log("✅ Form submitted successfully (widget:", widgetName + ")");
-      const maybeTotal = extractTotalPagesFromResp(resp, resp.text || "");
-      if (maybeTotal) {
-        session.totalPages = maybeTotal;
-        console.log("🔢 totalPages detected from form response:", session.totalPages);
-      }
-    } else {
-      console.warn("⚠️ Form submit failed with status:", resp.status);
-    }
-    return resp;
-  } catch (err) {
-    console.error("🔥 Error in submitReportForm:", err);
-    throw err;
-  }
+  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/formSubmit`;
+  await safeFetchVerbose(url, {
+    method: "POST",
+    headers: {
+      cookie: session.cookie,
+      authorization: `Bearer ${session.token}`,
+      "content-type": "application/x-www-form-urlencoded",
+      referer: session.entryUrl,
+      "user-agent": "Mozilla/5.0",
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body: `widgetName=${session.widgetName}`,
+  }, "FORM_SUBMIT");
 }
 
-// ===== Fetch all pages =====
-// ===== Lấy tất cả page content (Purchase Plan) =====
+// ======== Fetch all page content ========
 async function fetchPageContent(entryUrl, session) {
   console.log("📡 Fetching all page content (Purchase Plan mode)...");
 
   const allRows = [];
   let pn = 1;
-
-  // Kiểm tra sessionID đã có chưa
-  if (!session.sessionid) throw new Error("❌ sessionID chưa được set, không thể fetch page content");
+  if (!session.sessionid) throw new Error("❌ sessionID chưa được set");
 
   while (true) {
     const timestamp = Date.now();
@@ -1440,8 +1300,8 @@ async function fetchPageContent(entryUrl, session) {
         accept: "text/html, */*; q=0.01",
         authorization: `Bearer ${session.token}`,
         cookie: session.cookie,
-        referer: entryUrl,           // ✅ quan trọng: referer chính là entryUrl
-        sessionid: session.sessionid, // ✅ quan trọng: sessionID header
+        referer: entryUrl,      // ✅ referer = entryUrl
+        sessionid: session.sessionid, // ✅ sessionid header
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "x-requested-with": "XMLHttpRequest",
       },
@@ -1453,54 +1313,31 @@ async function fetchPageContent(entryUrl, session) {
       break;
     }
 
-    // parse table rows
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-      if (cols.length) {
-        allRows.push(cols);
-        rowsThisPage++;
-      }
+      if (cols.length) { allRows.push(cols); rowsThisPage++; }
     });
 
     console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
-
-    if (rowsThisPage === 0) {
-      console.log("⛔ No rows in this page => last page");
-      break;
-    }
+    if (rowsThisPage === 0) break;
 
     pn++;
-    if (pn > 200) {
-      console.warn("⚠️ Reached max 200 pages, stopping");
-      break;
-    }
-
-    await new Promise(r => setTimeout(r, 300)); // tránh spam request
+    if (pn > 200) { console.warn("⚠️ Max 200 pages, stopping"); break; }
+    await new Promise(r => setTimeout(r, 300));
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
 
-// ===== Main flow =====
+// ======== Main flow ========
 async function fetchWOWBUY() {
   try {
     const s = await loginWOWBUY();
-    if (!s) { 
-      console.error("❌ Aborting: login failed"); 
-      return []; 
-    }
+    if (!s) return [];
 
-    // entryUrl được set bởi getReportId
-    if (!session.entryUrl) {
-      console.warn("⚠️ entryUrl empty, sử dụng default Purchase Plan UUID");
-      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=513&height=667`;
-      session.widgetName = session.widgetName || "formSubmit0";
-    }
-
-    // Lấy sessionID từ entryUrl
     console.log("📡 ENTRY ACCESS to fetch sessionID...");
     const entryResp = await safeFetchVerbose(session.entryUrl, {
       method: "GET",
@@ -1519,23 +1356,15 @@ async function fetchWOWBUY() {
         const m = entryResp.text.match(/"sessionID"\s*:\s*"([a-f0-9-]+)"/i);
         if (m && m[1]) sid = m[1];
       }
-      if (sid) {
-        session.sessionid = sid;
-        console.log("🆔 sessionID extracted:", session.sessionid);
-      } else {
-        throw new Error("❌ Failed to extract sessionID from ENTRY_ACCESS response");
-      }
+      if (sid) session.sessionid = sid;
+      else throw new Error("❌ Failed to extract sessionID from ENTRY_ACCESS");
+      console.log("🆔 sessionID extracted:", session.sessionid);
     }
 
-    // Init session resources
     await initWOWBUYSession();
-
-    // Submit report form
     await submitReportForm();
 
-    // Fetch all page contents
     const data = await fetchPageContent(session.entryUrl, session);
-
     console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
     return data;
   } catch (err) {
@@ -1544,163 +1373,9 @@ async function fetchWOWBUY() {
   }
 }
 
-/**
- * Lấy tenant access token từ Lark
- */
-async function getTenantAccessToken() {
-  try {
-    const resp = await axios.post(
-      "https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal",
-      { app_id: LARK_APP_ID, app_secret: LARK_APP_SECRET }
-    );
-    if (resp.data?.tenant_access_token) {
-      const token = resp.data.tenant_access_token;
-      console.log("🔑 Tenant access token retrieved:", token.slice(0, 10) + "...");
-      return token;
-    } else {
-      throw new Error("Không nhận được tenant access token từ Lark");
-    }
-  } catch (err) {
-    console.error("❌ Lỗi lấy tenant access token:", err.message);
-    if (err.response) console.error("📥 Error response:", err.response.data);
-    throw err;
-  }
-}
-
-// ===== Helper: Convert số cột thành tên cột Excel =====
-function columnNumberToName(n) {
-  let name = "";
-  while (n > 0) {
-    let r = (n - 1) % 26;
-    name = String.fromCharCode(65 + r) + name;
-    n = Math.floor((n - 1) / 26);
-  }
-  return name;
-}
-
-// ===== Helper: Chuyển ngày sang Excel serial =====
-function dateToExcelSerial(dateStr) {
-  const date = new Date(dateStr);
-  if (isNaN(date)) return dateStr; // fallback
-  const excelEpoch = new Date("1899-12-30T00:00:00Z");
-  const diff = (date - excelEpoch) / (1000 * 60 * 60 * 24);
-  return Math.floor(diff);
-}
-
-// ===== Helper: Auto detect value type =====
-function autoNormalize(v) {
-  if (v === null || v === undefined) return "";
-
-  if (typeof v === "number" || typeof v === "boolean") return v;
-
-  if (typeof v === "string") {
-    const raw = v.trim();
-
-    // 1️⃣ Number (loại bỏ dấu phẩy, ký tự thừa)
-    const num = Number(raw.replace(/,/g, "").replace(/[^\d.-]/g, ""));
-    if (!isNaN(num) && raw !== "") {
-      return num;
-    }
-
-    // 2️⃣ Date (ISO hoặc format phổ biến)
-    const parsed = Date.parse(raw);
-    if (!isNaN(parsed)) {
-      return dateToExcelSerial(raw);
-    }
-
-    // 3️⃣ Boolean
-    const lower = raw.toLowerCase();
-    if (["true", "false"].includes(lower)) {
-      return lower === "true";
-    }
-
-    // 4️⃣ Default string
-    return raw;
-  }
-
-  return String(v);
-}
-
-/**
- * Ghi dữ liệu vào Lark Sheet (v2 API)
- */
-async function writeToLark(tableData) {
-  if (!tableData || tableData.length === 0) {
-    console.warn("⚠️ Không có dữ liệu để ghi vào Lark Sheet");
-    return;
-  }
-
-  try {
-    const token = await getTenantAccessToken();
-
-    const rows = tableData.length;
-    const cols = tableData[0]?.length || 0;
-
-    // Tính range: bắt đầu từ cột J (thứ 10)
-    const startColIndex = 10;
-    const endColIndex = startColIndex + cols - 1;
-    const endColName = columnNumberToName(endColIndex);
-
-    const normalizedData = tableData.map((row, rowIdx) =>
-      row.map(val => rowIdx === 0 ? String(val) : autoNormalize(val)) // hàng 1 giữ nguyên text (header)
-    );
-
-    const range = `${SHEET_ID_TEST}!J1:${endColName}${rows}`;
-
-    const url = `https://open.larksuite.com/open-apis/sheets/v2/spreadsheets/${SPREADSHEET_TOKEN_TEST}/values_batch_update`;
-
-    const body = {
-      valueRanges: [
-        {
-          range,
-          values: normalizedData,
-        },
-      ],
-      valueInputOption: "USER_ENTERED", // cho phép hệ thống tự định dạng
-    };
-
-    console.log("========== DEBUG LARK ==========");
-    console.log("🔗 URL:", url);
-    console.log("📋 Target range:", range);
-    console.log("📊 Data size:", rows, "rows x", cols, "cols");
-    console.log("🔑 Token:", token.slice(0, 10) + "...");
-    console.log("================================");
-
-    const resp = await axios.post(url, body, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    console.log("📥 Lark response:", JSON.stringify(resp.data, null, 2));
-
-    if (resp.data.code === 0) {
-      console.log("✅ Ghi dữ liệu vào Lark Sheet thành công!");
-    } else {
-      console.warn("⚠️ Lark Sheet API trả lỗi:", resp.data);
-    }
-  } catch (err) {
-    console.error("❌ Lỗi ghi Lark Sheet:", err.message);
-    if (err.response) {
-      console.error("📥 Error response:", JSON.stringify(err.response.data, null, 2));
-    }
-  }
-}
-
-// ===== CRON JOB =====
-cron.schedule("*/5 * * * *", async () => {
-  try {
-    const data = await fetchWOWBUY();
-    await writeToLark(data);
-  } catch (err) {
-    console.error("❌ Job failed:", err.message);
-  }
-});
-
-app.listen(3000, () => {
-  console.log("🚀 Bot running on port 3000");
-  fetchWOWBUY();
+// ======== Execute ========
+fetchWOWBUY().then(rows => {
+  console.log("✅ DONE, total rows fetched:", rows.length);
 });
 
 
