@@ -1280,19 +1280,20 @@ async function submitReportForm() {
   }, "FORM_SUBMIT");
 }
 
-// ======== Fetch all page content ========
+// ======== Fetch all page content (Purchase Plan only) ========
 async function fetchPageContent(entryUrl, session) {
-  console.log("📡 Fetching all page content (Purchase Plan mode)...");
+  console.log("📡 Fetching all page content for Purchase Plan...");
 
   const allRows = [];
   let pn = 1;
+
   if (!session.sessionid) throw new Error("❌ sessionID chưa được set");
 
   while (true) {
     const timestamp = Date.now();
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report` +
       `?_=${timestamp}&op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true` +
-      `&_paperWidth=514&_paperHeight=510&__fit__=false`;
+      `&_paperWidth=174&_paperHeight=510&__fit__=false`; // fix đúng kích thước Purchase Plan
 
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1300,8 +1301,8 @@ async function fetchPageContent(entryUrl, session) {
         accept: "text/html, */*; q=0.01",
         authorization: `Bearer ${session.token}`,
         cookie: session.cookie,
-        referer: entryUrl,      // ✅ referer = entryUrl
-        sessionid: session.sessionid, // ✅ sessionid header
+        referer: entryUrl,         // ✅ referer = entryUrl Purchase Plan
+        sessionid: session.sessionid, // ✅ sessionID từ entryUrl
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "x-requested-with": "XMLHttpRequest",
       },
@@ -1315,17 +1316,25 @@ async function fetchPageContent(entryUrl, session) {
 
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
+
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-      if (cols.length) { allRows.push(cols); rowsThisPage++; }
+      if (cols.length) {
+        allRows.push(cols);
+        rowsThisPage++;
+      }
     });
 
     console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
     if (rowsThisPage === 0) break;
 
     pn++;
-    if (pn > 200) { console.warn("⚠️ Max 200 pages, stopping"); break; }
-    await new Promise(r => setTimeout(r, 300));
+    if (pn > 200) { // an toàn tránh infinite loop
+      console.warn("⚠️ Max 200 pages reached, stopping");
+      break;
+    }
+
+    await new Promise(r => setTimeout(r, 300)); // delay nhẹ
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
