@@ -1426,6 +1426,14 @@ async function submitReportForm() {
   return exportDataId;
 }
 
+const resp = await safeFetchVerbose(formUrl, {...}, "SUBMIT_FORM");
+console.log("🔍 Form response JSON:", resp.json);
+const exportDataId = resp.json?.data?.exportDataId || resp.json?.data?.dataId;
+if (!exportDataId) {
+  console.error("❌ Không lấy được exportDataId từ form response");
+  return null;
+}
+
 // ===== Fetch all pages =====
 async function fetchExcelFromWOWBUY(exportDataId) {
   const exportUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
