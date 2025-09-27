@@ -1334,29 +1334,13 @@ async function initWOWBUYSession() {
 
 // ===== Submit report form =====
 async function submitReportForm() {
-  console.log("📤 Submitting Purchase Plan report form...");
-
-  if (!session.sessionid) {
-    console.warn("⚠️ sessionID not set, cannot submit form");
-    return null;
-  }
-
+  console.log("📤 Submitting report form...");
   const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
   const today = new Date();
   const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
   const ED = today.toISOString().split("T")[0];
 
-  // Chỉ gửi các param liên quan báo cáo Purchase Plan
-  const params = { 
-    SALE_STATUS: ["0", "1"], 
-    SD, 
-    ED, 
-    WH: [], 
-    SKUSN: [], 
-    KS: [], 
-    SN: "" 
-  };
-
+  const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
   const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
 
   const resp = await safeFetchVerbose(formUrl, {
@@ -1373,13 +1357,13 @@ async function submitReportForm() {
     body,
   }, "SUBMIT_FORM");
 
-  if (resp.status === 200) console.log("✅ Purchase Plan form submitted successfully");
+  if (resp.status === 200) console.log("✅ Form submitted successfully");
   else console.warn("⚠️ Form submit failed with status:", resp.status);
   return resp;
 }
 
 async function fetchPageContent() {
-  console.log("📡 Fetching all pages of Purchase Plan...");
+  console.log("📡 Fetching all page content...");
   let allRows = [];
   let pn = 1;
   let totalPages = null;
@@ -1405,6 +1389,7 @@ async function fetchPageContent() {
     const html = resp.json?.html || resp.text || "";
     const $ = cheerio.load(html);
 
+    // Lấy tất cả row của table
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
@@ -1423,14 +1408,21 @@ async function fetchPageContent() {
     }
 
     // ==== Kiểm tra dừng ====
-    if (totalPages && pn >= totalPages) break;   // đã lấy đủ trang
-    if (!totalPages && rowsThisPage === 0) break; // page rỗng → dừng
+    if (totalPages && pn >= totalPages) break; // biết tổng trang
+    if (!totalPages) {
+      // Nếu page rỗng → dừng
+      if (rowsThisPage === 0) break;
+
+      // Hoặc kiểm tra nút Next trong HTML
+      const nextBtn = $(".fr-pagination .next");
+      if (!nextBtn.length || nextBtn.hasClass("disabled")) break;
+    }
 
     pn++;
-    await new Promise(r => setTimeout(r, 300)); // delay tránh block
+    await new Promise(r => setTimeout(r, 300)); // delay nhẹ tránh block
   }
 
-  console.log("✅ All Purchase Plan pages fetched, total rows:", allRows.length);
+  console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
 
