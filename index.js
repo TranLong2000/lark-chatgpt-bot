@@ -1362,15 +1362,15 @@ async function submitReportForm() {
   return resp;
 }
 
+// ===== Fetch all pages =====
 async function fetchPageContent() {
   console.log("📡 Fetching all page content...");
+
+  const PAGE_SIZE = 36; // số row tối đa 1 trang (chỉnh nếu khác)
   let allRows = [];
   let pn = 1;
-  let totalPages = Infinity; // ban đầu chưa biết số trang
 
-  const PAGE_SIZE = 50; // nếu bạn biết số row/trang chuẩn
-
-  while (pn <= totalPages) {
+  while (true) {
     const timestamp = Date.now();
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
 
@@ -1387,10 +1387,10 @@ async function fetchPageContent() {
       },
     }, `PAGE_CONTENT: PN=${pn}`);
 
+    // ==== Parse HTML ====
     const html = resp.json?.html || resp.text || "";
     const $ = cheerio.load(html);
 
-    // Lấy tất cả row của table
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
@@ -1400,17 +1400,16 @@ async function fetchPageContent() {
       }
     });
 
-    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows this page, total rows so far: ${allRows.length}`);
+    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows this page, total so far: ${allRows.length}`);
 
-    // Lấy totalPages nếu server trả
-    if (resp.json?.pageCount) totalPages = resp.json.pageCount;
-    else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
-
-    // Nếu server không trả totalPages, dùng row count để dừng
-    if (!resp.json?.pageCount && rowsThisPage < PAGE_SIZE) break;
+    // ==== Điều kiện dừng ====
+    if (rowsThisPage < PAGE_SIZE) {
+      console.log("⛔ Last page reached (rows < PAGE_SIZE).");
+      break;
+    }
 
     pn++;
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 300)); // delay nhẹ tránh block
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
@@ -1418,53 +1417,21 @@ async function fetchPageContent() {
 }
 
 // ===== Main flow =====
-async function fetchAllPagesWOWBUY() {
-  console.log("📡 Fetching all pages from WOWBUY...");
+async function fetchWOWBUY() {
+  try {
+    const s = await loginWOWBUY();
+    if (!s) { console.error("❌ Aborting: login failed"); return []; }
 
-  let allRows = [];
-  let pn = 1;
+    await initWOWBUYSession();
+    await submitReportForm();
+    const data = await fetchPageContent();
 
-  while (true) {
-    // `_` phải mới cho mỗi request (timestamp/nonce)
-    const timestamp = Date.now();
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
-
-    const resp = await safeFetchVerbose(url, {
-      method: "GET",
-      headers: {
-        accept: "text/html, */*; q=0.01",
-        authorization: `Bearer ${session.token}`,
-        cookie: session.cookie,
-        referer: session.entryUrl,
-        "user-agent": "Mozilla/5.0",
-        "x-requested-with": "XMLHttpRequest",
-        sessionid: session.sessionid,
-      },
-    }, `PAGE_CONTENT: PN=${pn}`);
-
-    const html = resp.json?.html || resp.text || "";
-    const $ = cheerio.load(html);
-
-    // Lấy tất cả row của table
-    $("table tr").each((i, tr) => {
-      const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-      if (cols.length) allRows.push(cols);
-    });
-
-    console.log(`📊 Page ${pn} fetched, total rows so far: ${allRows.length}`);
-
-    // Kiểm tra nút "Next" trong HTML
-    // Nếu có class "next disabled" thì đã hết trang
-    const hasNext = $(".fr-pagination .next").length && !$(".fr-pagination .next").hasClass("disabled");
-    if (!hasNext) break;
-
-    pn++;
-    // Delay nhẹ để tránh server chặn request liên tục
-    await new Promise(r => setTimeout(r, 300));
+    console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
+    return data;
+  } catch (err) {
+    console.error("❌ Lỗi trong fetchWOWBUY:", err.message, err.stack);
+    return [];
   }
-
-  console.log("✅ All pages fetched, total rows:", allRows.length);
-  return allRows;
 }
 
 /**
@@ -1612,7 +1579,7 @@ async function writeToLark(tableData) {
 }
 
 // ===== CRON JOB =====
-cron.schedule("*/60 * * * *", async () => {
+cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
