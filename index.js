@@ -1332,50 +1332,42 @@ async function initWOWBUYSession() {
   }
 }
 
-// ===== Submit report form =====
+// 📝 SUBMIT FORM
 async function submitReportForm() {
   console.log("📤 Submitting report form...");
 
   const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
-  const today = new Date();
-  const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
-  const ED = today.toISOString().split("T")[0];
 
-  const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
-  const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
+  try {
+    const resp = await safeFetchVerbose(formUrl, {
+      method: "GET",
+      headers: {
+        ...DEFAULT_HEADERS,
+        Cookie: cookieJar.getCookieStringSync(WOWBUY_BASEURL),
+      },
+    }, "SUBMIT_FORM");
 
-  const resp = await safeFetchVerbose(formUrl, {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/x-www-form-urlencoded",
-      authorization: `Bearer ${session.token}`,
-      cookie: session.cookie,
-      referer: session.entryUrl,
-      "user-agent": "Mozilla/5.0",
-      "x-requested-with": "XMLHttpRequest",
-    },
-    body,
-  }, "SUBMIT_FORM");
+    if (resp.status === 200) {
+      console.log("✅ Form submitted successfully");
 
-  if (resp.status === 200) {
-    console.log("✅ Form submitted successfully");
-    if (resp.json) {
-      console.log("🛠️ submitReportForm response JSON keys:", Object.keys(resp.json));
-      if (resp.json.widgetName) {
-        console.log("📌 WidgetName detected:", resp.json.widgetName);
-        session.widgetName = resp.json.widgetName;
+      // log thử widgetNames có trong response
+      if (resp.text) {
+        const widgetMatches = resp.text.match(/widgetname=["']([^"']+)["']/g) || [];
+        const cleanWidgets = widgetMatches.map(m => m.replace(/widgetname=|['"]/g, ""));
+        console.log("🔎 Available widgetNames:", cleanWidgets);
       }
+    } else {
+      console.error("❌ Form submit failed", resp.status, resp.text);
     }
-  } else {
-    console.warn("⚠️ Form submit failed with status:", resp.status);
+  } catch (err) {
+    console.error("🔥 Error in submitReportForm:", err);
   }
-  return resp;
 }
 
-// ===== Fetch all pages =====
+
+// 📝 FETCH PAGE CONTENT
 async function fetchPageContent() {
-  console.log("📡 Fetching all page content (pn loop mode)...");
+  console.log("📡 Fetching all page content (by widget)...");
 
   const allRows = [];
   let pn = 1;
@@ -1384,67 +1376,63 @@ async function fetchPageContent() {
   while (true) {
     const timestamp = Date.now();
     const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content` +
+                `&widgetname=formSubmit0` +                 // 👉 nhớ sửa widgetName đúng theo log
                 `&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
 
-    const resp = await safeFetchVerbose(url, {
-      method: "GET",
-      headers: {
-        accept: "text/html, */*; q=0.01",
-        authorization: `Bearer ${session.token}`,
-        cookie: session.cookie,
-        referer: session.entryUrl,
-        "user-agent": "Mozilla/5.0",
-        "x-requested-with": "XMLHttpRequest",
-        sessionid: session.sessionid,
-      },
-    }, `PAGE_CONTENT: PN=${pn}`);
+    try {
+      const resp = await safeFetchVerbose(url, {
+        method: "GET",
+        headers: {
+          ...DEFAULT_HEADERS,
+          Cookie: cookieJar.getCookieStringSync(WOWBUY_BASEURL),
+        },
+      }, `PAGE_CONTENT: PN=${pn}`);
 
-    const html = resp.json?.html || resp.text || "";
-    if (!html || !html.trim()) {
-      console.log(`⛔ Empty response at PN=${pn}, stopping.`);
-      break;
-    }
+      const html = resp.json?.html || resp.text || "";
 
-    // 👉 detect tổng số trang ngay ở lần đầu
-    if (pn === 1 && !totalPages) {
-      const totalPagesMatch = html.match(/data-totalpages=["']?(\d+)["']?/i);
-      if (totalPagesMatch) {
-        totalPages = parseInt(totalPagesMatch[1], 10);
-        console.log(`📌 Detected totalPages = ${totalPages}`);
+      if (!html.trim()) {
+        console.log(`⛔ Empty response at PN=${pn}, stopping.`);
+        break;
       }
-    }
 
-    // Parse rows
-    const $ = cheerio.load(html);
-    let rowsThisPage = 0;
-    $("table tr").each((i, tr) => {
-      const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-      if (cols.length) {
-        allRows.push(cols);
-        rowsThisPage++;
+      // detect số trang ở lần đầu
+      if (pn === 1 && !totalPages) {
+        const totalPagesMatch = html.match(/data-totalpages=["']?(\d+)["']?/i);
+        if (totalPagesMatch) {
+          totalPages = parseInt(totalPagesMatch[1], 10);
+          console.log(`📌 Detected totalPages = ${totalPages}`);
+        }
       }
-    });
 
-    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
+      // parse rows
+      const $ = cheerio.load(html);
+      let rowsThisPage = 0;
+      $("table tr").each((i, tr) => {
+        const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
+        if (cols.length) {
+          allRows.push(cols);
+          rowsThisPage++;
+        }
+      });
+      console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
 
-    if (rowsThisPage === 0) {
-      console.log(`⛔ No rows at PN=${pn}, assuming last page.`);
+      if (totalPages && pn >= totalPages) {
+        console.log(`✅ Last page reached at PN=${pn}`);
+        break;
+      }
+
+      pn++;
+      await new Promise(r => setTimeout(r, 300));
+    } catch (err) {
+      console.error(`🔥 Error fetching PN=${pn}:`, err);
       break;
     }
-
-    // 👉 dừng đúng lúc
-    if (totalPages && pn >= totalPages) {
-      console.log(`✅ Last page reached at PN=${pn}`);
-      break;
-    }
-
-    pn++;
-    await new Promise(r => setTimeout(r, 300));
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
+
 
 // ===== Main flow =====
 async function fetchWOWBUY() {
