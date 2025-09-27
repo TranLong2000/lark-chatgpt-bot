@@ -1308,19 +1308,21 @@ async function submitReportForm() {
 }
 
 // ======== Fetch all page content (Purchase Plan only, dynamic widgetName/reportID) ========
+// ======== Fetch all page content (Purchase Plan only) ========
 async function fetchPageContent(entryUrl, session) {
-  console.log("📡 Fetching all page content for Purchase Plan...");
+  console.log("📡 Fetching all page content for Purchase Plan (dynamic reportId)...");
 
   if (!session.sessionid) throw new Error("❌ sessionID chưa được set");
 
   const allRows = [];
   let currentPage = 1;
-  let widget = session.widgetName;
-  let morePages = true;
+  let reportId = Date.now(); // khởi tạo reportId ban đầu
+  let widgetName = session.widgetName;
 
-  while (morePages) {
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?_=${Date.now()}&op=page_content&pn=${currentPage}&widgetName=${widget}`;
-    console.log(`📡 Fetching PN=${currentPage} with sessionID=${session.sessionid} and widgetName=${widget}`);
+  while (true) {
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?_=${reportId}&op=page_content&pn=${currentPage}&widgetName=${widgetName}&__webpage__=true&_paperWidth=362&_paperHeight=510&__fit__=false`;
+
+    console.log(`📡 Fetching PN=${currentPage} with sessionID=${session.sessionid} and reportId=${reportId}`);
 
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1340,6 +1342,7 @@ async function fetchPageContent(entryUrl, session) {
       break;
     }
 
+    // Parse table rows
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
@@ -1352,20 +1355,21 @@ async function fetchPageContent(entryUrl, session) {
 
     console.log(`📊 Page ${currentPage} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
 
-    // --- Cập nhật widgetName cho page tiếp theo ---
-    if (resp.json?.nextPageWidget) {
-      widget = resp.json.nextPageWidget;
+    // Kiểm tra JSON trả về có reportId mới không
+    const nextReportId = resp.json?.nextReportId;
+    const nextWidget = resp.json?.nextWidgetName;
+
+    if (!nextReportId || !nextWidget || rowsThisPage === 0) {
+      console.log("✅ No more pages detected, stopping fetch.");
+      break;
     }
 
-    // --- Kiểm tra pageCount nếu có ---
-    if (resp.json?.pageCount && currentPage >= resp.json.pageCount) {
-      morePages = false;
-    } else {
-      currentPage++;
-    }
+    // Cập nhật cho page tiếp theo
+    reportId = nextReportId;
+    widgetName = nextWidget;
+    currentPage++;
 
-    // tránh quá tải server
-    await new Promise(r => setTimeout(r, 500));
+    await new Promise(r => setTimeout(r, 500)); // tránh spam server
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
@@ -1566,7 +1570,7 @@ async function writeToLark(tableData) {
 }
 
 // ===== CRON JOB =====
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("*/60 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
