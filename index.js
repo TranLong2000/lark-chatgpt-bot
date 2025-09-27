@@ -1362,9 +1362,8 @@ async function submitReportForm() {
   return resp;
 }
 
-async function fetchAllPagesWOWBUY() {
-  console.log("📡 Fetching all pages from WOWBUY...");
-
+async function fetchPageContent() {
+  console.log("📡 Fetching all page content...");
   let allRows = [];
   let pn = 1;
 
@@ -1398,12 +1397,12 @@ async function fetchAllPagesWOWBUY() {
     console.log(`📊 Page ${pn} fetched, total rows so far: ${allRows.length}`);
 
     // Kiểm tra nút "Next" trong HTML
-    // Nếu có class "next disabled" thì đã hết trang
-    const hasNext = $(".fr-pagination .next").length && !$(".fr-pagination .next").hasClass("disabled");
+    const nextBtn = $(".fr-pagination .next");
+    const hasNext = nextBtn.length && !nextBtn.hasClass("disabled");
     if (!hasNext) break;
 
     pn++;
-    // Delay nhẹ để tránh server chặn request liên tục
+    // Delay nhẹ để tránh request quá nhanh
     await new Promise(r => setTimeout(r, 300));
   }
 
