@@ -1611,7 +1611,7 @@ async function writeToLark(tableData) {
 }
 
 // ===== CRON JOB =====
-cron.schedule("*/60 * * * *", async () => {
+cron.schedule("*/5 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
