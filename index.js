@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
+const xlsx = require('xlsx');
 const Tesseract = require('tesseract.js');
 const moment = require('moment-timezone');
 const QuickChart = require('quickchart-js');
@@ -1231,7 +1232,6 @@ async function safeFetchVerbose(url, opts = {}, stepName = "STEP") {
   return { res, status: res.status, headers: respHeaders, setCookieArray, text, json: parsed };
 }
 
-// ====== Login ======
 async function loginWOWBUY() {
   console.log("🔐 Login WOWBUY...");
   try {
@@ -1251,41 +1251,46 @@ async function loginWOWBUY() {
       body: JSON.stringify(bodyObj),
     }, "LOGIN");
 
-    // Lưu cookie + token
     session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || "");
     if (loginResp.json?.data?.accessToken) session.token = loginResp.json.data.accessToken;
     else throw new Error("No accessToken in LOGIN response");
 
-    // refresh token nếu cần
     if (session.token) await doTokenRefresh(session.token, session.cookie);
 
-    // lấy entryUrl từ report tree
+    // Lấy danh sách báo cáo để tìm UUID
     await getReportId();
+
     if (!session.entryUrl) {
-      console.warn("⚠️ entryUrl not set, dùng default");
+      console.warn("⚠️ entryUrl not set, using default Purchase Plan UUID");
       session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
     }
 
-    console.log("📡 ENTRY ACCESS để lấy sessionID...");
+    console.log("📥 entryUrl:", session.entryUrl);
+    console.log("📡 ENTRY ACCESS to fetch sessionID...");
     const entryResp = await safeFetchVerbose(session.entryUrl, {
       method: "GET",
       headers: {
         cookie: session.cookie,
         authorization: `Bearer ${session.token}`,
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "accept-language": "vi-VN,vi;q=0.9,fr-FR;q=0.8,fr;q=0.7,en-US;q=0.6,en;q=0.5",
         referer: `${WOWBUY_BASEURL}/webroot/decision`,
-        "user-agent": "Mozilla/5.0",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       },
     }, "ENTRY_ACCESS");
 
     if (entryResp.text) {
       const sid = extractSessionIDFromHtml(entryResp.text);
-      if (!sid) throw new Error("Không lấy được sessionID");
-      session.sessionid = sid;
-      console.log("🆔 sessionID:", session.sessionid);
+      if (sid) {
+        session.sessionid = sid;
+        console.log("🆔 sessionID extracted:", session.sessionid);
+      } else {
+        console.warn("⚠️ Failed to extract sessionID from HTML. Checking HTML:", truncate(entryResp.text, 500));
+      }
+    } else {
+      console.warn("⚠️ No response text available to extract sessionID");
     }
 
-    // merge cookie
     session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(entryResp.setCookieArray));
     session.lastLogin = Date.now();
     return session;
@@ -1295,22 +1300,79 @@ async function loginWOWBUY() {
   }
 }
 
-// ====== Init WOWBUY session ======
+async function getReportId() {
+  console.log("📡 GETTING REPORT TREE...");
+  const url = `${WOWBUY_BASEURL}/webroot/decision/v10/view/entry/tree?_= ${Date.now()}`;
+  const resp = await safeFetchVerbose(url, {
+    method: "GET",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  }, "GET_REPORTS");
+
+  if (resp.json?.data) {
+    console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
+    const report = resp.json.data.find(item => item.text === TARGET_REPORT);
+    if (report) {
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
+      console.log("📋 Selected entryUrl:", session.entryUrl);
+    } else {
+      console.warn("⚠️ No report found with text:", TARGET_REPORT);
+    }
+  } else {
+    console.warn("⚠️ No data in report tree response");
+  }
+}
+
+async function doTokenRefresh(token, cookieHeader) {
+  const url = `${WOWBUY_BASEURL}/webroot/decision/token/refresh`;
+  const body = { oldToken: token, tokenTimeOut: 1209600000 };
+
+  const refreshResp = await safeFetchVerbose(url, {
+    method: "POST",
+    headers: {
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      cookie: cookieHeader,
+      origin: WOWBUY_BASEURL,
+      referer: session.entryUrl,
+      "x-requested-with": "XMLHttpRequest",
+      "user-agent": "Mozilla/5.0 (Node)",
+    },
+    body: JSON.stringify(body),
+  }, "TOKEN_REFRESH");
+
+  if (refreshResp.json?.data?.accessToken) {
+    session.token = refreshResp.json.data.accessToken;
+    session.cookie = mergeCookieStringWithObj(session.cookie, parseSetCookieArrayToObj(refreshResp.setCookieArray));
+  }
+  return true;
+}
+
+// ===== Init WOWBUY session =====
 async function initWOWBUYSession() {
-  console.log("⚡ Initializing WOWBUY session...");
   const now = new Date();
   const SD = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
   const ED = now.toISOString().split("T")[0];
 
   const params = {
-    SALE_STATUS: ["0", "1"],
+    SALE_STATUS: ["0", "1"], // On sale + Off sale
     LABELSKUSN_C_C: "[4e0a][4e0b][67b6][72b6][6001][ff1a]",
     LABELSTOREID_C: "[4ed3][5e93][ff1a]",
-    WH: [], LABELSKUSN_C: "SKU[ff1a]", SKUSN: [],
+    WH: [],
+    LABELSKUSN_C: "SKU[ff1a]",
+    SKUSN: [],
     LABELSTOREID_C_C: "[8ba2][5355][521b][5efa][65f6][95f4][ff1a]",
     SD, ED,
-    LABELSKUSN_C_C_C: "[53ef][552e][5e93][5b58][ff1a]", KS: [],
-    LABELSKUSN_C_C_C_C: "[5546][54c1][7f16][53f7][ff1a]", SN: ""
+    LABELSKUSN_C_C_C: "[53ef][552e][5e93][5b58][ff1a]",
+    KS: [],
+    LABELSKUSN_C_C_C_C: "[5546][54c1][7f16][53f7][ff1a]",
+    SN: ""
   };
 
   const steps = [
@@ -1321,93 +1383,101 @@ async function initWOWBUYSession() {
   ];
 
   for (const step of steps) {
-    const resp = await safeFetchVerbose(step.url, {
+    await safeFetchVerbose(step.url, {
       method: step.method || "GET",
-      headers: { authorization: session.token, cookie: session.cookie, sessionid: session.sessionid, ...(step.headers || {}) },
-      body: step.body
+      headers: { authorization: session.token, cookie: session.cookie, ...(step.headers || {}) },
+      body: step.body,
     }, `INIT:${step.name}`);
-    console.log(`📡 Step ${step.name} done. Status:`, resp.status);
   }
 }
 
-// ====== Check register ======
-async function checkRegister() {
-  console.log("🔍 check_register...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=export&cmd=check_register`;
-  const resp = await safeFetchVerbose(url, {
-    method: "GET",
-    headers: {
-      authorization: session.token,
-      cookie: session.cookie,
-      sessionid: session.sessionid,
-      "x-requested-with": "XMLHttpRequest"
-    }
-  }, "CHECK_REGISTER");
+// ===== Submit report form =====
+async function submitReportForm() {
+  console.log("📤 Submitting report form...");
+  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
+  const today = new Date();
+  const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
+  const ED = today.toISOString().split("T")[0];
 
-  if (!resp.ok) throw new Error("❌ check_register failed");
-  console.log("✅ check_register OK");
-  return true;
-}
+  const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
+  const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
 
-// ====== Check font (dataId) ======
-async function checkFont() {
-  console.log("🔍 check_font...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/export/check/font`;
-  const body = "format=excel";
-  const resp = await safeFetchVerbose(url, {
+  const resp = await safeFetchVerbose(formUrl, {
     method: "POST",
     headers: {
-      authorization: session.token,
+      accept: "application/json, text/javascript, */*; q=0.01",
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Bearer ${session.token}`,
       cookie: session.cookie,
-      sessionid: session.sessionid,
+      referer: session.entryUrl,
+      "user-agent": "Mozilla/5.0",
       "x-requested-with": "XMLHttpRequest",
-      "content-type": "application/x-www-form-urlencoded"
     },
-    body
-  }, "CHECK_FONT");
+    body,
+  }, "SUBMIT_FORM");
 
-  if (resp.json?.state !== 1) throw new Error("❌ Không lấy được dataId từ check/font");
-  console.log("✅ check_font OK. dataId:", resp.json?.dataId || "auto-generated");
-  return resp.json?.dataId || Date.now();
-}
-
-// ====== Fetch Excel ======
-async function fetchExcelFromWOWBUY(dataId) {
-  console.log("📥 Export Excel...");
-  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
-  const body = `op=export&cmd=export_polling&type=excel&data=${dataId}`;
-
-  const resp = await safeFetchVerbose(url, {
-    method: "POST",
-    headers: {
-      authorization: session.token,
-      cookie: session.cookie,
-      sessionid: session.sessionid,
-      "x-requested-with": "XMLHttpRequest",
-      "content-type": "application/x-www-form-urlencoded"
-    },
-    body
-  }, "EXPORT_EXCEL");
-
-  console.log("✅ Excel fetched");
+  if (resp.status === 200) console.log("✅ Form submitted successfully");
+  else console.warn("⚠️ Form submit failed with status:", resp.status);
   return resp;
 }
 
-// ====== Main Flow ======
+// ===== Fetch all pages =====
+async function fetchPageContent() {
+  console.log("📡 Fetching all page content...");
+  let allRows = [], pn = 1, totalPages = 1;
+
+  do {
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}&sessionID=${session.sessionid}`;
+    const resp = await safeFetchVerbose(url, {
+      method: "GET",
+      headers: {
+        accept: "text/html, */*; q=0.01",
+        "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
+        authorization: session.token,
+        cookie: session.cookie,
+        referer: session.entryUrl,
+        "user-agent": "Mozilla/5.0",
+        "x-requested-with": "XMLHttpRequest",
+      },
+    }, `PAGE_CONTENT: PN=${pn}`);
+
+    const raw = resp.text || "";
+    let html = raw;
+    if (resp.json?.html) html = resp.json.html;
+
+    const $ = cheerio.load(html);
+    $("table tr").each((i, tr) => {
+      const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
+      if (cols.length > 0) allRows.push(cols);
+    });
+
+    console.log(`📊 Page ${pn}: ${allRows.length} rows total so far`);
+    if (resp.json?.pageCount) totalPages = resp.json.pageCount;
+    else if (resp.json?.totalPage) totalPages = resp.json.totalPage;
+
+    pn++;
+  } while (pn <= totalPages);
+
+  console.log("📊 All pages fetched, total rows:", allRows.length);
+  if (allRows.length > 0) console.log("🔎 First 1 rows:", allRows.slice(0, 1));
+  return allRows;
+}
+
+// ===== Main flow =====
 async function fetchWOWBUY() {
   try {
     const s = await loginWOWBUY();
-    if (!s) throw new Error("Login failed");
+    if (!s) { console.error("❌ Aborting: login failed"); return []; }
 
     await initWOWBUYSession();
-    await checkRegister();
-    const dataId = await checkFont();
-    const excelResp = await fetchExcelFromWOWBUY(dataId);
+    await submitReportForm();
+    const data = await fetchPageContent();
 
-    return excelResp;
+    console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
+    return data;
   } catch (err) {
-    console.error("❌ Lỗi trong fetchWOWBUY:", err);
-    return null;
+    console.error("❌ Lỗi trong fetchWOWBUY:", err.message, err.stack);
+    return [];
   }
 }
 
@@ -1556,7 +1626,7 @@ async function writeToLark(tableData) {
 }
 
 // ===== CRON JOB =====
-cron.schedule("*/5 * * * *", async () => {
+cron.schedule("*/60 * * * *", async () => {
   try {
     const data = await fetchWOWBUY();
     await writeToLark(data);
