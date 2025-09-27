@@ -1390,6 +1390,45 @@ async function initWOWBUYSession() {
   }
 }
 
+async function submitReportForm() {
+  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
+
+  const today = new Date();
+  const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
+  const endDate = today.toISOString().split("T")[0];
+
+  const params = {
+    SALE_STATUS: ["0","1"], // On sale + Off sale
+    SD: startDate,
+    ED: endDate,
+    WH: [],
+    SKUSN: [],
+    KS: [],
+    SN: ""
+  };
+
+  const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
+
+  const resp = await safeFetchVerbose(formUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      authorization: `Bearer ${session.token}`,
+      cookie: session.cookie,
+      "x-requested-with": "XMLHttpRequest",
+    },
+    body,
+  }, "SUBMIT_FORM");
+
+  // ✅ Quan trọng: inspect toàn bộ JSON để tìm exportDataId/dataId
+  console.log("🔍 Form response JSON:", resp.json);
+
+  const exportDataId = resp.json?.data?.exportDataId || resp.json?.data?.dataId;
+
+  if (!exportDataId) throw new Error("❌ Không lấy được exportDataId từ form response");
+  return exportDataId;
+}
+
 // ===== Fetch Excel trực tiếp từ WOWBUY =====
 async function fetchExcelFromWOWBUY() {
   try {
