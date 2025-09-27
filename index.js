@@ -1301,7 +1301,7 @@ async function fetchPageContent(entryUrl, session) {
         accept: "text/html, */*; q=0.01",
         authorization: `Bearer ${session.token}`,
         cookie: session.cookie,
-        referer: entryUrl,         // ✅ referer = entryUrl Purchase Plan
+        referer: entryUrl,          // ✅ referer = entryUrl Purchase Plan
         sessionid: session.sessionid, // ✅ sessionID từ entryUrl
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
         "x-requested-with": "XMLHttpRequest",
@@ -1329,25 +1329,30 @@ async function fetchPageContent(entryUrl, session) {
     if (rowsThisPage === 0) break;
 
     pn++;
-    if (pn > 200) { // an toàn tránh infinite loop
+    if (pn > 200) {
       console.warn("⚠️ Max 200 pages reached, stopping");
       break;
     }
 
-    await new Promise(r => setTimeout(r, 300)); // delay nhẹ
+    await new Promise(r => setTimeout(r, 300));
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
 
-// ======== Main flow ========
+// ======== Main flow (Purchase Plan only) ========
 async function fetchWOWBUY() {
   try {
-    const s = await loginWOWBUY();
-    if (!s) return [];
+    console.log("🔐 Login WOWBUY...");
+    const loginResp = await loginWOWBUY(); // dùng hàm loginWOWBUY cũ
+    if (!loginResp) return [];
 
-    console.log("📡 ENTRY ACCESS to fetch sessionID...");
+    // Chỉ sử dụng UUID báo cáo Purchase Plan
+    session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=174&height=667`;
+    session.widgetName = "formSubmit0";
+
+    console.log("📡 ENTRY ACCESS to fetch sessionID for Purchase Plan...");
     const entryResp = await safeFetchVerbose(session.entryUrl, {
       method: "GET",
       headers: {
@@ -1365,8 +1370,8 @@ async function fetchWOWBUY() {
         const m = entryResp.text.match(/"sessionID"\s*:\s*"([a-f0-9-]+)"/i);
         if (m && m[1]) sid = m[1];
       }
-      if (sid) session.sessionid = sid;
-      else throw new Error("❌ Failed to extract sessionID from ENTRY_ACCESS");
+      if (!sid) throw new Error("❌ Failed to extract sessionID from ENTRY_ACCESS");
+      session.sessionid = sid;
       console.log("🆔 sessionID extracted:", session.sessionid);
     }
 
@@ -1374,7 +1379,7 @@ async function fetchWOWBUY() {
     await submitReportForm();
 
     const data = await fetchPageContent(session.entryUrl, session);
-    console.log("📊 Fetched data from WOWBUY:", data?.length || 0, "rows");
+    console.log("📊 Fetched data from WOWBUY (Purchase Plan):", data?.length || 0, "rows");
     return data;
   } catch (err) {
     console.error("❌ Lỗi trong fetchWOWBUY:", err.message, err.stack);
