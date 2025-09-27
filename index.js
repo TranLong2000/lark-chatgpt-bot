@@ -1353,11 +1353,17 @@ async function submitReportForm() {
     if (resp.status === 200) {
       console.log("✅ Form submitted successfully");
 
-      if (resp.text) {
-        const widgetMatches = resp.text.match(/widgetname=["']([^"']+)["']/g) || [];
-        const cleanWidgets = widgetMatches.map(m => m.replace(/widgetname=|['"]/g, ""));
-        console.log("🔎 Available widgetNames:", cleanWidgets);
+      const html = resp.text || "";
+      // Tìm toàn bộ widgetName trong response
+      const widgetMatches = html.match(/widgetname=["']([^"']+)["']/g) || [];
+      const cleanWidgets = widgetMatches.map(m => m.replace(/widgetname=|['"]/g, ""));
+
+      if (cleanWidgets.length > 0) {
+        console.log("🔎 Found widgetNames:", cleanWidgets);
+      } else {
+        console.log("⚠️ No widgetNames found in form response");
       }
+
     } else {
       console.error("❌ Form submit failed", resp.status, resp.text);
     }
