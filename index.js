@@ -1299,19 +1299,24 @@ async function getReportId() {
   if (resp.json?.data) {
     console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
 
-    // 🔎 Tìm đúng báo cáo Purchase Plan
     const report = resp.json.data.find(item => item.text === TARGET_REPORT);
 
     if (report) {
-      session.reportId = report.id;
       session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
-
-      // 📌 Lưu widgetName cho submit & fetch (nếu có children thì lấy children[0])
       session.widgetName = report.children?.[0]?.widgetName || report.widgetName || "formSubmit0";
 
       console.log("📋 Selected report:", report.text);
       console.log("📋 entryUrl:", session.entryUrl);
       console.log("📋 widgetName:", session.widgetName);
+
+      // 👉 In log toàn bộ children để kiểm tra widget nào là đúng
+      if (report.children) {
+        console.log("📂 Report children:", report.children.map(c => ({
+          id: c.id,
+          text: c.text,
+          widgetName: c.widgetName
+        })));
+      }
     } else {
       console.warn("⚠️ No report found with text:", TARGET_REPORT);
     }
@@ -1386,40 +1391,42 @@ async function initWOWBUYSession() {
 // ===== Submit report form =====
 async function submitReportForm() {
   console.log("📤 Submitting report form...");
-  const formUrl = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=widget&widgetname=formSubmit0&sessionID=${session.sessionid}`;
-  const today = new Date();
-  const SD = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().split("T")[0];
-  const ED = today.toISOString().split("T")[0];
 
-  const params = { SALE_STATUS: ["0", "1"], SD, ED, WH: [], SKUSN: [], KS: [], SN: "" };
-  const body = `__parameters__=${encodeURIComponent(JSON.stringify(params))}`;
+  const url = `${WOWBUY_BASEURL}/webroot/decision/view/report`;
+  const params = new URLSearchParams({
+    op: "fr_submit",
+    widgetName: session.widgetName,   // dùng widgetName lấy từ getReportId
+    __boxModel__: "true",
+    __webpage__: "true",
+    __fit__: "false",
+    _paperWidth: "514",
+    _paperHeight: "510",
+    _: Date.now(),
+  });
 
-  const resp = await safeFetchVerbose(formUrl, {
+  const resp = await safeFetchVerbose(`${url}?${params.toString()}`, {
     method: "POST",
     headers: {
       accept: "application/json, text/javascript, */*; q=0.01",
-      "content-type": "application/x-www-form-urlencoded",
       authorization: `Bearer ${session.token}`,
       cookie: session.cookie,
-      referer: session.entryUrl,
-      "user-agent": "Mozilla/5.0",
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
       "x-requested-with": "XMLHttpRequest",
+      "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
     },
-    body,
-  }, "SUBMIT_FORM");
+    body: "",
+  }, "SUBMIT_REPORT_FORM");
 
-  if (resp.status !== 200) {
-    console.warn("⚠️ Form submit failed with status:", resp.status);
-    return 0;
+  // 👉 In log toàn bộ response để xem có totalPages thật ở đâu không
+  console.log("🛠️ submitReportForm response:", JSON.stringify(resp.json, null, 2));
+
+  if (resp.json?.totalPages) {
+    console.log("✅ Form submitted successfully, total pages:", resp.json.totalPages);
+    return resp.json.totalPages;
+  } else {
+    console.warn("⚠️ totalPages not found, defaulting to 1");
+    return 1;
   }
-
-  // Lấy totalPages từ JSON
-  let totalPages = 1;
-  if (resp.json?.totalPage) totalPages = resp.json.totalPage;
-
-  console.log(`✅ Form submitted successfully, total pages: ${totalPages}`);
-  session.totalPages = totalPages;
-  return totalPages;
 }
 
 async function fetchPageContent() {
