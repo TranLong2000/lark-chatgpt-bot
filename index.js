@@ -1165,7 +1165,14 @@ async function loginWOWBUY() {
   console.log("🔐 Login WOWBUY...");
   try {
     const url = `${WOWBUY_BASEURL}/webroot/decision/login`;
-    const bodyObj = { username: WOWBUY_USERNAME, password: WOWBUY_PASSWORD, validity: -2, sliderToken: "", origin: "", encrypted: true };
+    const bodyObj = { 
+      username: WOWBUY_USERNAME, 
+      password: WOWBUY_PASSWORD, 
+      validity: -2, 
+      sliderToken: "", 
+      origin: "", 
+      encrypted: true 
+    };
 
     const loginResp = await safeFetchVerbose(url, {
       method: "POST",
@@ -1181,21 +1188,41 @@ async function loginWOWBUY() {
     }, "LOGIN");
 
     session.cookie = buildCookieHeaderFromSetCookieArray(loginResp.setCookieArray || "");
-    if (loginResp.json?.data?.accessToken) session.token = loginResp.json.data.accessToken;
-    else throw new Error("No accessToken in LOGIN response");
+    if (!loginResp.json?.data?.accessToken) throw new Error("No accessToken in LOGIN response");
+    session.token = loginResp.json.data.accessToken;
 
-    if (session.token) await doTokenRefresh(session.token, session.cookie);
+    await doTokenRefresh(session.token, session.cookie);
 
-    // Lấy danh sách báo cáo để tìm UUID
+    // Lấy UUID báo cáo
     await getReportId();
 
     if (!session.entryUrl) {
-      console.warn("⚠️ entryUrl not set, using default Purchase Plan UUID");
+      console.warn("⚠️ entryUrl not set, dùng default Purchase Plan UUID");
       session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=513&height=667`;
       session.widgetName = "formSubmit0";
     }
 
-    console.log("📥 entryUrl:", session.entryUrl);
+    console.log("📡 ENTRY ACCESS để lấy sessionID...");
+    const entryResp = await safeFetchVerbose(session.entryUrl, {
+      method: "GET",
+      headers: {
+        cookie: session.cookie,
+        authorization: `Bearer ${session.token}`,
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        referer: `${WOWBUY_BASEURL}/webroot/decision`,
+        "user-agent": "Mozilla/5.0",
+      },
+    }, "ENTRY_ACCESS");
+
+    let sid = extractSessionIDFromHtml(entryResp.text);
+    if (!sid) {
+      const m = entryResp.text.match(/"sessionID"\s*:\s*"([a-f0-9-]+)"/i);
+      if (m && m[1]) sid = m[1];
+    }
+    if (!sid) throw new Error("❌ Failed to extract sessionID from ENTRY_ACCESS");
+    session.sessionid = sid;
+    console.log("🆔 sessionID extracted:", session.sessionid);
+
     return session;
   } catch (err) {
     console.error("❌ login error:", err.message);
@@ -1311,7 +1338,8 @@ async function fetchPageContent(entryUrl, session) {
     if (cols.length) allRows.push(cols);
   });
 
-  const totalPage = respFirst.json?.pageCount || Math.ceil(allRows.length / 36); // fallback 36 rows/page
+  // --- Lấy tổng số page từ response, fallback nếu server không trả ---
+  const totalPage = respFirst.json?.pageCount || Math.ceil(allRows.length / 36); 
   console.log(`📊 Total page detected: ${totalPage}`);
   console.log(`📊 Page 1 fetched, ${allRows.length} rows`);
 
@@ -1333,28 +1361,21 @@ async function fetchPageContent(entryUrl, session) {
     });
 
     const html = resp.json?.html || resp.text || "";
-    if (!html.trim()) {
-      console.log(`⛔ Empty response at PN=${pn}, stopping`);
-      break;
-    }
+    if (!html.trim()) break;
 
     const $ = cheerio.load(html);
-    let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-      if (cols.length) {
-        allRows.push(cols);
-        rowsThisPage++;
-      }
+      if (cols.length) allRows.push(cols);
     });
 
-    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
-    await new Promise(r => setTimeout(r, 500)); // tránh quá tải server
+    await new Promise(r => setTimeout(r, 500)); 
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
+
 
 // ======== Main flow (Purchase Plan only) ========
 async function fetchWOWBUY() {
