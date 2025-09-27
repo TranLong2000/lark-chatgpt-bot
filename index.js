@@ -1418,84 +1418,51 @@ async function submitReportForm() {
 }
 
 // ===== Fetch all pages =====
-async function fetchPageContent() {
-  console.log("📡 Fetching all page content...");
+// Lấy tất cả page content (Purchase Plan)
+async function fetchPageContent(entryUrl, session) {
+  console.log("📡 Fetching all page content (Purchase Plan mode)...");
 
   const allRows = [];
   let pn = 1;
-  let totalPages = session.totalPages || null;
-  const seenSignatures = new Set();
-  const MAX_PAGES = 200;
 
-  // build baseUrl safely from entryUrl
-  const baseUrl = (session.entryUrl && session.entryUrl.includes("/entry/access/"))
-    ? session.entryUrl.replace("/entry/access/", "/view/report?")
-    : `${WOWBUY_BASEURL}/webroot/decision/view/report?`;
-
-  console.log("🔗 Using baseUrl for pages:", baseUrl);
-  console.log("🆔 Using sessionID:", session.sessionid);
-  console.log("🔎 Starting pn loop (max pages allowed:", MAX_PAGES, ")");
+  // Lấy reportId từ entryUrl
+  const reportIdMatch = entryUrl.match(/access\/([a-f0-9-]+)/);
+  if (!reportIdMatch) {
+    throw new Error("❌ Cannot extract reportId from entryUrl: " + entryUrl);
+  }
+  const reportId = reportIdMatch[1];
+  console.log("📋 Using reportId:", reportId);
 
   while (true) {
-    if (pn > MAX_PAGES) {
-      console.warn("⚠️ Stop: reached MAX_PAGES");
-      break;
-    }
+    const timestamp = Date.now();
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report` +
+      `?_=${timestamp}&op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true` +
+      `&_paperWidth=514&_paperHeight=510&__fit__=false&sessionID=${session.sessionid}`;
 
-    const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=309&_paperHeight=510&__fit__=false&_=${Date.now()}${session.sessionid ? `&sessionID=${session.sessionid}` : ''}`;
+    const resp = await safeFetchVerbose(url, {
+      method: "GET",
+      headers: {
+        accept: "text/html, */*; q=0.01",
+        authorization: `Bearer ${session.token}`,
+        cookie: session.cookie,
+        referer: entryUrl,
+        "user-agent": "Mozilla/5.0",
+        "x-requested-with": "XMLHttpRequest",
+      },
+    }, `PAGE_CONTENT: PN=${pn}`);
 
-    let resp;
-    try {
-      resp = await safeFetchVerbose(url, {
-        method: "GET",
-        headers: {
-          accept: "text/html, */*; q=0.01",
-          "accept-language": "vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5",
-          authorization: `Bearer ${session.token}`,
-          cookie: session.cookie,
-          referer: session.entryUrl,
-          "user-agent": "Mozilla/5.0",
-          "x-requested-with": "XMLHttpRequest",
-        },
-      }, `PAGE_CONTENT: PN=${pn}`);
-    } catch (err) {
-      console.error(`🔥 Error fetching PN=${pn}:`, err.message || err);
-      break;
-    }
-
-    const raw = resp.text || "";
-    let html = raw;
-    if (resp.json?.html) html = resp.json.html;
-
+    const html = resp.json?.html || resp.text || "";
     if (!html || !html.trim()) {
       console.log(`⛔ Empty response at PN=${pn}, stopping`);
       break;
     }
-
-    // detect totalPages if not known
-    if (!totalPages) {
-      const detected = extractTotalPagesFromResp(resp, html);
-      if (detected) {
-        totalPages = detected;
-        session.totalPages = detected;
-        console.log("🔢 Detected totalPages from response:", totalPages);
-      }
-    }
-
-    // detect duplicate page via signature
-    const signature = pageSignatureFromHtml(html);
-    if (seenSignatures.has(signature)) {
-      console.log(`🔁 Duplicate page detected at PN=${pn}, stopping to avoid loop`);
-      break;
-    }
-    seenSignatures.add(signature);
 
     // parse rows
     const $ = cheerio.load(html);
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
-      if (cols.length > 0) {
+      if (cols.length) {
         allRows.push(cols);
         rowsThisPage++;
       }
@@ -1503,24 +1470,21 @@ async function fetchPageContent() {
 
     console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
 
-    // stop when we've reached a known totalPages
-    if (totalPages && pn >= totalPages) {
-      console.log("✅ Reached totalPages => done");
-      break;
-    }
-
-    // stop if page contains zero rows
     if (rowsThisPage === 0) {
       console.log("⛔ No rows in this page => last page");
       break;
     }
 
     pn++;
-    await new Promise(r => setTimeout(r, 250)); // small delay
+    if (pn > 200) {
+      console.warn("⚠️ Reached max 200 pages, stopping");
+      break;
+    }
+
+    await new Promise(r => setTimeout(r, 300)); // tránh spam
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
-  if (allRows.length > 0) console.log("🔎 First 1 row:", allRows.slice(0, 1));
   return allRows;
 }
 
