@@ -1258,18 +1258,25 @@ async function getReportId() {
 
   if (resp.json?.data) {
     console.log("📋 Available reports:", resp.json.data.map(item => `'${item.text} (${item.id})'`));
-    const report = resp.json.data.find(item => item.text === TARGET_REPORT);
 
+    const report = resp.json.data.find(item => item.text === TARGET_REPORT);
     if (report) {
       session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/${report.id}?width=309&height=667`;
       console.log("📋 Selected entryUrl:", session.entryUrl);
     } else {
       console.warn("⚠️ No report found with text:", TARGET_REPORT);
+      // Fallback cứng cho Purchase Plan
+      session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
+      console.log("📋 Fallback entryUrl:", session.entryUrl);
     }
   } else {
     console.warn("⚠️ No data in report tree response");
+    // fallback luôn
+    session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
+    console.log("📋 Fallback entryUrl:", session.entryUrl);
   }
 }
+
 
 // ===== Init WOWBUY session =====
 async function initWOWBUYSession() {
@@ -1394,11 +1401,12 @@ async function fetchPageContent(entryUrl, session) {
 
 // Luồng chính lấy dữ liệu WOWBUY
 async function fetchWOWBUY(reportName = "Purchase Plan") {
-  console.log("📥 entryUrl:", session.entryUrl);
-
   if (!session.entryUrl) {
-    throw new Error("❌ entryUrl is empty. Please check TARGET_REPORT or set a default entryUrl.");
+    console.warn("⚠️ entryUrl is empty, using default Purchase Plan UUID");
+    session.entryUrl = `${WOWBUY_BASEURL}/webroot/decision/v10/entry/access/821488a1-d632-4eb8-80e9-85fae1fb1bda?width=309&height=667`;
   }
+
+  console.log("📥 entryUrl:", session.entryUrl);
 
   // Lấy sessionID từ entryUrl
   console.log("📡 ENTRY ACCESS to fetch sessionID...");
@@ -1430,6 +1438,7 @@ async function fetchWOWBUY(reportName = "Purchase Plan") {
   console.log(`📊 Fetched data from WOWBUY: ${allRows.length} rows`);
   return allRows;
 }
+
 
 /**
  * Lấy tenant access token từ Lark
