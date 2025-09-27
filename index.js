@@ -1363,16 +1363,60 @@ async function submitReportForm() {
 }
 
 // ===== Fetch all pages =====
-async function fetchPageContent() {
-  console.log("📡 Fetching all page content...");
+// ---- helper: lấy totalPages từ resp hoặc html ----
+function extractTotalPagesFromResp(resp, html = "") {
+  try {
+    const j = resp.json || {};
+    if (j.totalPages) return j.totalPages;
+    if (j.pageCount) return j.pageCount;
+    if (j.data?.totalPages) return j.data.totalPages;
 
-  const PAGE_SIZE = 36; // số row tối đa 1 trang (chỉnh nếu khác)
-  let allRows = [];
+    const patterns = [
+      /Page\s*\d+\s*of\s*(\d+)/i,
+      /共\s*(\d+)\s*页/,
+      /"totalPage"\s*:\s*(\d+)/i,
+      /"pageCount"\s*:\s*(\d+)/i
+    ];
+    for (const p of patterns) {
+      const m = html.match(p);
+      if (m) return Number(m[1]);
+    }
+  } catch (_) {}
+  return null;
+}
+
+// ---- helper: tạo chữ ký page để phát hiện lặp ----
+function pageSignatureFromHtml(html) {
+  try {
+    const $ = cheerio.load(html || "");
+    const rows = $("table").first().find("tr").slice(0, 5).map((i, tr) => {
+      return $(tr).find("td,th").map((j, td) => $(td).text().trim()).get().join("|");
+    }).get();
+    if (rows.length) return rows.join("||");
+    return String(html).slice(0, 500);
+  } catch {
+    return String(html).slice(0, 500);
+  }
+}
+
+async function fetchPageContent() {
+  console.log("📡 Fetching all page content (improved)...");
+
+  const allRows = [];
   let pn = 1;
+  let totalPages = null;
+  const seenSignatures = new Set();
+  const MAX_PAGES = 200;
 
   while (true) {
+    if (pn > MAX_PAGES) {
+      console.warn("⚠️ Stop: reached MAX_PAGES");
+      break;
+    }
+
     const timestamp = Date.now();
-    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
+    const url = `${WOWBUY_BASEURL}/webroot/decision/view/report?op=page_content` +
+                `&pn=${pn}&__webpage__=true&__boxModel__=true&_paperWidth=514&_paperHeight=510&__fit__=false&_=${timestamp}`;
 
     const resp = await safeFetchVerbose(url, {
       method: "GET",
@@ -1387,10 +1431,24 @@ async function fetchPageContent() {
       },
     }, `PAGE_CONTENT: PN=${pn}`);
 
-    // ==== Parse HTML ====
     const html = resp.json?.html || resp.text || "";
-    const $ = cheerio.load(html);
 
+    // lấy totalPages 1 lần
+    if (!totalPages) {
+      totalPages = extractTotalPagesFromResp(resp, html);
+      if (totalPages) console.log(`🔢 Detected totalPages=${totalPages}`);
+    }
+
+    // detect duplicate page
+    const signature = pageSignatureFromHtml(html);
+    if (seenSignatures.has(signature)) {
+      console.log(`🔁 Duplicate page at PN=${pn}, stopping`);
+      break;
+    }
+    seenSignatures.add(signature);
+
+    // parse rows
+    const $ = cheerio.load(html);
     let rowsThisPage = 0;
     $("table tr").each((i, tr) => {
       const cols = $(tr).find("td,th").map((j, td) => $(td).text().trim()).get();
@@ -1400,21 +1458,26 @@ async function fetchPageContent() {
       }
     });
 
-    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows this page, total so far: ${allRows.length}`);
+    console.log(`📊 Page ${pn} fetched, ${rowsThisPage} rows, total so far: ${allRows.length}`);
 
-    // ==== Điều kiện dừng ====
-    if (rowsThisPage < PAGE_SIZE) {
-      console.log("⛔ Last page reached (rows < PAGE_SIZE).");
+    // điều kiện dừng
+    if (totalPages && pn >= totalPages) {
+      console.log("✅ Done: reached totalPages");
+      break;
+    }
+    if (rowsThisPage === 0) {
+      console.log("⛔ No rows → last page");
       break;
     }
 
     pn++;
-    await new Promise(r => setTimeout(r, 300)); // delay nhẹ tránh block
+    await new Promise(r => setTimeout(r, 300));
   }
 
   console.log("✅ All pages fetched, total rows:", allRows.length);
   return allRows;
 }
+
 
 // ===== Main flow =====
 async function fetchWOWBUY() {
